@@ -35,3 +35,13 @@ The SteelSeries battery commands (`Providers/SteelSeriesProvider.cs`) follow [ri
 ## ATTACK SHARK web driver
 
 The Rongyuan receiver status command and the list of receiver IDs (`Providers/RongyuanDongleProvider.cs`) were found by reading the official ATTACK SHARK web driver (qmk.top) for interoperability; no code from it is included.
+
+## Protocol references (facts only, no code copied)
+
+The following projects document the device protocols that the providers below implement independently. Only protocol facts (command bytes, report layouts, device IDs) were taken from them; none of their code is included, so their licenses don't apply to this project's code.
+
+- `Providers/RazerPeripheralProvider.cs` — report layout, commands, per-device transaction IDs and waits from [OpenRazer](https://github.com/openrazer/openrazer) (GPL-2.0).
+- `Providers/LogitechProvider.cs` — HID++ requests, battery features and voltage curve from [Solaar](https://github.com/pwr-Solaar/Solaar) (GPL-2.0), the Linux driver `drivers/hid/hid-logitech-hidpp.c` (GPL-2.0) and [LGSTrayBattery](https://github.com/andyvorld/LGSTrayBattery); the 2012 Logitech HID++ 2.0 draft specification.
+- `Providers/HeadsetProvider.cs` — headset requests and responses from [HeadsetControl](https://github.com/Sapd/HeadsetControl) (GPL-3.0).
+- `Providers/PlayStationProvider.cs` — DualSense / DualShock 4 battery bytes from the Linux kernel driver `drivers/hid/hid-playstation.c` (GPL-2.0).
+- `Providers/XInputProvider.cs` — Bluetooth product IDs of Xbox controllers as listed by [SDL](https://github.com/libsdl-org/SDL) (zlib).

@@ -74,7 +74,8 @@ namespace BatteryTray.Hid
 
         static bool TryParseIds(string path, out ushort vid, out ushort pid)
         {
-            var m = Regex.Match(path, "vid_([0-9a-f]{4})&pid_([0-9a-f]{4})", RegexOptions.IgnoreCase);
+            // USB: vid_1532&pid_0550; Bluetooth HID: _vid&0002054c_pid&0ce6; Bluetooth LE: _vid&02045e_pid&0b13
+            var m = Regex.Match(path, "vid(?:_|&000[12]|&0[12])([0-9a-f]{4})[&_]pid[&_]([0-9a-f]{4})", RegexOptions.IgnoreCase);
             vid = m.Success ? Convert.ToUInt16(m.Groups[1].Value, 16) : (ushort)0;
             pid = m.Success ? Convert.ToUInt16(m.Groups[2].Value, 16) : (ushort)0;
             return m.Success;
@@ -168,10 +169,15 @@ namespace BatteryTray.Hid
 
         /// <param name="overlapped">Overlapped I/O is needed for <see cref="Read"/>/<see cref="Write"/> with a
         /// timeout; feature-report-only devices are opened synchronously.</param>
-        public HidDevice(HidInfo info, bool overlapped = true)
+        /// <param name="readOnly">Only read input reports (enough for devices that stream their state).</param>
+        /// <param name="featuresOnly">No access rights at all: Windows holds mouse and keyboard collections
+        /// exclusively, but feature reports still work through such a handle.</param>
+        public HidDevice(HidInfo info, bool overlapped = true, bool readOnly = false, bool featuresOnly = false)
         {
             Info = info;
-            handle = Native.CreateFile(info.Path, Native.GENERIC_READ | Native.GENERIC_WRITE,
+            uint access = featuresOnly ? 0 : readOnly ? Native.GENERIC_READ : Native.GENERIC_READ | Native.GENERIC_WRITE;
+            if (featuresOnly) overlapped = false;
+            handle = Native.CreateFile(info.Path, access,
                 Native.FILE_SHARE_READ | Native.FILE_SHARE_WRITE, IntPtr.Zero, Native.OPEN_EXISTING,
                 overlapped ? Native.FILE_FLAG_OVERLAPPED : 0, IntPtr.Zero);
             if (handle.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error(), "Cannot open " + info.Path);
@@ -204,6 +210,7 @@ namespace BatteryTray.Hid
 
         public bool Write(byte[] report, int timeoutMs)
         {
+            if (Info.OutputLength == 0) return false; // the collection takes no output reports
             var buf = new byte[Info.OutputLength];
             Array.Copy(report, buf, Math.Min(report.Length, buf.Length));
             return Io(buf, true, timeoutMs) == buf.Length;
@@ -212,6 +219,7 @@ namespace BatteryTray.Hid
         /// <summary>Returns the input report, or null on timeout.</summary>
         public byte[]? Read(int timeoutMs)
         {
+            if (Info.InputLength == 0) return null;
             var buf = new byte[Info.InputLength];
             int n = Io(buf, false, timeoutMs);
             if (n <= 0) return null;

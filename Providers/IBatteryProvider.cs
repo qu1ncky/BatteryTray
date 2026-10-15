@@ -25,7 +25,13 @@ namespace BatteryTray.Providers
                 new RazerBarracudaProvider(state),
                 new RongyuanDongleProvider(state),
                 new SteelSeriesProvider(),
+                new RazerPeripheralProvider(),
+                new HeadsetProvider(),
+                new LogitechProvider(),
+                new PlayStationProvider(),
+                new XInputProvider(),
                 new BluetoothProvider(),
+                new StandardHidBatteryProvider(),
             };
         }
     }
