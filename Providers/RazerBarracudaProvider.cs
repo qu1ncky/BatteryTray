@@ -1,0 +1,378 @@
+// Razer Barracuda X (2022) over its 2.4 GHz dongle.
+// Protocol, framing and charge detection ported from github.com/mehdibouchami/razer-barracuda-x-battery
+// (MIT License, Copyright (c) 2026 Mehdi Bouchami).
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading;
+using BatteryTray.Core;
+using BatteryTray.Hid;
+
+namespace BatteryTray.Providers
+{
+    public sealed class RazerBarracudaProvider : IBatteryProvider
+    {
+        const string Id = "razer:barracuda-x";
+        const string DeviceName = "Razer Barracuda X";
+        const string NeedsAdmin = "нужны права администратора";
+        const int NotChargingChecks = 3; // polls in a row without charging before the level may move again
+
+        readonly StateStore state;
+        int shownPercent;
+        bool chargingSticky;
+        int notChargingStreak;
+
+        public RazerBarracudaProvider(StateStore state)
+        {
+            this.state = state;
+            shownPercent = state.Get(Id)?.Level ?? -1; // survives restarts, so a restart while charging still has a level
+        }
+
+        public string Name => DeviceName;
+
+        public IReadOnlyList<DeviceReading> Poll()
+        {
+            List<HidInfo> all = HidBus.Enumerate((v, p) => v == BarracudaProtocol.RazerVid && BarracudaProtocol.DonglePids.Contains(p));
+            if (all.Count == 0) return Array.Empty<DeviceReading>(); // dongle unplugged
+
+            List<HidInfo> candidates = BarracudaProtocol.ControlInterfaces(all);
+            if (candidates.Count == 0)
+                return new[] { Offline(all.Any(i => i.AccessDenied) ? NeedsAdmin : "приёмник не отвечает") };
+
+            BatteryReading? r = BarracudaProtocol.Read(candidates, out string? status);
+            if (r == null) return new[] { Offline(status == "headset off or out of range" ? null : status) };
+
+            bool charging = IsCharging(r);
+            // The charger raises the voltage, so while charging keep the level from before it was plugged in
+            int level = charging ? shownPercent : Step(r.Percent);
+            return new[]
+            {
+                new DeviceReading
+                {
+                    Id = Id, Name = DeviceName, Kind = DeviceKind.Headset, Via = "2.4 ГГц", Online = true,
+                    Level = level >= 0 ? level : null, Charging = charging,
+                    Detail = !charging ? $"{r.Millivolts / 1000.0:0.00} В" : level >= 0 ? "уровень до зарядки" : null,
+                },
+            };
+        }
+
+        public TimeSpan Delay(IReadOnlyList<DeviceReading> last)
+        {
+            if (last.Count == 0) return TimeSpan.FromSeconds(15);
+            if (last[0].Online) return TimeSpan.FromSeconds(60);
+            // Headset off or on Bluetooth: look again soon. No access won't fix itself, so check rarely.
+            return last[0].Detail == NeedsAdmin ? TimeSpan.FromMinutes(5) : TimeSpan.FromSeconds(15);
+        }
+
+        static DeviceReading Offline(string? detail)
+        {
+            return new DeviceReading
+            {
+                Id = Id, Name = DeviceName, Kind = DeviceKind.Headset, Via = "2.4 ГГц", Online = false, Detail = detail,
+            };
+        }
+
+        /// <summary>
+        /// Charging detection can miss a check (the voltage swing isn't always visible in one sample window), and a
+        /// single miss would let the charger-inflated voltage update the level. So charging sticks until several
+        /// checks in a row say otherwise.
+        /// </summary>
+        bool IsCharging(BatteryReading r)
+        {
+            if (r.Charging)
+            {
+                chargingSticky = true;
+                notChargingStreak = 0;
+                return true;
+            }
+            if (!chargingSticky) return false;
+            if (++notChargingStreak < NotChargingChecks) return true;
+            chargingSticky = false;
+            return false;
+        }
+
+        /// <summary>
+        /// Rounds to 5% steps. Hysteresis: the shown step only changes once the estimate is 4+ points away from it,
+        /// so voltage noise doesn't make it flicker.
+        /// </summary>
+        int Step(int percent)
+        {
+            if (shownPercent < 0 || Math.Abs(percent - shownPercent) >= 4)
+                shownPercent = (percent + 2) / 5 * 5;
+            return shownPercent;
+        }
+    }
+
+    public sealed class BatteryReading
+    {
+        public int Millivolts;
+        public int Percent;
+        public bool Charging;
+    }
+
+    /// <summary>
+    /// The headset is an Airoha chip; the dongle bridges USB HID to it. We send the Airoha "RACE" command
+    /// GET_BATTERY (50 41 06 seq 01 00 31) and the reply carries the battery voltage in millivolts.
+    /// The dongle must be switched to "remote mode" (50 41 0E seq 02 E1 01) first so it forwards the command to
+    /// the headset; we switch back to local mode afterwards (E1 00), as Razer's tool does.
+    /// Two dongle bridge chips exist, with different HID framing (identified by the vendor collection's report ID):
+    ///   0x02 - YS-Tech bridge (PID 0x0550): [02 80 len crcLo crcHi payload...], CRC-16/XMODEM over the whole
+    ///          64-byte report; the write is acknowledged via GetInputReport ('O' ok / 'F' busy, retried);
+    ///          replies arrive as input reports [02 len payload...].
+    ///   0x01 - Macronix bridge (PID 0x0552): [01 80 len payload...] after an "app mode" handshake; replies are
+    ///          [01 80 len payload...].
+    /// Only read-only status commands are sent; settings and firmware are never written.
+    /// </summary>
+    public static class BarracudaProtocol
+    {
+        public const ushort RazerVid = 0x1532;
+        public static readonly ushort[] DonglePids = { 0x0550, 0x0552 };
+        const ushort VendorUsagePage = 0xFF00;
+        const int TimeoutMs = 800;
+        const byte RaceGetBattery = 0x31;
+        const int ChargeSamples = 7;      // spread over ~2 s: consecutive samples can match while charging
+        const int ChargeJitterMv = 12;    // spread across samples: ~3 mV on battery, 30-45 mV while charging
+        const int ChargeVoltageMv = 4180; // above any resting voltage, so the charger must be connected
+
+        // Battery voltage (mV) for 0%, 10%, ... 100%: typical Li-ion discharge curve,
+        // checked against the Razer mobile app (3975 mV = 70%).
+        static readonly int[] Curve = { 3300, 3680, 3750, 3790, 3830, 3870, 3910, 3960, 4020, 4080, 4150 };
+
+        static byte sequence;
+
+        /// <summary>Optional hook that receives every raw packet sent (">") and received ("&lt;").</summary>
+        public static Action<string, byte[]>? Trace;
+
+        /// <summary>Vendor interfaces that can carry the command, most likely first (the bridge uses 64-byte
+        /// reports). Writing to the wrong one fails with ERROR_INVALID_PARAMETER.</summary>
+        public static List<HidInfo> ControlInterfaces(IEnumerable<HidInfo> all)
+        {
+            return all
+                .Where(i => !i.AccessDenied && i.UsagePage == VendorUsagePage && i.OutputLength > 0 && i.InputLength > 0)
+                .OrderBy(i => i.InputLength == 64 && i.OutputLength == 64 ? 0 : 1)
+                .ToList();
+        }
+
+        /// <summary>Tries each candidate interface until one answers. <paramref name="status"/> is null on success,
+        /// otherwise says why there is no reading (headset away, or the last I/O error).</summary>
+        public static BatteryReading? Read(List<HidInfo> candidates, out string? status)
+        {
+            string? error = null;
+            bool answered = false;
+            foreach (HidInfo info in candidates)
+            {
+                try
+                {
+                    using var dev = new HidDevice(info);
+                    BatteryReading? reading = Query(dev);
+                    if (reading != null)
+                    {
+                        status = null;
+                        return reading;
+                    }
+                    answered = true;
+                }
+                catch (Exception e)
+                {
+                    error = e.Message;
+                    Trace?.Invoke("! " + e.Message, Array.Empty<byte>());
+                }
+            }
+            // An interface that talked without error means the dongle works and the headset is just away
+            status = answered || error == null ? "headset off or out of range" : "ошибка: " + error;
+            return null;
+        }
+
+        /// <summary>Report ID of the vendor collection: 0x02 = YS-Tech bridge, otherwise Macronix. Falls back to the
+        /// product ID when the descriptor couldn't be read.</summary>
+        static byte ReportId(HidInfo info)
+        {
+            if (info.OutputReportId != 0) return info.OutputReportId;
+            return (byte)(info.ProductId == 0x0550 ? 0x02 : 0x01);
+        }
+
+        /// <summary>Returns null when the dongle is present but the headset doesn't answer (e.g. powered off).</summary>
+        static BatteryReading? Query(HidDevice dev)
+        {
+            dev.Flush();
+            if (ReportId(dev.Info) != 0x02 && !EnterMacronixAppMode(dev)) return null;
+
+            // Remote mode makes the dongle forward commands to the headset; in local mode the dongle
+            // answers GET_BATTERY itself with a meaningless value.
+            byte[]? reply = Race(dev, 0x0E, 0x02, 0xE1, 0x01);
+            if (reply == null || reply[12] != 0x00) return null;
+
+            // The headset reports voltage only - no charging flag and no percentage. While charging, the voltage is
+            // raised by the charger and swings by tens of millivolts between samples; on battery it is steady within
+            // a few millivolts. So take a few samples and use their spread to tell the two apart.
+            var samples = new List<int>();
+            try
+            {
+                for (int i = 0; i < ChargeSamples; i++)
+                {
+                    if (i > 0) Thread.Sleep(350);
+                    reply = Race(dev, 0x06, 0x01, 0x00, RaceGetBattery);
+                    // Response: [12]=status, [13..14]=millivolts (LE)
+                    if (reply == null || reply.Length < 15 || reply[12] != 0x00) continue;
+                    int sample = reply[13] | (reply[14] << 8);
+                    if (sample >= 2500 && sample <= 4500) samples.Add(sample);
+                }
+            }
+            finally
+            {
+                Race(dev, 0x0E, 0x02, 0xE1, 0x00);
+            }
+            if (samples.Count == 0) return null;
+
+            int mv = samples.Min();
+            bool charging = samples.Max() - samples.Min() >= ChargeJitterMv || mv >= ChargeVoltageMv;
+            return new BatteryReading { Millivolts = mv, Percent = ToPercent(mv), Charging = charging };
+        }
+
+        /// <summary>Sends an Airoha RACE command (50 41 group seq body...) and returns the matching
+        /// response payload (50 49 ... [10]=group, [11]=0x80|seq, [12]=status ...), or null.</summary>
+        static byte[]? Race(HidDevice dev, byte group, params byte[] body)
+        {
+            byte seq = NextSequence();
+            var race = new byte[4 + body.Length];
+            race[0] = 0x50;
+            race[1] = 0x41;
+            race[2] = group;
+            race[3] = seq;
+            Array.Copy(body, 0, race, 4, body.Length);
+            bool Matches(byte[] p) => p.Length >= 13 && p[0] == 0x50 && p[1] == 0x49 && p[10] == group && p[11] == (0x80 | seq);
+            return ReportId(dev.Info) == 0x02 ? SendYsTech(dev, race, Matches) : SendMacronix(dev, race, Matches);
+        }
+
+        static byte NextSequence()
+        {
+            sequence = (byte)(sequence % 127 + 1); // 1..127, as Razer's tool does
+            return sequence;
+        }
+
+        // ---- YS-Tech bridge (report ID 0x02) ----
+
+        static byte[]? SendYsTech(HidDevice dev, byte[] race, Func<byte[], bool> matches)
+        {
+            var frame = new byte[dev.Info.OutputLength];
+            frame[0] = 0x02;
+            frame[1] = 0x80;
+            frame[2] = (byte)race.Length;
+            Array.Copy(race, 0, frame, 5, race.Length);
+            ushort crc = Crc16Xmodem(frame);
+            frame[3] = (byte)crc;
+            frame[4] = (byte)(crc >> 8);
+
+            bool accepted = false;
+            for (int attempt = 0; attempt < 5 && !accepted; attempt++)
+            {
+                if (attempt > 0) Thread.Sleep(50);
+                Trace?.Invoke(">", frame.Take(5 + race.Length).ToArray());
+                if (!dev.Write(frame, TimeoutMs)) return null;
+                byte[]? status = dev.GetInputReport(0x02);
+                if (status == null) return null;
+                if (status[1] == (byte)'O') accepted = true;
+                else if (status[1] != (byte)'F') return null;
+            }
+            if (!accepted) return null;
+
+            return ReadUntil(dev, r =>
+            {
+                if (r.Length < 2 || r[0] != 0x02 || r[1] > r.Length - 2) return null;
+                return FindFrame(r, 2, r[1], matches);
+            });
+        }
+
+        static ushort Crc16Xmodem(byte[] data)
+        {
+            ushort crc = 0;
+            foreach (byte b in data)
+            {
+                crc ^= (ushort)(b << 8);
+                for (int i = 0; i < 8; i++)
+                    crc = (ushort)((crc & 0x8000) != 0 ? (crc << 1) ^ 0x1021 : crc << 1);
+            }
+            return crc;
+        }
+
+        // ---- Macronix bridge (report ID 0x01) ----
+
+        static bool EnterMacronixAppMode(HidDevice dev)
+        {
+            byte id = ReportId(dev.Info);
+            if (!dev.Write(new byte[] { id, 0x40 }, TimeoutMs)) return false;
+            byte[]? mode = ReadUntil(dev, r => r.Length >= 4 && r[0] == id && r[1] == 0x40 ? r : null);
+            return mode != null && mode[2] == 0x01 && mode[3] == 0x01;
+        }
+
+        static byte[]? SendMacronix(HidDevice dev, byte[] race, Func<byte[], bool> matches)
+        {
+            byte id = ReportId(dev.Info);
+            var frame = new byte[3 + race.Length];
+            frame[0] = id;
+            frame[1] = 0x80;
+            frame[2] = (byte)race.Length;
+            Array.Copy(race, 0, frame, 3, race.Length);
+            Trace?.Invoke(">", frame);
+            if (!dev.Write(frame, TimeoutMs)) return null;
+
+            return ReadUntil(dev, r =>
+            {
+                if (r.Length < 3 || r[0] != id || r[1] != 0x80 || r[2] > r.Length - 3) return null;
+                return FindFrame(r, 3, r[2], matches);
+            });
+        }
+
+        /// <summary>
+        /// One input report can carry several RACE frames back to back: 50 49 xx xx + 4 bytes, a 16-bit payload
+        /// length, then the payload. The dongle also emits unsolicited status events (group 0x11), sometimes in
+        /// bursts, so the answer we're waiting for is often not the first frame in the report - walk them all.
+        /// </summary>
+        static byte[]? FindFrame(byte[] report, int offset, int length, Func<byte[], bool> matches)
+        {
+            const int HeaderLength = 10; // 50 49 + 6 bytes, of which the last two are the payload length
+            int end = Math.Min(offset + length, report.Length);
+            for (int pos = offset; pos + HeaderLength <= end;)
+            {
+                if (report[pos] != 0x50 || report[pos + 1] != 0x49) return null;
+                int payloadLength = report[pos + 8] | (report[pos + 9] << 8);
+                int frameEnd = pos + HeaderLength + payloadLength;
+                if (frameEnd > end) return null;
+                var frame = new byte[HeaderLength + payloadLength];
+                Array.Copy(report, pos, frame, 0, frame.Length);
+                if (matches(frame)) return frame;
+                pos = frameEnd;
+            }
+            return null;
+        }
+
+        /// <summary>Reads input reports until <paramref name="extract"/> returns non-null, or the timeout expires.
+        /// The dongle interleaves unrelated reports, which are skipped.</summary>
+        static byte[]? ReadUntil(HidDevice dev, Func<byte[], byte[]?> extract)
+        {
+            DateTime deadline = DateTime.UtcNow.AddMilliseconds(TimeoutMs);
+            while (DateTime.UtcNow < deadline)
+            {
+                int remaining = (int)(deadline - DateTime.UtcNow).TotalMilliseconds;
+                byte[]? r = dev.Read(Math.Max(remaining, 1));
+                if (r == null) return null;
+                Trace?.Invoke("<", r);
+                byte[]? result = extract(r);
+                if (result != null) return result;
+            }
+            return null;
+        }
+
+        /// <summary>Linear interpolation on the Li-ion discharge curve.</summary>
+        public static int ToPercent(int mv)
+        {
+            if (mv <= Curve[0]) return 0;
+            for (int i = 1; i < Curve.Length; i++)
+            {
+                if (mv < Curve[i])
+                    return (i - 1) * 10 + (mv - Curve[i - 1]) * 10 / (Curve[i] - Curve[i - 1]);
+            }
+            return 100;
+        }
+    }
+}
