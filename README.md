@@ -31,7 +31,7 @@ Bluetooth-устройства показываются, только пока �
 
 ## Установка
 
-1. Скачайте `BatteryTray-…-win-x64.zip` со страницы [Releases](../../releases/latest) и распакуйте.
+1. Скачайте `BatteryTray-…-win-x64.zip` со страницы [Releases](https://github.com/qu1ncky/BatteryTray/releases/latest) и распакуйте.
 2. Запустите `install.cmd` и подтвердите запрос администратора.
 3. Значок появится у часов. Windows 11 прячет новые значки под стрелку **^** — перетащите его на панель задач, чтобы цифра была видна всегда.
 
@@ -49,7 +49,7 @@ Bluetooth-устройства показываются, только пока �
 
 ## Моего устройства нет
 
-Выполните в PowerShell, пока устройство подключено, и пришлите результат в [Issues](../../issues):
+Выполните в PowerShell, пока устройство подключено, и пришлите результат в [Issues](https://github.com/qu1ncky/BatteryTray/issues):
 
 ```powershell
 Get-PnpDevice -PresentOnly | ? InstanceId -match '^USB\\VID_\w{4}&PID_\w{4}\\' | % { "{0}  {1}" -f $_.InstanceId.Substring(4,17), (Get-PnpDeviceProperty -InstanceId $_.InstanceId -KeyName DEVPKEY_Device_BusReportedDeviceDesc).Data }
