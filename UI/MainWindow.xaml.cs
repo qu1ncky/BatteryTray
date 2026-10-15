@@ -33,6 +33,7 @@ namespace BatteryTray.UI
             Closed += (_, _) => clock.Stop();
             LoadSettings();
             Refresh();
+            RefreshUpdate();
         }
 
         public void ShowAndActivate()
@@ -92,6 +93,7 @@ namespace BatteryTray.UI
             CriticalSlider.Value = s.CriticalPercent;
             RepeatSlider.Value = s.RepeatMinutes;
             SoundToggle.IsChecked = s.Sound;
+            AutoUpdateToggle.IsChecked = s.AutoUpdate;
             AutoStartToggle.IsChecked = AutoStart.IsRegistered();
             ElevationText.Text = Elevation.IsElevated
                 ? "Программа работает с правами администратора, поэтому видит и устройства, доступ к которым " +
@@ -126,8 +128,58 @@ namespace BatteryTray.UI
             s.CriticalPercent = (int)CriticalSlider.Value;
             s.RepeatMinutes = (int)RepeatSlider.Value;
             s.Sound = SoundToggle.IsChecked == true;
+            s.AutoUpdate = AutoUpdateToggle.IsChecked == true;
             UpdateLabels();
             app.SettingsChanged();
+        }
+
+        public void RefreshUpdate()
+        {
+            UpdateService u = app.Updates;
+            string latest = u.Latest?.Version.ToString(3) ?? "";
+            UpdateStatusText.Text = u.State switch
+            {
+                UpdateService.Stage.Checking => "Проверяю, нет ли новой версии…",
+                UpdateService.Stage.UpToDate => $"Установлена последняя версия {App.Version} · проверено в {u.LastCheck:HH:mm}",
+                UpdateService.Stage.Available => $"Доступна версия {latest}, у вас {App.Version}",
+                UpdateService.Stage.Installing => u.Progress is > 0 and < 100
+                    ? $"Загружаю версию {latest}: {u.Progress}%"
+                    : $"Устанавливаю версию {latest}…",
+                UpdateService.Stage.Failed => $"Не получилось: {u.Error}",
+                _ => $"Версия {App.Version}. Проверка обновлений начнётся через полминуты после запуска.",
+            };
+
+            bool offer = u.NewerAvailable && u.State is UpdateService.Stage.Available or UpdateService.Stage.Failed;
+            InstallUpdateButton.Content = $"Обновить до {latest}";
+            InstallUpdateButton.Visibility = offer ? Visibility.Visible : Visibility.Collapsed;
+            CheckUpdatesButton.IsEnabled = u.State is not (UpdateService.Stage.Checking or UpdateService.Stage.Installing);
+
+            string notes = u.NewerAvailable ? Plain(u.Latest!.Notes) : "";
+            UpdateNotesText.Text = notes.Length > 600 ? notes[..600].TrimEnd() + "…" : notes;
+            UpdateNotesText.Visibility = notes.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+
+            bool banner = u.NewerAvailable && u.State is UpdateService.Stage.Available or UpdateService.Stage.Installing;
+            UpdateBanner.Visibility = banner ? Visibility.Visible : Visibility.Collapsed;
+            UpdateBannerText.Text = u.State == UpdateService.Stage.Installing
+                ? UpdateStatusText.Text
+                : $"Доступна версия {latest}";
+            UpdateBannerButton.Visibility = u.State == UpdateService.Stage.Available ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        /// <summary>Release notes are Markdown; show them as plain text.</summary>
+        static string Plain(string markdown)
+        {
+            return markdown.Replace("**", "").Replace("`", "").Trim();
+        }
+
+        async void InstallUpdate_Click(object sender, RoutedEventArgs e)
+        {
+            await app.Updates.InstallAsync();
+        }
+
+        async void CheckUpdates_Click(object sender, RoutedEventArgs e)
+        {
+            await app.Updates.CheckAsync();
         }
 
         void Tab_Checked(object sender, RoutedEventArgs e)

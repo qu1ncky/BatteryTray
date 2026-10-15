@@ -21,6 +21,9 @@ namespace BatteryTray.Core
         public int CriticalPercent { get; set; } = 10;
         public int RepeatMinutes { get; set; } = 10;
         public bool Sound { get; set; } = true;
+        public bool AutoUpdate { get; set; } = true;
+        /// <summary>Version that ran last time; a different one means the app was just updated.</summary>
+        public string? LastRunVersion { get; set; }
         public Dictionary<string, DeviceSettings> Devices { get; set; } = new();
 
         static string FilePath => Path.Combine(Log.Folder, "settings.json");

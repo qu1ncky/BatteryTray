@@ -113,6 +113,18 @@
 
         <ScrollViewer x:Name="DevicesView" Grid.Row="2" VerticalScrollBarVisibility="Auto" Padding="0,0,6,0">
             <StackPanel>
+                <Border x:Name="UpdateBanner" Style="{StaticResource Card}" Margin="0,0,0,8" Padding="16,10"
+                        BorderBrush="{StaticResource AccentBrush}" Visibility="Collapsed">
+                    <Grid>
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                            <TextBlock Style="{StaticResource Glyph}" Text="&#xE896;" FontSize="16" Margin="0,0,10,0"
+                                       Foreground="{StaticResource AccentBrush}"/>
+                            <TextBlock x:Name="UpdateBannerText" VerticalAlignment="Center"/>
+                        </StackPanel>
+                        <Button x:Name="UpdateBannerButton" Style="{StaticResource AccentButton}" Content="Обновить"
+                                HorizontalAlignment="Right" Padding="12,5" Click="InstallUpdate_Click"/>
+                    </Grid>
+                </Border>
                 <ItemsControl x:Name="OnlineList" ItemTemplate="{StaticResource DeviceCard}"/>
                 <Border x:Name="NoOnline" Style="{StaticResource Card}" Margin="0,0,0,8">
                     <TextBlock Text="Сейчас ни одно устройство не на связи" Foreground="{StaticResource SecondaryBrush}"
@@ -165,6 +177,26 @@
 
                 <TextBlock Text="Устройства" Style="{StaticResource SectionHeader}" Margin="2,22,0,8"/>
                 <ItemsControl x:Name="DeviceSettingsList" ItemTemplate="{StaticResource DeviceSettingsRow}"/>
+
+                <TextBlock Text="Обновления" Style="{StaticResource SectionHeader}" Margin="2,14,0,8"/>
+                <Border Style="{StaticResource Card}">
+                    <StackPanel>
+                        <TextBlock x:Name="UpdateStatusText" TextWrapping="Wrap"/>
+                        <TextBlock x:Name="UpdateNotesText" FontSize="12" Foreground="{StaticResource SecondaryBrush}"
+                                   TextWrapping="Wrap" Margin="0,8,0,0" Visibility="Collapsed"/>
+                        <StackPanel Orientation="Horizontal" Margin="0,12,0,14">
+                            <Button x:Name="InstallUpdateButton" Style="{StaticResource AccentButton}" Margin="0,0,8,0"
+                                    Click="InstallUpdate_Click" Visibility="Collapsed"/>
+                            <Button x:Name="CheckUpdatesButton" Content="Проверить сейчас" Click="CheckUpdates_Click"/>
+                        </StackPanel>
+                        <CheckBox x:Name="AutoUpdateToggle" Style="{StaticResource Toggle}"
+                                  Content="Устанавливать обновления автоматически"
+                                  Checked="Setting_Changed" Unchecked="Setting_Changed"/>
+                        <TextBlock FontSize="12" Foreground="{StaticResource SecondaryBrush}" TextWrapping="Wrap"
+                                   Margin="0,6,0,0"
+                                   Text="Новая версия ставится, пока окна программы закрыты, и программа сама перезапускается."/>
+                    </StackPanel>
+                </Border>
 
                 <TextBlock Text="Система" Style="{StaticResource SectionHeader}" Margin="2,14,0,8"/>
                 <Border Style="{StaticResource Card}">

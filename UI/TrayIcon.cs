@@ -53,6 +53,11 @@ namespace BatteryTray.UI
             if (old != IntPtr.Zero) DestroyIcon(old);
         }
 
+        public void ShowNotice(string title, string text)
+        {
+            icon.ShowBalloonTip(8000, title, text, ToolTipIcon.Info);
+        }
+
         /// <summary>The label as large as fits the icon (from BarracudaBattery's IconRenderer, MIT).</summary>
         static Bitmap Render(Size size, string text, Color color)
         {

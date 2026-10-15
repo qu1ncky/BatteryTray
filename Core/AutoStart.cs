@@ -124,7 +124,8 @@ namespace BatteryTray.Core
             return code == 0;
         }
 
-        static bool RunSelfElevated(string argument)
+        /// <summary>Runs this exe with admin rights (UAC prompt) and the given switch; true when it exits with 0.</summary>
+        public static bool RunSelfElevated(string argument)
         {
             try
             {

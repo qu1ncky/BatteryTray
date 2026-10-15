@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Media;
 using System.Reflection;
@@ -23,6 +24,7 @@ namespace BatteryTray
         TrayIcon? tray;
         MainWindow? window;
         AlertWindow? alertWindow;
+        bool stopping; // exiting or restarting into an update: late poll results must not reopen windows
         readonly AlertManager alerts = new();
         readonly DispatcherTimer alertTimer = new() { Interval = TimeSpan.FromSeconds(30) };
         readonly DispatcherTimer saveTimer = new() { Interval = TimeSpan.FromMilliseconds(500) };
@@ -30,6 +32,7 @@ namespace BatteryTray
         public AppSettings Settings { get; private set; } = new();
         public StateStore State { get; private set; } = null!;
         public BatteryMonitor Watcher { get; private set; } = null!;
+        public UpdateService Updates { get; private set; } = null!;
 
         protected override void OnStartup(StartupEventArgs e)
         {
@@ -83,6 +86,12 @@ namespace BatteryTray
             };
 
             Settings = AppSettings.Load();
+            Updater.CleanUp();
+            string? updatedFrom = Settings.LastRunVersion != null && Settings.LastRunVersion != Version
+                ? Settings.LastRunVersion
+                : null;
+            Settings.LastRunVersion = Version;
+            Settings.Save();
             State = StateStore.Load();
             Watcher = new BatteryMonitor(ProviderList.Create(State), State);
             Watcher.Changed += OnDevicesChanged;
@@ -102,9 +111,16 @@ namespace BatteryTray
 
             activator = new InstanceActivator(ShowMainWindow);
 
-            Log.Write($"started v{Version}, elevated={Elevation.IsElevated}");
+            Updates = new UpdateService(Settings, () => window != null || alertWindow != null, AnnounceUpdate,
+                RestartIntoUpdate);
+            Updates.Changed += () => window?.RefreshUpdate();
+
+            Log.Write($"started v{Version}, elevated={Elevation.IsElevated}" +
+                      (updatedFrom != null ? $", updated from v{updatedFrom}" : ""));
             Watcher.Start();
+            Updates.Start();
             UpdateTray();
+            if (updatedFrom != null) tray.ShowNotice("BatteryTray обновлён", $"Установлена версия {Version}.");
             // The logon task starts it with --background; started any other way, show the window
             if (!e.Args.Contains(AutoStart.BackgroundSwitch)) ShowMainWindow();
         }
@@ -161,6 +177,7 @@ namespace BatteryTray
 
         void OnDevicesChanged()
         {
+            if (stopping) return;
             UpdateTray();
             window?.Refresh();
             EvaluateAlerts();
@@ -191,7 +208,7 @@ namespace BatteryTray
 
         void EvaluateAlerts()
         {
-            if (Watcher == null) return;
+            if (Watcher == null || stopping) return;
             IReadOnlyList<AlertItem> due = alerts.Due(Rows(), Settings, DateTime.Now);
             if (due.Count == 0)
             {
@@ -238,17 +255,61 @@ namespace BatteryTray
             alertWindow = null;
         }
 
+        /// <summary>Announced once per version when it can't install by itself (needs an admin prompt, or automatic
+        /// updates are off).</summary>
+        void AnnounceUpdate(ReleaseInfo release)
+        {
+            tray?.ShowNotice($"Доступна версия BatteryTray {release.Version.ToString(3)}",
+                "Откройте BatteryTray → Настройки → Обновления, чтобы установить.");
+        }
+
+        /// <summary>The new exe is in place: start it and step aside. The new copy can only start once this one has
+        /// released the single-instance mutex and the activator window, so tear down first.</summary>
+        void RestartIntoUpdate(ReleaseInfo release)
+        {
+            Log.Write($"restarting into v{release.Version.ToString(3)}");
+            bool reopen = window != null;
+            string exe = Environment.ProcessPath!;
+            TearDown();
+            if (!Elevation.IsElevated && AutoStart.IsInstalled && AutoStart.IsRegistered())
+            {
+                // Through the task, so an install in Program Files comes back with admin rights
+                AutoStart.RunTask();
+                for (int i = 0; reopen && i < 50 && !InstanceActivator.SignalRunning(); i++) Thread.Sleep(100);
+            }
+            else
+            {
+                // An elevated process starts the new copy elevated too
+                Process.Start(new ProcessStartInfo(exe, reopen ? "" : AutoStart.BackgroundSwitch) { UseShellExecute = false });
+            }
+            Shutdown();
+        }
+
         void ExitApp()
         {
             Log.Write("exit");
+            TearDown();
+            Shutdown();
+        }
+
+        void TearDown()
+        {
+            stopping = true;
             Watcher.Dispose();
             State.Save();
             Settings.Save();
             CloseAlert();
             window?.Close();
             tray?.Dispose();
+            tray = null;
             activator?.Dispose();
-            Shutdown();
+            activator = null;
+            if (single != null)
+            {
+                single.ReleaseMutex();
+                single.Dispose();
+                single = null;
+            }
         }
     }
 }
