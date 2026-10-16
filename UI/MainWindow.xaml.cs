@@ -93,6 +93,7 @@ namespace BatteryTray.UI
             CriticalSlider.Value = s.CriticalPercent;
             RepeatSlider.Value = s.RepeatMinutes;
             SoundToggle.IsChecked = s.Sound;
+            ChargedToggle.IsChecked = s.NotifyCharged;
             AutoUpdateToggle.IsChecked = s.AutoUpdate;
             AutoStartToggle.IsChecked = AutoStart.IsRegistered();
             ElevationText.Text = Elevation.IsElevated
@@ -128,6 +129,7 @@ namespace BatteryTray.UI
             s.CriticalPercent = (int)CriticalSlider.Value;
             s.RepeatMinutes = (int)RepeatSlider.Value;
             s.Sound = SoundToggle.IsChecked == true;
+            s.NotifyCharged = ChargedToggle.IsChecked == true;
             s.AutoUpdate = AutoUpdateToggle.IsChecked == true;
             UpdateLabels();
             app.SettingsChanged();

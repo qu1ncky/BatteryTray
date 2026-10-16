@@ -21,6 +21,8 @@ namespace BatteryTray.Core
         public int CriticalPercent { get; set; } = 10;
         public int RepeatMinutes { get; set; } = 10;
         public bool Sound { get; set; } = true;
+        /// <summary>A Windows notification when a device finishes charging.</summary>
+        public bool NotifyCharged { get; set; } = true;
         public bool AutoUpdate { get; set; } = true;
         /// <summary>Version that ran last time; a different one means the app was just updated.</summary>
         public string? LastRunVersion { get; set; }

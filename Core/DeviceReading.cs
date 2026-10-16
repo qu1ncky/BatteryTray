@@ -17,6 +17,8 @@ namespace BatteryTray.Core
         /// <summary>0-100, or null when the device doesn't report a level right now.</summary>
         public int? Level { get; init; }
         public bool Charging { get; init; }
+        /// <summary>The provider sees a charge finish while the cable is still in, so "charged" can be announced.</summary>
+        public bool ReportsFull { get; init; }
         /// <summary>Extra text for the UI: the voltage, or why there is no reading.</summary>
         public string? Detail { get; init; }
         public DateTime Time { get; init; } = DateTime.Now;

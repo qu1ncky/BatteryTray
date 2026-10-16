@@ -56,7 +56,7 @@ namespace BatteryTray.Providers
                 new DeviceReading
                 {
                     Id = Id, Name = DeviceName, Kind = DeviceKind.Headset, Via = "2.4 ГГц", Online = true,
-                    Level = level >= 0 ? level : null, Charging = charging,
+                    Level = level >= 0 ? level : null, Charging = charging, ReportsFull = true,
                     Detail = !charging ? $"{r.Millivolts / 1000.0:0.00} В" : level >= 0 ? "уровень до зарядки" : null,
                 },
             };

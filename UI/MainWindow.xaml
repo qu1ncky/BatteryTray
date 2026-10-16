@@ -170,6 +170,13 @@
 
                         <CheckBox x:Name="SoundToggle" Style="{StaticResource Toggle}" Content="Звуковой сигнал"
                                   Checked="Setting_Changed" Unchecked="Setting_Changed"/>
+
+                        <CheckBox x:Name="ChargedToggle" Style="{StaticResource Toggle}" Margin="0,12,0,0"
+                                  Content="Сообщать, когда зарядка завершена"
+                                  Checked="Setting_Changed" Unchecked="Setting_Changed"/>
+                        <TextBlock Text="Уведомлением Windows. Пока для Razer Barracuda X: остальные устройства на кабеле не дают понять, что уже зарядились"
+                                   FontSize="12" Foreground="{StaticResource SecondaryBrush}" TextWrapping="Wrap"
+                                   Margin="0,4,0,0"/>
                     </StackPanel>
                 </Border>
                 <Button Content="Показать пример напоминания" HorizontalAlignment="Left" Margin="0,8,0,0"

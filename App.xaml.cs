@@ -26,6 +26,7 @@ namespace BatteryTray
         AlertWindow? alertWindow;
         bool stopping; // exiting or restarting into an update: late poll results must not reopen windows
         readonly AlertManager alerts = new();
+        readonly ChargeDoneWatcher chargeDone = new();
         readonly DispatcherTimer alertTimer = new() { Interval = TimeSpan.FromSeconds(30) };
         readonly DispatcherTimer saveTimer = new() { Interval = TimeSpan.FromMilliseconds(500) };
 
@@ -181,7 +182,20 @@ namespace BatteryTray
             UpdateTray();
             window?.Refresh();
             EvaluateAlerts();
+            AnnounceCharged();
             State.SaveIfDirty();
+        }
+
+        /// <summary>A plain Windows notification: unlike a low battery, nothing needs doing right away.</summary>
+        void AnnounceCharged()
+        {
+            foreach (DeviceRow row in chargeDone.Finished(Rows()))
+            {
+                Log.Write($"charged: {row.Name} {row.Current!.Level}%");
+                DeviceSettings ds = Settings.For(row.Id);
+                if (!Settings.NotifyCharged || ds.Hidden || !ds.Alerts) continue;
+                tray?.ShowNotice("Зарядка завершена", $"{row.Name} — {row.Current.Level}%. Кабель можно отключать.");
+            }
         }
 
         void UpdateTray()
