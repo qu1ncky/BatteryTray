@@ -12,8 +12,8 @@ $dist = Join-Path $root 'dist'
 $stage = Join-Path $dist "BatteryTray-$version"
 if (Test-Path $dist) { Remove-Item $dist -Recurse -Force }
 New-Item -ItemType Directory -Force -Path $stage | Out-Null
-$files = 'publish\BatteryTray.exe', 'install.cmd', 'install.ps1', 'uninstall.cmd', 'uninstall.ps1', 'README.md', 'LICENSE',
-    'THIRD_PARTY_NOTICES.md'
+$files = 'publish\BatteryTray.exe', 'install.cmd', 'install.ps1', 'uninstall.cmd', 'uninstall.ps1', 'README.md',
+    'README.ru.md', 'README.zh-CN.md', 'LICENSE', 'THIRD_PARTY_NOTICES.md'
 foreach ($f in $files) { Copy-Item (Join-Path $root $f) $stage }
 
 $zip = Join-Path $dist "BatteryTray-$version-win-x64.zip"
