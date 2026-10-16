@@ -17,6 +17,8 @@ namespace BatteryTray.Providers
         const string NeedsAdmin = "нужны права администратора";
         const int NotChargingChecks = 3; // polls in a row without charging before the level may move again
         const int ChargerRiseMv = 15;    // a charger lifts the voltage at least this much above the resting one
+        const int HoldMv = 4195;         // the charger's last stage holds the battery at exactly 4.20 V
+        static readonly TimeSpan SettleQuiet = TimeSpan.FromSeconds(50), SettleMax = TimeSpan.FromMinutes(5);
 
         readonly StateStore state;
         int shownPercent;
@@ -25,6 +27,14 @@ namespace BatteryTray.Providers
         int? restingMv; // median voltage of the last poll on battery; unknown after the headset was away
         HeadsetEvents? events;
         bool seeded;
+
+        // The current stay on the cable, as the voltage shows it
+        DateTime? cableSince;
+        int cableStartMv;
+        bool sawHold, full;
+        int? levelBeforeCable, lastLevel;
+        DateTime? unpluggedAt;
+        bool settling;
 
         public RazerBarracudaProvider(StateStore state)
         {
@@ -62,67 +72,115 @@ namespace BatteryTray.Providers
                     events.Seed(last);
                 seeded = true;
             }
-            var (percent, charger) = events.Current();
+            HeadsetEvents.Snapshot ev = events.Current();
 
-            // Once the headset has reported the charger and its level, a couple of samples just confirm it's on
-            BatteryReading? r = BarracudaProtocol.Read(candidates, percent != null && charger != null ? 2 : BarracudaProtocol.ChargeSamples, out string? status);
+            // On battery with the headset's own level known, a couple of samples just confirm it's on; on the cable
+            // the voltage shows the charger's stage, so take the full set
+            BatteryReading? r = BarracudaProtocol.Read(candidates,
+                ev.Percent != null && ev.Charger == false ? 2 : BarracudaProtocol.ChargeSamples, out string? status);
             if (r == null)
             {
                 restingMv = null;
                 return new[] { Offline(status == "headset off or out of range" ? null : status) };
             }
 
-            bool charging;
-            if (charger is bool plugged)
+            bool onCable;
+            if (ev.Charger is bool plugged)
             {
-                charging = plugged;
+                onCable = plugged;
                 chargingSticky = plugged;
                 notChargingStreak = 0;
                 if (!plugged) restingMv = r.Median;
             }
             else
-                charging = IsCharging(r);
+                onCable = IsCharging(r); // until the headset has said, the voltage tells whether a charger is on
 
-            int? level;
-            bool estimate = false, full = false;
-            string? detail = null;
-            if (percent is int own)
+            DeviceReading reading = onCable ? OnCable(r) : OnBattery(r, ev);
+            return new[] { reading };
+        }
+
+        /// <summary>
+        /// On the cable no level is shown: the voltage is the charger's, and the headset's own number is no better -
+        /// it just climbs 1% per 20 s check towards the 100% that 4.20 V means (a charge that takes over an hour for
+        /// the last quarter). What the voltage does show is the charger's stage: rising, then held at exactly 4.20 V
+        /// for the last stretch, then let go once the battery is full - that is "charged".
+        /// </summary>
+        DeviceReading OnCable(BatteryReading r)
+        {
+            settling = false;
+            if (cableSince == null)
             {
-                level = own;
+                cableSince = DateTime.Now;
+                cableStartMv = r.Millivolts;
+                sawHold = full = false;
+                levelBeforeCable = lastLevel;
+            }
+            bool hold = r.Millivolts >= HoldMv;
+            if (hold)
+            {
+                sawHold = true;
+                full = false; // a top-up of a full battery starts with a new hold
+            }
+            else if (sawHold && r.Millivolts < BarracudaProtocol.ChargeVoltageMv)
+                full = true;
+            else if (!sawHold && DateTime.Now - cableSince > TimeSpan.FromMinutes(10) && r.Millivolts >= 4100
+                     && r.Millivolts - cableStartMv < 10)
+                full = true; // plugged in already full: the charger never started, the voltage just sits there
+
+            if (full)
+            {
+                levelBeforeCable = 100; // a top-up from here starts full
+                return Online(100, false, charging: false, full: true, "кабель можно отключать");
+            }
+            string stage = hold ? "последний этап зарядки" : "процент на зарядке не виден";
+            return Online(null, false, charging: true, full: false,
+                levelBeforeCable is int before ? $"{stage}, до зарядки было {before}%" : stage);
+        }
+
+        /// <summary>
+        /// On battery: the headset's own number, which it sends whenever it moves. Right after the cable comes out
+        /// that number slides down 1% per 20 s check while the voltage settles (92, 91, 90, 89, then quiet), so it
+        /// is held back until it has been still for a while.
+        /// </summary>
+        DeviceReading OnBattery(BatteryReading r, HeadsetEvents.Snapshot ev)
+        {
+            if (cableSince != null)
+            {
+                cableSince = null;
+                unpluggedAt = DateTime.Now;
+            }
+            DateTime now = DateTime.Now;
+            settling = unpluggedAt is DateTime u && now - u < SettleMax
+                       && (now - u < SettleQuiet || now - ev.PercentTime < SettleQuiet);
+            if (settling)
+                return Online(null, false, charging: false, full: false, "после зарядки процент уточняется, это пара минут");
+            unpluggedAt = null;
+
+            if (ev.Percent is int own)
+            {
                 shownPercent = own; // a later voltage estimate starts from the headset's number
-                if (charging && own >= 100)
-                {
-                    charging = false;
-                    full = true;
-                    detail = "кабель можно отключать";
-                }
+                lastLevel = own;
+                return Online(own, false, charging: false, full: false, null);
             }
-            else if (charging)
+            int level = Step(r.Percent);
+            lastLevel = level;
+            return Online(level, true, charging: false, full: false,
+                $"оценка по напряжению {r.Millivolts / 1000.0:0.00} В, точный процент наушники пришлют, когда он изменится");
+        }
+
+        static DeviceReading Online(int? level, bool estimate, bool charging, bool full, string? detail)
+        {
+            return new DeviceReading
             {
-                // The charger lifts the voltage, so it says nothing about the level: show none rather than a wrong one
-                level = null;
-                detail = "процент пришлют наушники, обычно в течение 20 секунд";
-            }
-            else
-            {
-                level = Step(r.Percent);
-                estimate = true;
-                detail = $"оценка по напряжению {r.Millivolts / 1000.0:0.00} В, точный процент наушники пришлют, когда он изменится";
-            }
-            return new[]
-            {
-                new DeviceReading
-                {
-                    Id = Id, Name = DeviceName, Kind = DeviceKind.Headset, Via = "2.4 ГГц", Online = true,
-                    Level = level, Estimate = estimate, Charging = charging, FullOnCharger = full, Detail = detail,
-                },
+                Id = Id, Name = DeviceName, Kind = DeviceKind.Headset, Via = "2.4 ГГц", Online = true,
+                Level = level, Estimate = estimate, Charging = charging, FullOnCharger = full, Detail = detail,
             };
         }
 
         public TimeSpan Delay(IReadOnlyList<DeviceReading> last)
         {
             if (last.Count == 0) return TimeSpan.FromSeconds(15);
-            if (last[0].Online) return TimeSpan.FromSeconds(60);
+            if (last[0].Online) return TimeSpan.FromSeconds(settling ? 15 : 60);
             // Headset off or on Bluetooth: look again soon. No access won't fix itself, so check rarely.
             return last[0].Detail == NeedsAdmin ? TimeSpan.FromMinutes(5) : TimeSpan.FromSeconds(15);
         }
@@ -204,6 +262,7 @@ namespace BatteryTray.Providers
         volatile bool stopped;
         int? percent;
         bool? charger;
+        DateTime percentTime, chargerChanged;
 
         public HeadsetEvents(HidInfo info, Action changed)
         {
@@ -215,9 +274,12 @@ namespace BatteryTray.Providers
         public string Path => info.Path;
         public bool Running { get; private set; } = true;
 
-        public (int? Percent, bool? Charger) Current()
+        /// <param name="PercentTime">When the level last changed (the headset only sends changes).</param>
+        public readonly record struct Snapshot(int? Percent, DateTime PercentTime, bool? Charger, DateTime ChargerChanged);
+
+        public Snapshot Current()
         {
-            lock (gate) return (percent, charger);
+            lock (gate) return new Snapshot(percent, percentTime, charger, chargerChanged);
         }
 
         /// <summary>A level remembered from just before a restart of the app, used until the headset sends one.</summary>
@@ -282,11 +344,13 @@ namespace BatteryTray.Providers
                 {
                     news = percent != value;
                     percent = value;
+                    if (news) percentTime = DateTime.Now;
                 }
                 else if (id == ChargerEvent && value <= 1)
                 {
                     news = charger != (value == 1);
                     charger = value == 1;
+                    if (news) chargerChanged = DateTime.Now;
                     if (news) Log.Write($"Barracuda: наушники сообщили, что кабель {(value == 1 ? "подключён" : "отключён")}");
                 }
                 else return;
