@@ -18,6 +18,7 @@ namespace BatteryTray.Providers
         const int NotChargingChecks = 3; // polls in a row without charging before the level may move again
         const int ChargerRiseMv = 15;    // a charger lifts the voltage at least this much above the resting one
         const int HoldMv = 4195;         // the charger's last stage holds the battery at exactly 4.20 V
+        const int FullRestMv = 4145;     // a full battery right after the charger stops: 4.155 V (measured)
         static readonly TimeSpan SettleQuiet = TimeSpan.FromSeconds(50), SettleMax = TimeSpan.FromMinutes(5);
 
         readonly StateStore state;
@@ -35,6 +36,7 @@ namespace BatteryTray.Providers
         int? levelBeforeCable, lastLevel;
         DateTime? unpluggedAt;
         bool settling;
+        bool completed, completedShown;
 
         public RazerBarracudaProvider(StateStore state)
         {
@@ -112,7 +114,7 @@ namespace BatteryTray.Providers
             {
                 cableSince = DateTime.Now;
                 cableStartMv = r.Millivolts;
-                sawHold = full = false;
+                sawHold = full = completed = false;
                 levelBeforeCable = lastLevel;
             }
             bool hold = r.Millivolts >= HoldMv;
@@ -147,7 +149,27 @@ namespace BatteryTray.Providers
             if (cableSince != null)
             {
                 cableSince = null;
-                unpluggedAt = DateTime.Now;
+                // The headset says "not charging" both when the cable comes out and when its charger stops at full
+                // with the cable still in. After the last stage a full battery rests at 4.155 V, one unplugged early
+                // well below (4.13 V at ~90%) - that tells "charged" from "unplugged".
+                if (sawHold && r.Millivolts >= FullRestMv)
+                {
+                    completed = true;
+                    completedShown = false;
+                }
+                else
+                    unpluggedAt = DateTime.Now;
+            }
+            if (completed)
+            {
+                // "Charged" until the headset's own number moves off 100: then it's in use on battery
+                if (!completedShown || (ev.Percent ?? 100) >= 100)
+                {
+                    completedShown = true;
+                    lastLevel = 100;
+                    return Online(100, false, charging: false, full: true, "кабель можно отключать");
+                }
+                completed = false;
             }
             DateTime now = DateTime.Now;
             settling = unpluggedAt is DateTime u && now - u < SettleMax
@@ -244,7 +266,7 @@ namespace BatteryTray.Providers
     /// payload [id 02 01 value]:
     ///   0x20 - headset link: 01 connected (switched on), 00 lost (switched off); the moment it happens;
     ///   0x21 - the headset's own battery percentage, and right after it
-    ///   0x2A - the charger: 01 plugged in, 00 unplugged.
+    ///   0x2A - charging: 01 charging, 00 not - the cable came out, or the charger stopped at full with the cable in.
     /// The headset checks about every 20 s and sends the pair when the level differs from the one it sent last: the
     /// cable going in, every 20 s while charging, 92, 91, 90... on battery. Switched off and on again it stays quiet
     /// if the level is unchanged (seen: 88% before, nothing after) and sends it if it moved meanwhile (seen: 92 before,
@@ -395,8 +417,8 @@ namespace BatteryTray.Providers
         public const int ChargeVoltageMv = 4180; // above any resting voltage, so the charger must be connected
 
         // Battery voltage (mV) for 0%, 10%, ... 100%: typical Li-ion discharge curve, checked against the Razer
-        // mobile app (3975 mV = 70%) and against the headset's own number at the top (4113 mV = 87%, 4128 mV = 89%).
-        static readonly int[] Curve = { 3300, 3680, 3750, 3790, 3830, 3870, 3910, 3960, 4050, 4135, 4190 };
+        // mobile app (3975 mV = 70%) and against the headset at the top (4113 mV = 87%; full at rest 4155 mV).
+        static readonly int[] Curve = { 3300, 3680, 3750, 3790, 3830, 3870, 3910, 3960, 4050, 4122, 4160 };
 
         static byte sequence;
 
