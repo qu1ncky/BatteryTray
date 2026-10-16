@@ -201,10 +201,15 @@ namespace BatteryTray
         void UpdateTray()
         {
             if (tray == null) return;
-            var live = Rows().Where(r => r.Online && r.Current!.Level != null && !Settings.For(r.Id).Hidden).ToList();
-            string tip = live.Count == 0
-                ? "Заряд устройств: нет данных"
-                : string.Join("\n", live.Select(r => $"{Short(r.Name)}: {r.Current!.Level}%{(r.Current.Charging ? " ⚡" : "")}"));
+            var shown = Rows().Where(r => r.Online && !Settings.For(r.Id).Hidden).ToList();
+            var live = shown.Where(r => r.Current!.Level != null).ToList();
+            // A device charging without a readable level is listed too, without a made-up number
+            var lines = shown.Where(r => r.Current!.Level != null || r.Current.Charging)
+                .Select(r => r.Current!.Level is int l
+                    ? $"{Short(r.Name)}: {(r.Current.Estimate ? "≈" : "")}{l}%{(r.Current.Charging ? " ⚡" : "")}"
+                    : $"{Short(r.Name)}: заряжается ⚡")
+                .ToList();
+            string tip = lines.Count == 0 ? "Заряд устройств: нет данных" : string.Join("\n", lines);
 
             // The icon shows the device that will run out first; charging ones only when nothing else is left
             DeviceRow? pick = live.Where(r => !r.Current!.Charging).OrderBy(r => r.Current!.Level).FirstOrDefault()

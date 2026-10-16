@@ -10,7 +10,7 @@ using BatteryTray.Hid;
 
 namespace BatteryTray.Providers
 {
-    public sealed class RazerBarracudaProvider : IBatteryProvider
+    public sealed class RazerBarracudaProvider : IBatteryProvider, IPushingProvider
     {
         const string Id = "razer:barracuda-x";
         const string DeviceName = "Razer Barracuda X";
@@ -23,41 +23,98 @@ namespace BatteryTray.Providers
         bool chargingSticky;
         int notChargingStreak;
         int? restingMv; // median voltage of the last poll on battery; unknown after the headset was away
+        HeadsetEvents? events;
+        bool seeded;
 
         public RazerBarracudaProvider(StateStore state)
         {
             this.state = state;
-            shownPercent = state.Get(Id)?.Level ?? -1; // survives restarts, so a restart while charging still has a level
+            shownPercent = state.Get(Id)?.Level ?? -1;
         }
 
         public string Name => DeviceName;
 
+        public event Action? Pushed;
+
         public IReadOnlyList<DeviceReading> Poll()
         {
             List<HidInfo> all = HidBus.Enumerate((v, p) => v == BarracudaProtocol.RazerVid && BarracudaProtocol.DonglePids.Contains(p));
-            if (all.Count == 0) return Array.Empty<DeviceReading>(); // dongle unplugged
+            if (all.Count == 0)
+            {
+                // Dongle unplugged
+                events?.Dispose();
+                events = null;
+                return Array.Empty<DeviceReading>();
+            }
 
             List<HidInfo> candidates = BarracudaProtocol.ControlInterfaces(all);
             if (candidates.Count == 0)
                 return new[] { Offline(all.Any(i => i.AccessDenied) ? NeedsAdmin : "приёмник не отвечает") };
 
-            BatteryReading? r = BarracudaProtocol.Read(candidates, out string? status);
+            if (events == null || !events.Running || events.Path != candidates[0].Path)
+            {
+                events?.Dispose();
+                events = new HeadsetEvents(candidates[0], () => Pushed?.Invoke());
+                // The headset only sends its level when it changes. After a quick restart of the app (an update)
+                // the number it sent just before is still right, and better than the voltage estimate.
+                if (!seeded && state.Get(Id) is { Estimate: false, Charging: false, Level: int last } before
+                    && DateTime.Now - before.Time < TimeSpan.FromMinutes(2))
+                    events.Seed(last);
+                seeded = true;
+            }
+            var (percent, charger) = events.Current();
+
+            // Once the headset has reported the charger and its level, a couple of samples just confirm it's on
+            BatteryReading? r = BarracudaProtocol.Read(candidates, percent != null && charger != null ? 2 : BarracudaProtocol.ChargeSamples, out string? status);
             if (r == null)
             {
-                restingMv = null; // it may come back charged
+                restingMv = null;
                 return new[] { Offline(status == "headset off or out of range" ? null : status) };
             }
 
-            bool charging = IsCharging(r);
-            // The charger raises the voltage, so while charging keep the level from before it was plugged in
-            int level = charging ? shownPercent : Step(r.Percent);
+            bool charging;
+            if (charger is bool plugged)
+            {
+                charging = plugged;
+                chargingSticky = plugged;
+                notChargingStreak = 0;
+                if (!plugged) restingMv = r.Median;
+            }
+            else
+                charging = IsCharging(r);
+
+            int? level;
+            bool estimate = false, full = false;
+            string? detail = null;
+            if (percent is int own)
+            {
+                level = own;
+                shownPercent = own; // a later voltage estimate starts from the headset's number
+                if (charging && own >= 100)
+                {
+                    charging = false;
+                    full = true;
+                    detail = "кабель можно отключать";
+                }
+            }
+            else if (charging)
+            {
+                // The charger lifts the voltage, so it says nothing about the level: show none rather than a wrong one
+                level = null;
+                detail = "процент пришлют наушники, обычно в течение 20 секунд";
+            }
+            else
+            {
+                level = Step(r.Percent);
+                estimate = true;
+                detail = $"оценка по напряжению {r.Millivolts / 1000.0:0.00} В, точный процент наушники пришлют, когда он изменится";
+            }
             return new[]
             {
                 new DeviceReading
                 {
                     Id = Id, Name = DeviceName, Kind = DeviceKind.Headset, Via = "2.4 ГГц", Online = true,
-                    Level = level >= 0 ? level : null, Charging = charging, ReportsFull = true,
-                    Detail = !charging ? $"{r.Millivolts / 1000.0:0.00} В" : level >= 0 ? "уровень до зарядки" : null,
+                    Level = level, Estimate = estimate, Charging = charging, FullOnCharger = full, Detail = detail,
                 },
             };
         }
@@ -79,9 +136,10 @@ namespace BatteryTray.Providers
         }
 
         /// <summary>
-        /// Charging starts when the samples swing and the voltage also rose above the resting one: a load or a glitch
-        /// can make the samples swing, but only a charger lifts the voltage. (With no resting voltage yet - right after
-        /// start or after the headset was away - the swing alone has to do.)
+        /// Fallback until the headset has reported the charger itself. Charging starts when the samples swing and the
+        /// voltage also rose above the resting one: a load or a glitch can make the samples swing, but only a charger
+        /// lifts the voltage. (With no resting voltage yet - right after start or after the headset was away - the
+        /// swing alone has to do.) Near full the charger holds a flat 4.20 V, caught by the voltage threshold.
         /// Charging detection can miss a check (the voltage swing isn't always visible in one sample window), and a
         /// single miss would let the charger-inflated voltage update the level. So charging sticks until several
         /// checks in a row say otherwise.
@@ -122,6 +180,121 @@ namespace BatteryTray.Providers
         }
     }
 
+    /// <summary>
+    /// What the headset reports by itself through the dongle, found by listening to the dongle while plugging the
+    /// cable in and out and switching the headset off and on. Notification frames (RACE frame type 0x08) with the
+    /// payload [id 02 01 value]:
+    ///   0x20 - headset link: 01 connected (switched on), 00 lost (switched off); the moment it happens;
+    ///   0x21 - the headset's own battery percentage, and right after it
+    ///   0x2A - the charger: 01 plugged in, 00 unplugged.
+    /// The headset checks about every 20 s and sends the pair when the level differs from the one it sent last: the
+    /// cable going in, every 20 s while charging, 92, 91, 90... on battery. Switched off and on again it stays quiet
+    /// if the level is unchanged (seen: 88% before, nothing after) and sends it if it moved meanwhile (seen: 92 before,
+    /// 91 ~17 s after) - so the last level heard stays right across a power cycle.
+    /// The headset's number beats the voltage estimate (it said 92% where the voltage curve said 96%) and keeps
+    /// counting while charging, when the voltage is useless. Passive: it only reads, on its own handle.
+    /// </summary>
+    sealed class HeadsetEvents : IDisposable
+    {
+        const byte NotificationFrame = 0x08, LinkEvent = 0x20, BatteryEvent = 0x21, ChargerEvent = 0x2A;
+
+        readonly object gate = new();
+        readonly HidInfo info;
+        readonly Action changed;
+        volatile bool stopped;
+        int? percent;
+        bool? charger;
+
+        public HeadsetEvents(HidInfo info, Action changed)
+        {
+            this.info = info;
+            this.changed = changed;
+            new Thread(Listen) { IsBackground = true, Name = "Barracuda events" }.Start();
+        }
+
+        public string Path => info.Path;
+        public bool Running { get; private set; } = true;
+
+        public (int? Percent, bool? Charger) Current()
+        {
+            lock (gate) return (percent, charger);
+        }
+
+        /// <summary>A level remembered from just before a restart of the app, used until the headset sends one.</summary>
+        public void Seed(int level)
+        {
+            lock (gate)
+            {
+                percent ??= level;
+            }
+        }
+
+        /// <summary>Stops within a second. The listening thread owns the handle and closes it itself, so no read
+        /// is ever left pending on a closed handle.</summary>
+        public void Dispose()
+        {
+            stopped = true;
+        }
+
+        void Listen()
+        {
+            try
+            {
+                using var dev = new HidDevice(info, readOnly: true);
+                byte reportId = BarracudaProtocol.ReportId(info);
+                while (!stopped)
+                {
+                    byte[]? r = dev.Read(1000);
+                    if (r != null) Process(r, reportId);
+                }
+            }
+            catch (Exception e)
+            {
+                if (!stopped) Log.Write("Barracuda events: " + e.Message);
+            }
+            finally
+            {
+                Running = false;
+            }
+        }
+
+        /// <summary>Takes the notifications out of one input report of the dongle.</summary>
+        internal void Process(byte[] report, byte reportId)
+        {
+            foreach (byte[] f in BarracudaProtocol.Frames(report, reportId))
+                if (f.Length >= 14 && f[2] == NotificationFrame && f[11] == 0x02) Handle(f[10], f[13]);
+        }
+
+        void Handle(byte id, byte value)
+        {
+            bool news;
+            lock (gate)
+            {
+                if (id == LinkEvent && value <= 1)
+                {
+                    // The level stays (see above), but the cable may have come out while the headset was off and the
+                    // charger is only reported along with a changed level: back to the voltage for that
+                    news = true;
+                    charger = null;
+                    Log.Write($"Barracuda: наушники {(value == 1 ? "на связи" : "отключились")}");
+                }
+                else if (id == BatteryEvent && value <= 100)
+                {
+                    news = percent != value;
+                    percent = value;
+                }
+                else if (id == ChargerEvent && value <= 1)
+                {
+                    news = charger != (value == 1);
+                    charger = value == 1;
+                    if (news) Log.Write($"Barracuda: наушники сообщили, что кабель {(value == 1 ? "подключён" : "отключён")}");
+                }
+                else return;
+            }
+            if (news) changed();
+        }
+    }
+
     public sealed class BatteryReading
     {
         /// <summary>Lowest sample: a charger lifts every sample, so the minimum is closest to the resting voltage.</summary>
@@ -153,13 +326,13 @@ namespace BatteryTray.Providers
         const ushort VendorUsagePage = 0xFF00;
         const int TimeoutMs = 800;
         const byte RaceGetBattery = 0x31;
-        const int ChargeSamples = 7;      // spread over ~2 s: consecutive samples can match while charging
+        public const int ChargeSamples = 7; // spread over ~2 s: consecutive samples can match while charging
         const int ChargeJitterMv = 12;    // spread across samples: ~3 mV on battery, 30-45 mV while charging
         public const int ChargeVoltageMv = 4180; // above any resting voltage, so the charger must be connected
 
-        // Battery voltage (mV) for 0%, 10%, ... 100%: typical Li-ion discharge curve,
-        // checked against the Razer mobile app (3975 mV = 70%).
-        static readonly int[] Curve = { 3300, 3680, 3750, 3790, 3830, 3870, 3910, 3960, 4020, 4080, 4150 };
+        // Battery voltage (mV) for 0%, 10%, ... 100%: typical Li-ion discharge curve, checked against the Razer
+        // mobile app (3975 mV = 70%) and against the headset's own number at the top (4113 mV = 87%, 4128 mV = 89%).
+        static readonly int[] Curve = { 3300, 3680, 3750, 3790, 3830, 3870, 3910, 3960, 4050, 4135, 4190 };
 
         static byte sequence;
 
@@ -178,7 +351,7 @@ namespace BatteryTray.Providers
 
         /// <summary>Tries each candidate interface until one answers. <paramref name="status"/> is null on success,
         /// otherwise says why there is no reading (headset away, or the last I/O error).</summary>
-        public static BatteryReading? Read(List<HidInfo> candidates, out string? status)
+        public static BatteryReading? Read(List<HidInfo> candidates, int samples, out string? status)
         {
             string? error = null;
             bool answered = false;
@@ -187,7 +360,7 @@ namespace BatteryTray.Providers
                 try
                 {
                     using var dev = new HidDevice(info);
-                    BatteryReading? reading = Query(dev);
+                    BatteryReading? reading = Query(dev, samples);
                     if (reading != null)
                     {
                         status = null;
@@ -208,14 +381,14 @@ namespace BatteryTray.Providers
 
         /// <summary>Report ID of the vendor collection: 0x02 = YS-Tech bridge, otherwise Macronix. Falls back to the
         /// product ID when the descriptor couldn't be read.</summary>
-        static byte ReportId(HidInfo info)
+        public static byte ReportId(HidInfo info)
         {
             if (info.OutputReportId != 0) return info.OutputReportId;
             return (byte)(info.ProductId == 0x0550 ? 0x02 : 0x01);
         }
 
         /// <summary>Returns null when the dongle is present but the headset doesn't answer (e.g. powered off).</summary>
-        static BatteryReading? Query(HidDevice dev)
+        static BatteryReading? Query(HidDevice dev, int sampleCount)
         {
             dev.Flush();
             if (ReportId(dev.Info) != 0x02 && !EnterMacronixAppMode(dev)) return null;
@@ -231,7 +404,7 @@ namespace BatteryTray.Providers
             var samples = new List<int>();
             try
             {
-                for (int i = 0; i < ChargeSamples; i++)
+                for (int i = 0; i < sampleCount; i++)
                 {
                     if (i > 0) Thread.Sleep(350);
                     reply = Race(dev, 0x06, 0x01, 0x00, RaceGetBattery);
@@ -356,26 +529,41 @@ namespace BatteryTray.Providers
         }
 
         /// <summary>
-        /// One input report can carry several RACE frames back to back: 50 49 xx xx + 4 bytes, a 16-bit payload
-        /// length, then the payload. The dongle also emits unsolicited status events (group 0x11), sometimes in
-        /// bursts, so the answer we're waiting for is often not the first frame in the report - walk them all.
+        /// One input report can carry several RACE frames back to back: 50 49, frame type (01 answer, 08 notification),
+        /// 5 more bytes, a 16-bit payload length, then the payload. The headset also sends notifications by itself
+        /// (see <see cref="HeadsetEvents"/>), sometimes in bursts, so the answer we're waiting for is often not the
+        /// first frame in the report - walk them all.
         /// </summary>
         static byte[]? FindFrame(byte[] report, int offset, int length, Func<byte[], bool> matches)
         {
+            return Split(report, offset, length).FirstOrDefault(matches);
+        }
+
+        /// <summary>The RACE frames in one input report of the dongle, whatever they are.</summary>
+        public static List<byte[]> Frames(byte[] r, byte reportId)
+        {
+            if (reportId == 0x02)
+                return r.Length >= 2 && r[0] == 0x02 && r[1] <= r.Length - 2 ? Split(r, 2, r[1]) : new List<byte[]>();
+            return r.Length >= 3 && r[0] == reportId && r[1] == 0x80 && r[2] <= r.Length - 3 ? Split(r, 3, r[2]) : new List<byte[]>();
+        }
+
+        static List<byte[]> Split(byte[] report, int offset, int length)
+        {
             const int HeaderLength = 10; // 50 49 + 6 bytes, of which the last two are the payload length
+            var frames = new List<byte[]>();
             int end = Math.Min(offset + length, report.Length);
             for (int pos = offset; pos + HeaderLength <= end;)
             {
-                if (report[pos] != 0x50 || report[pos + 1] != 0x49) return null;
+                if (report[pos] != 0x50 || report[pos + 1] != 0x49) break;
                 int payloadLength = report[pos + 8] | (report[pos + 9] << 8);
                 int frameEnd = pos + HeaderLength + payloadLength;
-                if (frameEnd > end) return null;
+                if (frameEnd > end) break;
                 var frame = new byte[HeaderLength + payloadLength];
                 Array.Copy(report, pos, frame, 0, frame.Length);
-                if (matches(frame)) return frame;
+                frames.Add(frame);
                 pos = frameEnd;
             }
-            return null;
+            return frames;
         }
 
         /// <summary>Reads input reports until <paramref name="extract"/> returns non-null, or the timeout expires.

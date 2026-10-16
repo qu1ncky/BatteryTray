@@ -37,6 +37,11 @@ namespace BatteryTray.Core
             for (int i = 0; i < providers.Length; i++)
             {
                 int index = i;
+                if (providers[i] is IPushingProvider pushing)
+                    pushing.Pushed += () =>
+                    {
+                        lock (gate) wake[index].Cancel();
+                    };
                 Task.Run(() => Loop(index));
             }
         }
@@ -58,6 +63,14 @@ namespace BatteryTray.Core
             IBatteryProvider provider = providers[index];
             while (!stop.IsCancellationRequested)
             {
+                // Taken before the poll, so a wake-up that arrives during it isn't lost: the wait below ends at once
+                CancellationTokenSource w;
+                lock (gate)
+                {
+                    if (wake[index].IsCancellationRequested) wake[index] = new CancellationTokenSource();
+                    w = wake[index];
+                }
+
                 IReadOnlyList<DeviceReading> result;
                 try
                 {
@@ -70,12 +83,6 @@ namespace BatteryTray.Core
                 }
                 Publish(provider, result);
 
-                CancellationTokenSource w;
-                lock (gate)
-                {
-                    if (wake[index].IsCancellationRequested) wake[index] = new CancellationTokenSource();
-                    w = wake[index];
-                }
                 using var linked = CancellationTokenSource.CreateLinkedTokenSource(stop.Token, w.Token);
                 try
                 {

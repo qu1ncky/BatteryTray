@@ -16,6 +16,12 @@ namespace BatteryTray.Providers
         TimeSpan Delay(IReadOnlyList<DeviceReading> last);
     }
 
+    /// <summary>A provider whose devices also report changes by themselves: it asks to be polled right away.</summary>
+    public interface IPushingProvider
+    {
+        event Action? Pushed;
+    }
+
     public static class ProviderList
     {
         public static IBatteryProvider[] Create(StateStore state)

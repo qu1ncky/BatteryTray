@@ -26,7 +26,8 @@ namespace BatteryTray.UI
         string name = "", glyph = "", subtitle = "", levelText = "";
         Brush levelBrush = Theme.Offline;
         GridLength fillWidth = new(0, GridUnitType.Star), restWidth = new(1, GridUnitType.Star);
-        bool charging;
+        bool charging, indeterminate;
+        double chargeGlyphSize = 16;
 
         public DeviceVM(string id)
         {
@@ -40,6 +41,9 @@ namespace BatteryTray.UI
         public string LevelText { get => levelText; private set => Set(ref levelText, value); }
         public Brush LevelBrush { get => levelBrush; private set => Set(ref levelBrush, value); }
         public bool Charging { get => charging; private set => Set(ref charging, value); }
+        /// <summary>Charging, but the level can't be read right now: no number, a pulsing bar instead.</summary>
+        public bool Indeterminate { get => indeterminate; private set => Set(ref indeterminate, value); }
+        public double ChargeGlyphSize { get => chargeGlyphSize; private set => Set(ref chargeGlyphSize, value); }
         public GridLength FillWidth { get => fillWidth; private set => Set(ref fillWidth, value); }
         public GridLength RestWidth { get => restWidth; private set => Set(ref restWidth, value); }
 
@@ -49,11 +53,15 @@ namespace BatteryTray.UI
             Glyph = Theme.Glyph(row.Kind);
             var parts = new List<string>();
             int? level = null;
+            bool estimate = false, unknown = false;
             if (row.Online)
             {
                 DeviceReading cur = row.Current!;
                 level = cur.Level;
+                estimate = cur.Estimate;
+                unknown = cur.Charging && level == null;
                 if (cur.Charging) parts.Add("Заряжается");
+                else if (cur.FullOnCharger) parts.Add("Заряжено");
                 parts.Add(cur.Via);
                 if (!string.IsNullOrEmpty(cur.Detail)) parts.Add(cur.Detail);
                 Charging = cur.Charging;
@@ -68,7 +76,10 @@ namespace BatteryTray.UI
                 Charging = false;
                 LevelBrush = Theme.Offline;
             }
-            LevelText = level is int l ? $"{l}%" : "—";
+            // An estimate is marked as one; while charging with no readable level the lightning alone says it all
+            LevelText = level is int l ? (estimate ? "≈" : "") + $"{l}%" : unknown ? "" : "—";
+            Indeterminate = unknown;
+            ChargeGlyphSize = unknown ? 26 : 16;
             Subtitle = string.Join(" · ", parts);
             double fill = Math.Clamp((level ?? 0) / 100.0, 0, 1);
             FillWidth = new GridLength(fill, GridUnitType.Star);

@@ -129,18 +129,18 @@ namespace BatteryTray.Providers
                 if (slot.Hidpp20) slots.Remove(key); // look the feature up again next time
                 return Reading(slot, receiver, null, false, "заряд не прочитан");
             }
-            return battery.Value.Online
-                ? Reading(slot, receiver, battery.Value.Level, battery.Value.Charging, null)
-                : Reading(slot, receiver, null, false, "выключено или спит");
+            if (!battery.Value.Online) return Reading(slot, receiver, null, false, "выключено или спит");
+            Battery b = battery.Value;
+            return Reading(slot, receiver, b.Full ? b.Level ?? 100 : b.Level, b.Charging && !b.Full, null, b.Full);
         }
 
-        static DeviceReading Reading(Slot slot, bool receiver, int? level, bool charging, string? detail)
+        static DeviceReading Reading(Slot slot, bool receiver, int? level, bool charging, string? detail, bool full = false)
         {
             return new DeviceReading
             {
                 Id = "logitech:" + Regex.Replace(slot.Name.ToLowerInvariant(), "[^a-z0-9]+", "-").Trim('-'),
                 Name = slot.Name, Kind = slot.Kind, Via = receiver ? "2.4 ГГц" : "кабель",
-                Online = detail == null, Level = level, Charging = charging, Detail = detail,
+                Online = detail == null, Level = level, Charging = charging, FullOnCharger = full, Detail = detail,
             };
         }
 
@@ -188,7 +188,8 @@ namespace BatteryTray.Providers
             return slot;
         }
 
-        readonly record struct Battery(bool Online, int? Level, bool Charging);
+        /// <summary><see cref="Full"/>: charging is complete and the charger still connected, as the device says.</summary>
+        readonly record struct Battery(bool Online, int? Level, bool Charging, bool Full = false);
 
         static Battery? ReadFeature(Link link, byte dev, Slot slot)
         {
@@ -198,18 +199,21 @@ namespace BatteryTray.Providers
                 {
                     if (link.Call(dev, slot.FeatureIndex, 1) is not byte[] r) return null;
                     int? level = r[0] != 0 ? r[0] : r[1] switch { 8 => 90, 4 => 50, 2 => 20, 1 => 5, _ => null };
-                    return new Battery(true, level, r[2] is 1 or 2 or 3); // 1 charging, 2 slowly, 3 complete (plugged in)
+                    // Status as in 0x1000 (Solaar): 1 recharging, 2 almost full, 3 full, 4 slow recharge
+                    return new Battery(true, level, r[2] is 1 or 2 or 4, r[2] == 3);
                 }
                 case 0x1000: // BatteryStatus.GetBatteryLevelStatus
                 {
                     if (link.Call(dev, slot.FeatureIndex, 0) is not byte[] r) return null;
                     int? level = r[0] != 0 ? r[0] : r[2] == 3 ? 100 : null;
-                    return new Battery(true, level, r[2] is 1 or 2 or 3 or 4);
+                    return new Battery(true, level, r[2] is 1 or 2 or 4, r[2] == 3);
                 }
                 case 0x1001: // BatteryVoltage.GetBatteryInfo
                 {
                     if (link.Call(dev, slot.FeatureIndex, 0) is not byte[] r) return null;
-                    return new Battery(true, VoltageToPercent((r[0] << 8) | r[1]), (r[2] & 0x80) != 0);
+                    // Flags: bit 7 = on external power, then bits 0-1 = charge status, 1 = full (Solaar)
+                    bool powered = (r[2] & 0x80) != 0;
+                    return new Battery(true, VoltageToPercent((r[0] << 8) | r[1]), powered, powered && (r[2] & 0x01) != 0);
                 }
                 case 0x1F20: // ADC measurement (headsets); bit 0 of the flags = headset active
                 {
@@ -225,12 +229,12 @@ namespace BatteryTray.Providers
         static Battery? ReadRegisters(Link link, byte dev)
         {
             if (link.ReadRegister(dev, 0x0D) is byte[] charge && charge[0] is > 0 and <= 100)
-                return new Battery(true, charge[0], (charge[2] & 0xF0) is 0x50 or 0x90);
+                return new Battery(true, charge[0], (charge[2] & 0xF0) == 0x50, (charge[2] & 0xF0) == 0x90);
             if (link.ReadRegister(dev, 0x07) is byte[] status)
             {
                 int? level = status[0] switch { 7 => 90, 5 => 50, 3 => 20, 1 => 5, _ => null };
-                bool charging = (status[1] & 0x21) == 0x21 || (status[1] & 0x22) == 0x22;
-                return new Battery(true, level, charging);
+                bool charging = (status[1] & 0x21) == 0x21;
+                return new Battery(true, level, charging, !charging && (status[1] & 0x22) == 0x22);
             }
             return null;
         }

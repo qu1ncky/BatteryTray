@@ -15,8 +15,9 @@ namespace BatteryTray.Providers
     /// Attack Shark R3 receiver 3151:402D. It is a read-only status query.
     /// On a USB cable the mouse leaves the receiver (it reports the mouse offline) and shows up as its own USB device,
     /// which charges it but has no battery query - the web driver doesn't show a level on the cable either (verified:
-    /// the R3 on cable, 3151:4026, just echoes the status command). So a mouse on the cable is shown as charging, with
-    /// the level it had before; the receiver reports the real one once the cable is out.
+    /// the R3 on cable, 3151:4026, just echoes the status command). So a mouse on the cable is shown as charging with
+    /// no level - the one from before would only grow stale - and the receiver reports the real one once the cable
+    /// is out.
     /// </summary>
     public sealed class RongyuanDongleProvider : IBatteryProvider
     {
@@ -124,8 +125,8 @@ namespace BatteryTray.Providers
                 int? before = state.Get(offline.Id)?.Level;
                 result[at] = offline with
                 {
-                    Via = "кабель", Online = true, Charging = true, Level = before,
-                    Detail = before != null ? "уровень до подключения кабеля" : "по кабелю мышь не сообщает заряд",
+                    Via = "кабель", Online = true, Charging = true, Level = null,
+                    Detail = "процент появится после отключения кабеля" + (before != null ? $" (было {before}%)" : ""),
                 };
             }
         }

@@ -3,14 +3,13 @@ using System.Collections.Generic;
 namespace BatteryTray.Core
 {
     /// <summary>
-    /// Spots the moment a charge finishes: a device that was charging stops while full. Only for devices whose
-    /// provider can see that while the cable is still in (<see cref="DeviceReading.ReportsFull"/>) - many devices
-    /// report nothing new until the cable comes out, and then "charged" would only arrive after the user unplugged.
+    /// Spots the moment a charge finishes: a device that was charging reports itself full with the charger still in
+    /// (<see cref="DeviceReading.FullOnCharger"/>). Only devices that say so count - many report nothing new until the
+    /// cable comes out, and then "charged" would only arrive after the user unplugged.
     /// One announcement per charge: chargers top a full battery up now and then, which must not repeat it.
     /// </summary>
     public sealed class ChargeDoneWatcher
     {
-        const int FullPercent = 95;  // the headset's level is a voltage estimate in 5% steps
         const int RearmPercent = 90; // below this a new charge may be announced again
 
         readonly Dictionary<string, bool> wasCharging = new();
@@ -24,7 +23,7 @@ namespace BatteryTray.Core
             {
                 DeviceReading? r = row.Current;
                 if (r == null) continue;
-                if (!r.Online || !r.ReportsFull)
+                if (!r.Online)
                 {
                     // Turned off or out of range: whatever it does meanwhile wasn't seen
                     wasCharging.Remove(row.Id);
@@ -33,7 +32,8 @@ namespace BatteryTray.Core
                 if (r.Level is int level && level <= RearmPercent) announced.Remove(row.Id);
                 bool was = wasCharging.TryGetValue(row.Id, out bool w) && w;
                 wasCharging[row.Id] = r.Charging;
-                if (was && !r.Charging && r.Level >= FullPercent && announced.Add(row.Id)) done.Add(row);
+                // Already full when first seen (e.g. the app started overnight) is no news
+                if (was && r.FullOnCharger && announced.Add(row.Id)) done.Add(row);
             }
             return done;
         }
