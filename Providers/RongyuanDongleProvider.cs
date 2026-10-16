@@ -13,6 +13,10 @@ namespace BatteryTray.Providers
     ///   GetFeature -> [00 canRead kbBattery mouseBattery kbOffline mouseOffline canSend ...] (offline: 0 = connected).
     /// Taken from the official ATTACK SHARK web driver (qmk.top), which sends it every 5 s; verified on the
     /// Attack Shark R3 receiver 3151:402D. It is a read-only status query.
+    /// On a USB cable the mouse leaves the receiver (it reports the mouse offline) and shows up as its own USB device,
+    /// which charges it but has no battery query - the web driver doesn't show a level on the cable either (verified:
+    /// the R3 on cable, 3151:4026, just echoes the status command). So a mouse on the cable is shown as charging, with
+    /// the level it had before; the receiver reports the real one once the cable is out.
     /// </summary>
     public sealed class RongyuanDongleProvider : IBatteryProvider
     {
@@ -37,6 +41,15 @@ namespace BatteryTray.Providers
             0x391D1A34, 0x391D2017, 0x391D2A05,
         };
 
+        /// <summary>(vid &lt;&lt; 16) | pid of the mice the web driver drives on a USB cable.</summary>
+        static readonly HashSet<uint> WiredMice = new()
+        {
+            0x3151400B, 0x31514026, 0x3151402A, 0x31515032, 0x31515035, 0x3151503A, 0x31515043, 0x31515058,
+            0x39AB6001, 0x25AA4005, 0x25AA4006, 0x25AA4007, 0x25AA4019, 0x347AA301, 0x347AA304, 0x374AA310,
+            0x374AA313, 0x374AA318, 0x374AA321, 0x374AA328, 0x374AA354, 0x391D1004, 0x391D100F, 0x391D1008,
+            0x391D103A, 0x391D1015, 0x391D1028, 0x391D102F, 0x38A90019, 0x38A90021, 0x379A3357, 0x38EE0038,
+        };
+
         /// <summary>Receivers known to belong to a mouse: their mouse slot is listed even while it's offline.</summary>
         static readonly Dictionary<uint, string> KnownMice = new()
         {
@@ -58,6 +71,7 @@ namespace BatteryTray.Providers
         public IReadOnlyList<DeviceReading> Poll()
         {
             var result = new List<DeviceReading>();
+            var receiverMice = new List<int>(); // indexes in result of the receivers' mouse slots
             foreach (HidInfo info in HidBus.Enumerate((v, p) => Receivers.Contains(Key(v, p))))
             {
                 if (info.InterfaceNumber != 2) continue;
@@ -83,12 +97,37 @@ namespace BatteryTray.Providers
                 }
 
                 bool knownMouse = KnownMice.TryGetValue(key, out string? mouseName);
-                AddSlot(result, baseId + ":mouse", mouseName ?? info.Product ?? "Мышь", DeviceKind.Mouse,
-                    status, levelAt: 3, offlineAt: 5, error, alwaysList: knownMouse);
+                if (AddSlot(result, baseId + ":mouse", mouseName ?? info.Product ?? "Мышь", DeviceKind.Mouse,
+                        status, levelAt: 3, offlineAt: 5, error, alwaysList: knownMouse))
+                    receiverMice.Add(result.Count - 1);
                 AddSlot(result, baseId + ":keyboard", "Клавиатура", DeviceKind.Keyboard,
                     status, levelAt: 2, offlineAt: 4, error, alwaysList: false);
             }
+            AddWiredMice(result, receiverMice);
             return result;
+        }
+
+        /// <summary>A mouse on the cable is the receiver's mouse that went offline when the cable went in, so it takes
+        /// over that slot. Without such a slot it is left out: the same IDs cover wired-only mice, with no battery.</summary>
+        void AddWiredMice(List<DeviceReading> result, List<int> receiverMice)
+        {
+            foreach (HidInfo info in HidBus.Enumerate((v, p) => WiredMice.Contains(Key(v, p))))
+            {
+                if (info.InterfaceNumber != 2) continue;
+                if (!info.AccessDenied && (info.UsagePage != 0xFFFF || info.Usage != 2)) continue;
+
+                int slot = receiverMice.FindIndex(i => !result[i].Online);
+                if (slot < 0) continue;
+                int at = receiverMice[slot];
+                receiverMice.RemoveAt(slot);
+                DeviceReading offline = result[at];
+                int? before = state.Get(offline.Id)?.Level;
+                result[at] = offline with
+                {
+                    Via = "кабель", Online = true, Charging = true, Level = before,
+                    Detail = before != null ? "уровень до подключения кабеля" : "по кабелю мышь не сообщает заряд",
+                };
+            }
         }
 
         public TimeSpan Delay(IReadOnlyList<DeviceReading> last)
@@ -98,13 +137,14 @@ namespace BatteryTray.Providers
             return TimeSpan.FromSeconds(15);
         }
 
-        void AddSlot(List<DeviceReading> result, string id, string name, DeviceKind kind, byte[]? status,
+        /// <summary>Adds the slot's reading; false when the slot isn't listed.</summary>
+        bool AddSlot(List<DeviceReading> result, string id, string name, DeviceKind kind, byte[]? status,
             int levelAt, int offlineAt, string? error, bool alwaysList)
         {
             bool online = status != null && status[offlineAt] == 0;
             if (online) seenOnline.Add(id);
             // A receiver has a mouse and a keyboard slot; only list the ones that were ever used
-            else if (!alwaysList && !seenOnline.Contains(id) && state.Get(id) == null) return;
+            else if (!alwaysList && !seenOnline.Contains(id) && state.Get(id) == null) return false;
 
             // 0 right after wake-up means "not reported yet", not an empty battery
             int? level = online && status![levelAt] is > 0 and <= 100 ? status[levelAt] : null;
@@ -114,6 +154,7 @@ namespace BatteryTray.Providers
             {
                 Id = id, Name = name, Kind = kind, Via = "2.4 ГГц", Online = online, Level = level, Detail = detail,
             });
+            return true;
         }
 
         static byte[]? QueryStatus(HidInfo info)

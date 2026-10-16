@@ -16,11 +16,13 @@ namespace BatteryTray.Providers
         const string DeviceName = "Razer Barracuda X";
         const string NeedsAdmin = "нужны права администратора";
         const int NotChargingChecks = 3; // polls in a row without charging before the level may move again
+        const int ChargerRiseMv = 15;    // a charger lifts the voltage at least this much above the resting one
 
         readonly StateStore state;
         int shownPercent;
         bool chargingSticky;
         int notChargingStreak;
+        int? restingMv; // median voltage of the last poll on battery; unknown after the headset was away
 
         public RazerBarracudaProvider(StateStore state)
         {
@@ -40,7 +42,11 @@ namespace BatteryTray.Providers
                 return new[] { Offline(all.Any(i => i.AccessDenied) ? NeedsAdmin : "приёмник не отвечает") };
 
             BatteryReading? r = BarracudaProtocol.Read(candidates, out string? status);
-            if (r == null) return new[] { Offline(status == "headset off or out of range" ? null : status) };
+            if (r == null)
+            {
+                restingMv = null; // it may come back charged
+                return new[] { Offline(status == "headset off or out of range" ? null : status) };
+            }
 
             bool charging = IsCharging(r);
             // The charger raises the voltage, so while charging keep the level from before it was plugged in
@@ -73,22 +79,35 @@ namespace BatteryTray.Providers
         }
 
         /// <summary>
+        /// Charging starts when the samples swing and the voltage also rose above the resting one: a load or a glitch
+        /// can make the samples swing, but only a charger lifts the voltage. (With no resting voltage yet - right after
+        /// start or after the headset was away - the swing alone has to do.)
         /// Charging detection can miss a check (the voltage swing isn't always visible in one sample window), and a
         /// single miss would let the charger-inflated voltage update the level. So charging sticks until several
         /// checks in a row say otherwise.
         /// </summary>
         bool IsCharging(BatteryReading r)
         {
-            if (r.Charging)
+            bool swing = r.Charging && (chargingSticky || restingMv == null || r.Millivolts >= BarracudaProtocol.ChargeVoltageMv
+                || r.Median >= restingMv + ChargerRiseMv);
+            bool charging;
+            if (swing)
             {
                 chargingSticky = true;
                 notChargingStreak = 0;
-                return true;
+                charging = true;
             }
-            if (!chargingSticky) return false;
-            if (++notChargingStreak < NotChargingChecks) return true;
-            chargingSticky = false;
-            return false;
+            else if (chargingSticky && ++notChargingStreak < NotChargingChecks)
+                charging = true;
+            else
+            {
+                chargingSticky = false;
+                charging = false;
+            }
+            if (r.Charging && !charging)
+                Log.Write($"Barracuda: swing without a rise ignored, samples {string.Join(",", r.Samples)}, resting {restingMv} mV");
+            if (!charging) restingMv = r.Median;
+            return charging;
         }
 
         /// <summary>
@@ -105,9 +124,13 @@ namespace BatteryTray.Providers
 
     public sealed class BatteryReading
     {
+        /// <summary>Lowest sample: a charger lifts every sample, so the minimum is closest to the resting voltage.</summary>
         public int Millivolts;
         public int Percent;
+        /// <summary>The samples swing like on a charger, or the voltage is above any resting voltage.</summary>
         public bool Charging;
+        public int Median;
+        public int[] Samples = Array.Empty<int>();
     }
 
     /// <summary>
@@ -132,7 +155,7 @@ namespace BatteryTray.Providers
         const byte RaceGetBattery = 0x31;
         const int ChargeSamples = 7;      // spread over ~2 s: consecutive samples can match while charging
         const int ChargeJitterMv = 12;    // spread across samples: ~3 mV on battery, 30-45 mV while charging
-        const int ChargeVoltageMv = 4180; // above any resting voltage, so the charger must be connected
+        public const int ChargeVoltageMv = 4180; // above any resting voltage, so the charger must be connected
 
         // Battery voltage (mV) for 0%, 10%, ... 100%: typical Li-ion discharge curve,
         // checked against the Razer mobile app (3975 mV = 70%).
@@ -224,9 +247,18 @@ namespace BatteryTray.Providers
             }
             if (samples.Count == 0) return null;
 
-            int mv = samples.Min();
-            bool charging = samples.Max() - samples.Min() >= ChargeJitterMv || mv >= ChargeVoltageMv;
-            return new BatteryReading { Millivolts = mv, Percent = ToPercent(mv), Charging = charging };
+            // On battery the samples sit within 3-6 mV (one or two ADC steps). A single stray sample - seen once
+            // while a USB device was being plugged in - must not count as a swing, so with enough samples the
+            // lowest and the highest one are left out.
+            var sorted = samples.OrderBy(s => s).ToList();
+            int trim = sorted.Count >= 5 ? 1 : 0;
+            int low = sorted[trim], high = sorted[^(1 + trim)];
+            bool charging = high - low >= ChargeJitterMv || low >= ChargeVoltageMv;
+            return new BatteryReading
+            {
+                Millivolts = low, Percent = ToPercent(low), Charging = charging, Median = sorted[sorted.Count / 2],
+                Samples = samples.ToArray(),
+            };
         }
 
         /// <summary>Sends an Airoha RACE command (50 41 group seq body...) and returns the matching

@@ -41,6 +41,8 @@ Bluetooth-устройства показываются, только пока �
 
 Процент у Razer Barracuda X — оценка по напряжению батареи, шагами по 5%: другого наушники через донгл не сообщают. Во время зарядки напряжение завышено, поэтому показывается уровень до зарядки.
 
+Мышь Rongyuan / Attack Shark на кабеле уходит из приёмника и по проводу заряд не сообщает (официальный веб-драйвер его тоже не показывает). Поэтому она показывается как «заряжается · кабель» с уровнем до подключения кабеля, а настоящий процент приёмник отдаст, когда кабель отключат.
+
 ## Установка
 
 1. Скачайте `BatteryTray-…-win-x64.zip` со страницы [Releases](https://github.com/qu1ncky/BatteryTray/releases/latest) и распакуйте.
@@ -86,8 +88,8 @@ Get-PnpDevice -PresentOnly | ? InstanceId -match '^USB\\VID_\w{4}&PID_\w{4}\\' |
 
 | Источник | Протокол |
 |---|---|
-| `RazerBarracudaProvider` | Команды Airoha RACE через донгл: перевести донгл в remote-режим, запросить напряжение (`GET_BATTERY`), вернуть local-режим. Напряжение → процент по кривой Li-ion; зарядка определяется по разбросу напряжения между замерами. Порт из [razer-barracuda-x-battery](https://github.com/mehdibouchami/razer-barracuda-x-battery). |
-| `RongyuanDongleProvider` | Feature-отчёт `[00 F7 …]` на интерфейсе 2 (vendor page `FFFF`), ответ `[00 canRead kbBattery mouseBattery kbOffline mouseOffline …]`. Найден в официальном веб-драйвере ATTACK SHARK, который шлёт эту команду каждые 5 секунд. |
+| `RazerBarracudaProvider` | Команды Airoha RACE через донгл: перевести донгл в remote-режим, запросить напряжение (`GET_BATTERY`), вернуть local-режим. Напряжение → процент по кривой Li-ion; зарядка определяется по разбросу напряжения между замерами (на батарее 3–6 мВ, на зарядке десятки) вместе с подъёмом выше напряжения покоя — одиночные сбои замеров не считаются. Порт из [razer-barracuda-x-battery](https://github.com/mehdibouchami/razer-barracuda-x-battery). |
+| `RongyuanDongleProvider` | Feature-отчёт `[00 F7 …]` на интерфейсе 2 (vendor page `FFFF`), ответ `[00 canRead kbBattery mouseBattery kbOffline mouseOffline …]`. Найден в официальном веб-драйвере ATTACK SHARK, который шлёт эту команду каждые 5 секунд. Мышь на кабеле (32 USB ID из того же драйвера) занимает слот приёмника, который в этот момент её потерял. |
 | `SteelSeriesProvider` | Output-отчёт `0x92` / `0xD2` (Aerox, Prime) или `AA 01` (Rival) на служебном интерфейсе, по [rivalcfg](https://github.com/flozz/rivalcfg). |
 | `RazerPeripheralProvider` | 90-байтный feature-отчёт OpenRazer: команда `07 80` (заряд 0–255), `07 84` (зарядка), CRC — XOR байтов 2–87; transaction id и пауза между запросом и ответом — свои у каждой модели, по таблице OpenRazer. |
 | `LogitechProvider` | HID++: пинг слотов 1–6 приёмника (или индекса `0xFF` у устройства на кабеле), поиск фичи заряда `0x1004` / `0x1000` / `0x1001` / `0x1F20` и имени `0x0005`; для старых устройств HID++ 1.0 — регистры `0x0D` / `0x07`. Короткие запросы пишутся в короткую коллекцию, ответы читаются из обеих — Windows делит интерфейс на две. По [Solaar](https://github.com/pwr-Solaar/Solaar). |
