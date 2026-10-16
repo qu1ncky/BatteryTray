@@ -165,17 +165,17 @@ namespace BatteryTray.Core
         static void Verify(string path, ReleaseInfo release)
         {
             long size = new FileInfo(path).Length;
-            if (size != release.ExeSize) throw new InvalidDataException($"размер файла {size} вместо {release.ExeSize}");
+            if (size != release.ExeSize) throw new InvalidDataException(Loc.T("upd.err.size", size, release.ExeSize));
 
             string hash;
             using (var stream = File.OpenRead(path))
                 hash = Convert.ToHexString(SHA256.HashData(stream)).ToLowerInvariant();
-            if (hash != release.Sha256) throw new InvalidDataException("контрольная сумма не совпала");
+            if (hash != release.Sha256) throw new InvalidDataException(Loc.T("upd.err.hash"));
 
             string? fileVersion = FileVersionInfo.GetVersionInfo(path).FileVersion;
             if (!Version.TryParse(fileVersion, out Version? v)
                 || new Version(v.Major, v.Minor, Math.Max(v.Build, 0)) != release.Version)
-                throw new InvalidDataException($"в релизе {release.Tag} лежит exe версии {fileVersion}");
+                throw new InvalidDataException(Loc.T("upd.err.version", release.Tag, fileVersion));
         }
     }
 }

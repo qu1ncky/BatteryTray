@@ -83,25 +83,25 @@ namespace BatteryTray.Providers
                 byte[]? status = null;
                 string? error = null;
                 if (info.AccessDenied)
-                    error = "нужны права администратора";
+                    error = Loc.T("d.needsAdmin");
                 else
                 {
                     try
                     {
                         status = QueryStatus(info);
-                        if (status == null) error = "приёмник не ответил";
+                        if (status == null) error = Loc.T("d.receiverSilent");
                     }
                     catch (Exception e)
                     {
-                        error = "ошибка: " + e.Message;
+                        error = Loc.T("d.error", e.Message);
                     }
                 }
 
                 bool knownMouse = KnownMice.TryGetValue(key, out string? mouseName);
-                if (AddSlot(result, baseId + ":mouse", mouseName ?? info.Product ?? "Мышь", DeviceKind.Mouse,
+                if (AddSlot(result, baseId + ":mouse", mouseName ?? info.Product ?? Loc.T("name.mouse"), DeviceKind.Mouse,
                         status, levelAt: 3, offlineAt: 5, error, alwaysList: knownMouse))
                     receiverMice.Add(result.Count - 1);
-                AddSlot(result, baseId + ":keyboard", "Клавиатура", DeviceKind.Keyboard,
+                AddSlot(result, baseId + ":keyboard", Loc.T("name.keyboard"), DeviceKind.Keyboard,
                     status, levelAt: 2, offlineAt: 4, error, alwaysList: false);
             }
             AddWiredMice(result, receiverMice);
@@ -125,8 +125,8 @@ namespace BatteryTray.Providers
                 int? before = state.Get(offline.Id)?.Level;
                 result[at] = offline with
                 {
-                    Via = "кабель", Online = true, Charging = true, Level = null,
-                    Detail = "процент появится после отключения кабеля" + (before != null ? $" (было {before}%)" : ""),
+                    Via = Loc.T("via.cable"), Online = true, Charging = true, Level = null,
+                    Detail = Loc.T("d.cableHidden") + (before is int was ? " · " + Loc.T("d.wasBefore", was) : ""),
                 };
             }
         }
@@ -150,10 +150,10 @@ namespace BatteryTray.Providers
             // 0 right after wake-up means "not reported yet", not an empty battery
             int? level = online && status![levelAt] is > 0 and <= 100 ? status[levelAt] : null;
             // The receiver answering with "offline" is the normal state of a mouse that went to sleep
-            string? detail = online ? (level == null ? "уровень пока неизвестен" : null) : error ?? "спит или выключена";
+            string? detail = online ? (level == null ? Loc.T("d.levelUnknown") : null) : error ?? Loc.T("d.asleep");
             result.Add(new DeviceReading
             {
-                Id = id, Name = name, Kind = kind, Via = "2.4 ГГц", Online = online, Level = level, Detail = detail,
+                Id = id, Name = name, Kind = kind, Via = Loc.T("via.24"), Online = online, Level = level, Detail = detail,
             });
             return true;
         }

@@ -39,7 +39,7 @@ namespace BatteryTray.Providers
                     result.Add(new DeviceReading
                     {
                         Id = $"hid:{info.VendorId:x4}:{info.ProductId:x4}", Name = info.Product ?? $"HID {info.VendorId:X4}:{info.ProductId:X4}",
-                        Kind = KindOf(info), Via = "USB-приёмник", Online = true, Level = level,
+                        Kind = KindOf(info), Via = Loc.T("via.receiver"), Online = true, Level = level,
                     });
                 }
                 catch (Exception)

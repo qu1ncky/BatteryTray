@@ -93,6 +93,7 @@ namespace BatteryTray
                 : null;
             Settings.LastRunVersion = Version;
             Settings.Save();
+            Loc.Set(Loc.Resolve(Settings.Language));
             State = StateStore.Load();
             Watcher = new BatteryMonitor(ProviderList.Create(State), State);
             Watcher.Changed += OnDevicesChanged;
@@ -121,7 +122,7 @@ namespace BatteryTray
             Watcher.Start();
             Updates.Start();
             UpdateTray();
-            if (updatedFrom != null) tray.ShowNotice("BatteryTray обновлён", $"Установлена версия {Version}.");
+            if (updatedFrom != null) tray.ShowNotice(Loc.T("notice.updated.title"), Loc.T("notice.updated.text", Version));
             // The logon task starts it with --background; started any other way, show the window
             if (!e.Args.Contains(AutoStart.BackgroundSwitch)) ShowMainWindow();
         }
@@ -140,6 +141,15 @@ namespace BatteryTray
                 rows.Add(new DeviceRow(id, cur, last, Settings.DisplayName(id, any.Name)));
             }
             return rows.OrderBy(r => r.Kind).ThenBy(r => r.Name, StringComparer.CurrentCultureIgnoreCase).ToList();
+        }
+
+        /// <summary>A language picked in the settings ("auto" follows Windows): everything switches right away.</summary>
+        public void SetLanguage(string setting)
+        {
+            Settings.Language = setting;
+            Loc.Set(Loc.Resolve(setting));
+            SettingsChanged();
+            Watcher.RefreshNow(); // the devices' details come from the providers
         }
 
         public void SettingsChanged()
@@ -167,7 +177,7 @@ namespace BatteryTray
                 .Select((r, i) => new AlertItem(r.Id, r.Name, r.Kind, i == 0 ? Settings.LowPercent - 2 : Settings.CriticalPercent - 1, i > 0))
                 .ToList();
             if (sample.Count == 0)
-                sample.Add(new AlertItem("test", "Мышь", DeviceKind.Mouse, Settings.LowPercent - 2, false));
+                sample.Add(new AlertItem("test", Loc.T("name.mouse"), DeviceKind.Mouse, Settings.LowPercent - 2, false));
             var test = new AlertWindow();
             test.SnoozeClicked += test.Close;
             test.MuteClicked += test.Close;
@@ -194,7 +204,7 @@ namespace BatteryTray
                 Log.Write($"charged: {row.Name} {row.Current!.Level}%");
                 DeviceSettings ds = Settings.For(row.Id);
                 if (!Settings.NotifyCharged || ds.Hidden || !ds.Alerts) continue;
-                tray?.ShowNotice("Зарядка завершена", $"{row.Name} — {row.Current.Level}%. Кабель можно отключать.");
+                tray?.ShowNotice(Loc.T("notice.charged.title"), Loc.T("notice.charged.text", row.Name, row.Current.Level));
             }
         }
 
@@ -207,9 +217,9 @@ namespace BatteryTray
             var lines = shown.Where(r => r.Current!.Level != null || r.Current.Charging)
                 .Select(r => r.Current!.Level is int l
                     ? $"{Short(r.Name)}: {(r.Current.Estimate ? "≈" : "")}{l}%{(r.Current.Charging ? " ⚡" : "")}"
-                    : $"{Short(r.Name)}: заряжается ⚡")
+                    : Loc.T("tray.charging", Short(r.Name)))
                 .ToList();
-            string tip = lines.Count == 0 ? "Заряд устройств: нет данных" : string.Join("\n", lines);
+            string tip = lines.Count == 0 ? Loc.T("tray.nodata") : string.Join("\n", lines);
 
             // The icon shows the device that will run out first; charging ones only when nothing else is left
             DeviceRow? pick = live.Where(r => !r.Current!.Charging).OrderBy(r => r.Current!.Level).FirstOrDefault()
@@ -278,8 +288,7 @@ namespace BatteryTray
         /// updates are off).</summary>
         void AnnounceUpdate(ReleaseInfo release)
         {
-            tray?.ShowNotice($"Доступна версия BatteryTray {release.Version.ToString(3)}",
-                "Откройте BatteryTray → Настройки → Обновления, чтобы установить.");
+            tray?.ShowNotice(Loc.T("notice.available.title", release.Version.ToString(3)), Loc.T("notice.available.text"));
         }
 
         /// <summary>The new exe is in place: start it and step aside. The new copy can only start once this one has

@@ -16,7 +16,7 @@ namespace BatteryTray.UI
         readonly ObservableCollection<DeviceVM> offline = new();
         readonly Dictionary<string, DeviceVM> cards = new();
         readonly ObservableCollection<DeviceSettingsVM> deviceSettings = new();
-        readonly DispatcherTimer clock = new() { Interval = TimeSpan.FromSeconds(15) }; // keeps "N мин назад" fresh
+        readonly DispatcherTimer clock = new() { Interval = TimeSpan.FromSeconds(15) }; // keeps "N min ago" fresh
         bool loading = true; // sliders fire ValueChanged while the XAML is still loading
 
         public MainWindow(App app)
@@ -30,7 +30,12 @@ namespace BatteryTray.UI
             SourceInitialized += (_, _) => Theme.UseDarkTitleBar(this);
             clock.Tick += (_, _) => Refresh();
             clock.Start();
-            Closed += (_, _) => clock.Stop();
+            Loc.Changed += OnLanguageChanged;
+            Closed += (_, _) =>
+            {
+                clock.Stop();
+                Loc.Changed -= OnLanguageChanged;
+            };
             LoadSettings();
             Refresh();
             RefreshUpdate();
@@ -62,7 +67,7 @@ namespace BatteryTray.UI
             OfflineHeader.Visibility = offline.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
 
             DateTime? newest = rows.Select(r => r.Current?.Time).Max();
-            UpdatedText.Text = newest is DateTime t ? $"Обновлено в {t:HH:mm:ss}" : "Опрашиваю устройства…";
+            UpdatedText.Text = newest is DateTime t ? Loc.T("updated.at", t) : Loc.T("polling");
 
             // Rebuilt only when the set of devices changes, so a name being typed keeps its focus
             if (!rows.Select(r => r.Id).SequenceEqual(deviceSettings.Select(d => d.Id)))
@@ -96,14 +101,10 @@ namespace BatteryTray.UI
             ChargedToggle.IsChecked = s.NotifyCharged;
             AutoUpdateToggle.IsChecked = s.AutoUpdate;
             AutoStartToggle.IsChecked = AutoStart.IsRegistered();
-            ElevationText.Text = Elevation.IsElevated
-                ? "Программа работает с правами администратора, поэтому видит и устройства, доступ к которым " +
-                  "закрыли сторонние драйверы. При входе в Windows права выдаются автоматически, без окна UAC."
-                : AutoStart.IsInstalled
-                    ? "Программа запущена без прав администратора. Если у устройства написано «нужны права " +
-                      "администратора», запустите её из меню «Пуск» — она поднимется через задачу автозапуска с правами."
-                    : "Это переносная копия: автозапуск будет с обычными правами. Если у устройства написано " +
-                      "«нужны права администратора», установите программу через install.cmd из архива с релизом.";
+            string language = s.Language ?? Loc.Auto;
+            foreach (var option in new[] { LangAuto, LangRu, LangEn, LangZh })
+                option.IsChecked = (string)option.Tag == language || (option == LangAuto && Array.IndexOf(Loc.Languages, language) < 0);
+            ElevationText.Text = Loc.T(Elevation.IsElevated ? "elev.admin" : AutoStart.IsInstalled ? "elev.installed" : "elev.portable");
             UpdateLabels();
             loading = false;
         }
@@ -112,7 +113,7 @@ namespace BatteryTray.UI
         {
             LowValue.Text = $"{(int)LowSlider.Value}%";
             CriticalValue.Text = $"{(int)CriticalSlider.Value}%";
-            RepeatValue.Text = $"{(int)RepeatSlider.Value} мин";
+            RepeatValue.Text = Loc.T("minutes", (int)RepeatSlider.Value);
         }
 
         void Setting_Changed(object sender, RoutedEventArgs e)
@@ -141,18 +142,18 @@ namespace BatteryTray.UI
             string latest = u.Latest?.Version.ToString(3) ?? "";
             UpdateStatusText.Text = u.State switch
             {
-                UpdateService.Stage.Checking => "Проверяю, нет ли новой версии…",
-                UpdateService.Stage.UpToDate => $"Установлена последняя версия {App.Version} · проверено в {u.LastCheck:HH:mm}",
-                UpdateService.Stage.Available => $"Доступна версия {latest}, у вас {App.Version}",
+                UpdateService.Stage.Checking => Loc.T("upd.checking"),
+                UpdateService.Stage.UpToDate => Loc.T("upd.uptodate", App.Version, u.LastCheck),
+                UpdateService.Stage.Available => Loc.T("upd.available", latest, App.Version),
                 UpdateService.Stage.Installing => u.Progress is > 0 and < 100
-                    ? $"Загружаю версию {latest}: {u.Progress}%"
-                    : $"Устанавливаю версию {latest}…",
-                UpdateService.Stage.Failed => $"Не получилось: {u.Error}",
-                _ => $"Версия {App.Version}. Проверка обновлений начнётся через полминуты после запуска.",
+                    ? Loc.T("upd.downloading", latest, u.Progress)
+                    : Loc.T("upd.installing", latest),
+                UpdateService.Stage.Failed => Loc.T("upd.failed", u.Error),
+                _ => Loc.T("upd.idle", App.Version),
             };
 
             bool offer = u.NewerAvailable && u.State is UpdateService.Stage.Available or UpdateService.Stage.Failed;
-            InstallUpdateButton.Content = $"Обновить до {latest}";
+            InstallUpdateButton.Content = Loc.T("upd.install", latest);
             InstallUpdateButton.Visibility = offer ? Visibility.Visible : Visibility.Collapsed;
             CheckUpdatesButton.IsEnabled = u.State is not (UpdateService.Stage.Checking or UpdateService.Stage.Installing);
 
@@ -164,7 +165,7 @@ namespace BatteryTray.UI
             UpdateBanner.Visibility = banner ? Visibility.Visible : Visibility.Collapsed;
             UpdateBannerText.Text = u.State == UpdateService.Stage.Installing
                 ? UpdateStatusText.Text
-                : $"Доступна версия {latest}";
+                : Loc.T("upd.banner", latest);
             UpdateBannerButton.Visibility = u.State == UpdateService.Stage.Available ? Visibility.Visible : Visibility.Collapsed;
         }
 
@@ -182,6 +183,21 @@ namespace BatteryTray.UI
         async void CheckUpdates_Click(object sender, RoutedEventArgs e)
         {
             await app.Updates.CheckAsync();
+        }
+
+        void Language_Checked(object sender, RoutedEventArgs e)
+        {
+            if (loading) return;
+            app.SetLanguage((string)((FrameworkElement)sender).Tag);
+        }
+
+        /// <summary>XAML texts follow by themselves; the ones built here are built again.</summary>
+        void OnLanguageChanged()
+        {
+            LoadSettings();
+            deviceSettings.Clear(); // their source line holds texts from the providers
+            Refresh();
+            RefreshUpdate();
         }
 
         void Tab_Checked(object sender, RoutedEventArgs e)

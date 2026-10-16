@@ -104,8 +104,8 @@ namespace BatteryTray.Core
                     state.Update(r);
                     // Log state changes only (not every poll), so the log shows the battery history at a glance
                     string summary = r.Online
-                        ? $"на связи, {r.Level?.ToString() ?? "?"}%{(r.Charging ? ", заряжается" : "")}"
-                        : "нет связи" + (r.Detail != null ? $" ({r.Detail})" : "");
+                        ? $"online, {r.Level?.ToString() ?? "?"}%{(r.Estimate ? " (estimate)" : "")}{(r.Charging ? ", charging" : "")}{(r.FullOnCharger ? ", charged" : "")}"
+                        : "offline" + (r.Detail != null ? $" ({r.Detail})" : "");
                     if (!loggedState.TryGetValue(r.Id, out var old) || old != summary)
                     {
                         loggedState[r.Id] = summary;

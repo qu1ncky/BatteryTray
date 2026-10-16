@@ -21,6 +21,8 @@ namespace BatteryTray.Core
         public int CriticalPercent { get; set; } = 10;
         public int RepeatMinutes { get; set; } = 10;
         public bool Sound { get; set; } = true;
+        /// <summary>"ru", "en", "zh", or "auto" to follow Windows.</summary>
+        public string Language { get; set; } = Loc.Auto;
         /// <summary>A Windows notification when a device finishes charging.</summary>
         public bool NotifyCharged { get; set; } = true;
         public bool AutoUpdate { get; set; } = true;

@@ -32,18 +32,13 @@ namespace BatteryTray.Providers
                     && caps.VendorId == 0x045E && BluetoothPids.Contains(caps.ProductId))
                     continue;
 
-                var (level, text) = b.Level switch
-                {
-                    0 => (5, "почти пусто"),
-                    1 => (15, "низкий"),
-                    2 => (50, "средний"),
-                    _ => (100, "полный"),
-                };
+                // Empty, low, medium, full
+                int level = b.Level switch { 0 => 5, 1 => 15, 2 => 50, _ => 100 };
                 result.Add(new DeviceReading
                 {
-                    Id = $"xinput:{slot}", Name = slot == 0 ? "Геймпад Xbox" : $"Геймпад Xbox #{slot + 1}",
-                    Kind = DeviceKind.Gamepad, Via = "XInput", Online = true, Level = level,
-                    Detail = $"уровень «{text}» (XInput знает только 4 уровня)",
+                    Id = $"xinput:{slot}", Name = Loc.T("name.xbox") + (slot == 0 ? "" : $" #{slot + 1}"),
+                    Kind = DeviceKind.Gamepad, Via = "XInput", Online = true, Level = level, Estimate = true,
+                    Detail = Loc.T("d.fourLevels"),
                 });
             }
             return result;

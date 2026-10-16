@@ -44,7 +44,8 @@ namespace BatteryTray.Providers
             {
                 var (name, dualSense) = Models[info.ProductId];
                 bool bluetooth = info.Path.Contains("{00001124-", StringComparison.OrdinalIgnoreCase);
-                string via = bluetooth ? "Bluetooth" : info.ProductId == 0x0BA0 ? "адаптер" : "кабель";
+                bool adapter = !bluetooth && info.ProductId == 0x0BA0;
+                string via = bluetooth ? "Bluetooth" : Loc.T(adapter ? "via.adapter" : "via.cable");
                 // Several identical controllers get #2, #3... in the order Windows lists them
                 string id = $"ps:{info.ProductId:x4}:{(bluetooth ? "bt" : "usb")}";
                 int same = result.Count(r => r.Id.StartsWith(id, StringComparison.Ordinal));
@@ -57,17 +58,17 @@ namespace BatteryTray.Providers
                 DeviceReading reading = new()
                 {
                     Id = id, Name = name, Kind = DeviceKind.Gamepad, Via = via, Online = false,
-                    Detail = info.AccessDenied ? "нет доступа (устройство скрыто другой программой)" : "нет связи",
+                    Detail = info.AccessDenied ? Loc.T("d.busy") : null,
                 };
                 if (!info.AccessDenied)
                 {
                     try
                     {
-                        reading = Read(info, dualSense, reading);
+                        reading = Read(info, dualSense, bluetooth, adapter, reading);
                     }
                     catch (Exception e)
                     {
-                        reading = reading with { Detail = "ошибка: " + e.Message };
+                        reading = reading with { Detail = Loc.T("d.error", e.Message) };
                     }
                 }
                 result.Add(reading);
@@ -80,7 +81,7 @@ namespace BatteryTray.Providers
             return TimeSpan.FromSeconds(60);
         }
 
-        static DeviceReading Read(HidInfo info, bool dualSense, DeviceReading template)
+        static DeviceReading Read(HidInfo info, bool dualSense, bool bluetooth, bool adapter, DeviceReading template)
         {
             using var dev = new HidDevice(info, readOnly: true);
             dev.Flush();
@@ -91,11 +92,11 @@ namespace BatteryTray.Providers
                 byte[]? r = dev.Read(Math.Max((int)(deadline - DateTime.UtcNow).TotalMilliseconds, 1));
                 if (r == null) break;
                 any = true;
-                var battery = dualSense ? ParseDualSense(r, template.Via == "Bluetooth") : ParseDualShock4(r, template.Via);
+                var battery = dualSense ? ParseDualSense(r, bluetooth) : ParseDualShock4(r, bluetooth, adapter);
                 if (battery == null) continue;
-                if (battery.Value.Level == NoController) return template with { Detail = "контроллер не подключён к адаптеру" };
+                if (battery.Value.Level == NoController) return template with { Detail = Loc.T("d.noController") };
                 if (battery.Value.Level == BatteryError)
-                    return template with { Online = true, Detail = "контроллер сообщает об ошибке батареи или перегреве" };
+                    return template with { Online = true, Detail = Loc.T("d.batteryError") };
                 return template with
                 {
                     Online = true, Level = battery.Value.Level, Charging = battery.Value.Charging,
@@ -104,7 +105,7 @@ namespace BatteryTray.Providers
             }
             // Reports arrive, but none carries the battery: the short Bluetooth report
             return any
-                ? template with { Online = true, Detail = "заряд появится, когда игра или Steam включат полный режим геймпада" }
+                ? template with { Online = true, Detail = Loc.T("d.waitFullMode") }
                 : template;
         }
 
@@ -122,11 +123,11 @@ namespace BatteryTray.Providers
             };
         }
 
-        static (int Level, bool Charging, bool Full)? ParseDualShock4(byte[] r, string via)
+        static (int Level, bool Charging, bool Full)? ParseDualShock4(byte[] r, bool bluetooth, bool adapter)
         {
-            int at = via == "Bluetooth" ? 32 : 30;
-            if (r.Length <= at + 1 || r[0] != (via == "Bluetooth" ? 0x11 : 0x01)) return null;
-            if (via == "адаптер" && (r[at + 1] & 0x04) != 0) return (NoController, false, false);
+            int at = bluetooth ? 32 : 30;
+            if (r.Length <= at + 1 || r[0] != (bluetooth ? 0x11 : 0x01)) return null;
+            if (adapter && (r[at + 1] & 0x04) != 0) return (NoController, false, false);
             int data = r[at] & 0x0F;
             bool cable = (r[at] & 0x10) != 0;
             if (!cable) return (data < 10 ? data * 10 + 5 : 100, false, false);

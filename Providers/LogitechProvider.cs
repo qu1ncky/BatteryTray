@@ -112,7 +112,7 @@ namespace BatteryTray.Providers
 
             slots.TryGetValue(key, out Slot? slot);
             if (ping.Result == PingResult.Offline)
-                return slot != null && slot.HasBattery ? Reading(slot, receiver, null, false, "выключено или спит") : null;
+                return slot != null && slot.HasBattery ? Reading(slot, receiver, null, false, Loc.T("d.asleep")) : null;
 
             if (slot == null)
             {
@@ -127,9 +127,9 @@ namespace BatteryTray.Providers
             if (battery == null)
             {
                 if (slot.Hidpp20) slots.Remove(key); // look the feature up again next time
-                return Reading(slot, receiver, null, false, "заряд не прочитан");
+                return Reading(slot, receiver, null, false, Loc.T("d.readFailed"));
             }
-            if (!battery.Value.Online) return Reading(slot, receiver, null, false, "выключено или спит");
+            if (!battery.Value.Online) return Reading(slot, receiver, null, false, Loc.T("d.asleep"));
             Battery b = battery.Value;
             return Reading(slot, receiver, b.Full ? b.Level ?? 100 : b.Level, b.Charging && !b.Full, null, b.Full);
         }
@@ -139,7 +139,7 @@ namespace BatteryTray.Providers
             return new DeviceReading
             {
                 Id = "logitech:" + Regex.Replace(slot.Name.ToLowerInvariant(), "[^a-z0-9]+", "-").Trim('-'),
-                Name = slot.Name, Kind = slot.Kind, Via = receiver ? "2.4 ГГц" : "кабель",
+                Name = slot.Name, Kind = slot.Kind, Via = Loc.T(receiver ? "via.24" : "via.cable"),
                 Online = detail == null, Level = level, Charging = charging, FullOnCharger = full, Detail = detail,
             };
         }

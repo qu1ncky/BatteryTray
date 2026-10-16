@@ -75,7 +75,7 @@ namespace BatteryTray.Providers
             [0x00AB] = M("basilisk-v3-pro", "Basilisk V3 Pro", true, 0x1F, 31000),
             [0x00AF] = M("cobra-pro", "Cobra Pro", false, 0x1F, 31000),
             [0x00B0] = M("cobra-pro", "Cobra Pro", true, 0x1F, 31000),
-            [0x00B3] = M("hyperpolling", "мышь (HyperPolling)", true, 0x1F, 59900),
+            [0x00B3] = M("hyperpolling", "HyperPolling Mouse", true, 0x1F, 59900),
             [0x00B4] = M("naga-v2-hyperspeed", "Naga V2 HyperSpeed", true, 0x1F, 31000, charging: false),
             [0x00B6] = M("deathadder-v3-pro", "DeathAdder V3 Pro", false, 0x1F, 31000),
             [0x00B7] = M("deathadder-v3-pro", "DeathAdder V3 Pro", true, 0x1F, 31000),
@@ -147,13 +147,13 @@ namespace BatteryTray.Providers
             var reading = new DeviceReading
             {
                 Id = "razer:" + model.Key, Name = model.Name, Kind = model.Kind,
-                Via = model.Wireless ? "2.4 ГГц" : "кабель", Online = false, Detail = "выключена или спит",
+                Via = Loc.T(model.Wireless ? "via.24" : "via.cable"), Online = false, Detail = Loc.T("d.asleep"),
             };
             foreach (HidInfo info in candidates)
             {
                 if (info.AccessDenied)
                 {
-                    reading = reading with { Detail = "нужны права администратора" };
+                    reading = reading with { Detail = Loc.T("d.needsAdmin") };
                     continue;
                 }
                 if (info.FeatureLength != ReportLength) continue;
@@ -169,7 +169,7 @@ namespace BatteryTray.Providers
                 }
                 catch (Exception e)
                 {
-                    reading = reading with { Detail = "ошибка: " + e.Message };
+                    reading = reading with { Detail = Loc.T("d.error", e.Message) };
                 }
             }
             return reading;

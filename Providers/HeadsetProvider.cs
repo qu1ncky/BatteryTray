@@ -19,9 +19,10 @@ namespace BatteryTray.Providers
     {
         const int TimeoutMs = 2000;
 
+        /// <param name="Detail">A text key (see <see cref="Loc"/>) or a ready text.</param>
         readonly record struct State(bool Online, int? Level, bool Charging, string? Detail = null);
 
-        static readonly State Off = new(false, null, false, "выключены или вне зоны");
+        static readonly State Off = new(false, null, false, "d.offOrAway");
 
         static State On(int level, bool charging) => new(true, Math.Clamp(level, 0, 100), charging);
 
@@ -232,8 +233,9 @@ namespace BatteryTray.Providers
                 State state = Query(spec, device.ToList());
                 var reading = new DeviceReading
                 {
-                    Id = "headset:" + spec.Key, Name = spec.Name, Kind = DeviceKind.Headset, Via = "2.4 ГГц",
-                    Online = state.Online, Level = state.Level, Charging = state.Charging, Detail = state.Detail,
+                    Id = "headset:" + spec.Key, Name = spec.Name, Kind = DeviceKind.Headset, Via = Loc.T("via.24"),
+                    Online = state.Online, Level = state.Level, Charging = state.Charging,
+                    Detail = state.Detail != null ? Loc.T(state.Detail) : null,
                 };
                 if (!result.TryGetValue(reading.Id, out var other) || (reading.Online && !other.Online))
                     result[reading.Id] = reading;
@@ -255,8 +257,8 @@ namespace BatteryTray.Providers
                     : i.UsagePage == spec.Page && i.Usage == spec.Usage))
                 .OrderBy(i => i.OutputLength > 0 ? 0 : 1)
                 .ToList();
-            if (candidates.Count == 0) return Off with { Detail = "не найден канал связи с гарнитурой" };
-            if (candidates.All(i => i.AccessDenied)) return Off with { Detail = "нужны права администратора" };
+            if (candidates.Count == 0) return Off with { Detail = "d.noLink" };
+            if (candidates.All(i => i.AccessDenied)) return Off with { Detail = "d.needsAdmin" };
 
             // A clean "headset off" from one collection beats an error from another that can't take the request
             State? clean = null;
@@ -272,7 +274,7 @@ namespace BatteryTray.Providers
                 }
                 catch (Exception e)
                 {
-                    error = Off with { Detail = "ошибка: " + e.Message };
+                    error = Off with { Detail = Loc.T("d.error", e.Message) };
                 }
             }
             return clean ?? error;

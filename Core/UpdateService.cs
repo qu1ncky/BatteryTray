@@ -121,7 +121,7 @@ namespace BatteryTray.Core
                 // Program Files without admin rights: an elevated copy of this exe does the same (UAC prompt)
                 else if (!await Task.Run(() => AutoStart.RunSelfElevated(CommandLine.UpdateSwitch)))
                 {
-                    throw new InvalidOperationException("обновление отменено или не удалось, подробности в логе");
+                    throw new InvalidOperationException(Loc.T("upd.err.cancelled"));
                 }
             }
             catch (Exception e)

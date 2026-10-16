@@ -47,7 +47,7 @@ namespace BatteryTray.UI
             items = due;
             bool critical = due.Any(d => d.Critical);
             SolidColorBrush accent = critical ? Theme.Bad : Theme.Warn;
-            TitleText.Text = critical ? "Почти разрядилось!" : due.Count == 1 ? "Пора зарядить" : "Пора зарядить устройства";
+            TitleText.Text = Loc.T(critical ? "alert.title.critical" : due.Count == 1 ? "alert.title" : "alert.title.many");
             TitleGlyph.Foreground = accent;
             AccentBar.Background = accent;
             Frame.BorderBrush = new SolidColorBrush(Color.FromArgb(0x80, accent.Color.R, accent.Color.G, accent.Color.B));
@@ -58,10 +58,8 @@ namespace BatteryTray.UI
                 Level = $"{d.Level}%",
                 Brush = d.Critical ? Theme.Bad : Theme.Warn,
             }).ToList();
-            SnoozeButton.Content = $"Напомнить через {repeatMinutes} мин";
-            HintText.Text = critical
-                ? "Осталось совсем немного — поставьте на зарядку, чтобы не отключилось в самый неподходящий момент."
-                : "Окно не закроется само, пока вы не выберете, когда напомнить снова.";
+            SnoozeButton.Content = Loc.T("alert.snooze", repeatMinutes);
+            HintText.Text = Loc.T(critical ? "alert.hint.critical" : "alert.hint");
         }
 
         void Snooze_Click(object sender, RoutedEventArgs e)

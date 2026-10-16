@@ -67,7 +67,7 @@ namespace BatteryTray.Providers
                 {
                     if (info.AccessDenied)
                     {
-                        error = "нужны права администратора";
+                        error = Loc.T("d.needsAdmin");
                         continue;
                     }
                     if (info.UsagePage < 0xFF00 || info.OutputLength == 0 || info.InputLength == 0) continue;
@@ -77,7 +77,7 @@ namespace BatteryTray.Providers
                     }
                     catch (Exception e)
                     {
-                        error = "ошибка: " + e.Message;
+                        error = Loc.T("d.error", e.Message);
                     }
                     if (battery != null) break;
                 }
@@ -85,9 +85,9 @@ namespace BatteryTray.Providers
                 result.Add(new DeviceReading
                 {
                     Id = "steelseries:" + model.Key, Name = model.Name, Kind = DeviceKind.Mouse,
-                    Via = model.Wireless ? "2.4 ГГц" : "кабель", Online = battery != null,
+                    Via = Loc.T(model.Wireless ? "via.24" : "via.cable"), Online = battery != null,
                     Level = battery?.Level, Charging = battery?.Charging ?? false,
-                    Detail = battery != null ? null : error ?? "выключена или спит",
+                    Detail = battery != null ? null : error ?? Loc.T("d.asleep"),
                 });
             }
             return result;

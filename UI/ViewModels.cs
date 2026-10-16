@@ -20,7 +20,7 @@ namespace BatteryTray.UI
         }
     }
 
-    /// <summary>One card on the "Устройства" tab.</summary>
+    /// <summary>One card on the devices tab.</summary>
     public sealed class DeviceVM : Observable
     {
         string name = "", glyph = "", subtitle = "", levelText = "";
@@ -60,8 +60,8 @@ namespace BatteryTray.UI
                 level = cur.Level;
                 estimate = cur.Estimate;
                 unknown = cur.Charging && level == null;
-                if (cur.Charging) parts.Add("Заряжается");
-                else if (cur.FullOnCharger) parts.Add("Заряжено");
+                if (cur.Charging) parts.Add(Loc.T("state.charging"));
+                else if (cur.FullOnCharger) parts.Add(Loc.T("state.full"));
                 parts.Add(cur.Via);
                 if (!string.IsNullOrEmpty(cur.Detail)) parts.Add(cur.Detail);
                 Charging = cur.Charging;
@@ -69,10 +69,10 @@ namespace BatteryTray.UI
             }
             else
             {
-                // The reason, when the provider knows it ("спит или выключена"), reads better than a bare "Нет связи"
+                // The reason, when the provider knows it ("asleep or off"), reads better than a bare "Not connected"
                 string? why = row.Current?.Detail;
-                parts.Add(string.IsNullOrEmpty(why) ? "Нет связи" : char.ToUpper(why[0]) + why[1..]);
-                if (row.Last?.Level is int was) parts.Add($"последний раз {was}%, {Ago(row.Last.Time, now)}");
+                parts.Add(string.IsNullOrEmpty(why) ? Loc.T("state.offline") : char.ToUpper(why[0]) + why[1..]);
+                if (row.Last?.Level is int was) parts.Add(Loc.T("last.seen", was, Ago(row.Last.Time, now)));
                 Charging = false;
                 LevelBrush = Theme.Offline;
             }
@@ -89,14 +89,14 @@ namespace BatteryTray.UI
         static string Ago(DateTime t, DateTime now)
         {
             TimeSpan d = now - t;
-            if (d.TotalMinutes < 1) return "только что";
-            if (d.TotalHours < 1) return $"{(int)d.TotalMinutes} мин назад";
-            if (d.TotalDays < 1) return $"{(int)d.TotalHours} ч назад";
-            return $"{t:dd.MM} в {t:HH:mm}";
+            if (d.TotalMinutes < 1) return Loc.T("ago.now");
+            if (d.TotalHours < 1) return Loc.T("ago.min", (int)d.TotalMinutes);
+            if (d.TotalDays < 1) return Loc.T("ago.hours", (int)d.TotalHours);
+            return Loc.T("ago.date", t);
         }
     }
 
-    /// <summary>One device block on the "Настройки" tab; edits go straight into <see cref="AppSettings"/>.</summary>
+    /// <summary>One device block on the settings tab; edits go straight into <see cref="AppSettings"/>.</summary>
     public sealed class DeviceSettingsVM : Observable
     {
         readonly DeviceSettings settings;

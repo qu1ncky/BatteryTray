@@ -3,6 +3,7 @@ using System.Drawing;
 using System.Drawing.Text;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
+using BatteryTray.Core;
 
 namespace BatteryTray.UI
 {
@@ -10,6 +11,7 @@ namespace BatteryTray.UI
     public sealed class TrayIcon : IDisposable
     {
         readonly NotifyIcon icon = new();
+        readonly ToolStripItem openItem, refreshItem, exitItem;
         IntPtr iconHandle;
 
         public event Action? OpenRequested;
@@ -24,10 +26,12 @@ namespace BatteryTray.UI
                 ShowImageMargin = false,
                 Font = new Font("Segoe UI", 9.75f),
             };
-            menu.Items.Add("Открыть", null, (_, _) => OpenRequested?.Invoke());
-            menu.Items.Add("Обновить сейчас", null, (_, _) => RefreshRequested?.Invoke());
+            openItem = menu.Items.Add("", null, (_, _) => OpenRequested?.Invoke());
+            refreshItem = menu.Items.Add("", null, (_, _) => RefreshRequested?.Invoke());
             menu.Items.Add(new ToolStripSeparator());
-            menu.Items.Add("Выход", null, (_, _) => ExitRequested?.Invoke());
+            exitItem = menu.Items.Add("", null, (_, _) => ExitRequested?.Invoke());
+            NameItems();
+            Loc.Changed += NameItems;
             foreach (ToolStripItem item in menu.Items)
             {
                 item.ForeColor = Color.FromArgb(243, 243, 243);
@@ -39,8 +43,15 @@ namespace BatteryTray.UI
             {
                 if (e.Button == MouseButtons.Left) OpenRequested?.Invoke();
             };
-            Update("…", Color.Gray, "Заряд устройств");
+            Update("…", Color.Gray, Loc.T("app.title"));
             icon.Visible = true;
+        }
+
+        void NameItems()
+        {
+            openItem.Text = Loc.T("tray.open");
+            refreshItem.Text = Loc.T("refresh");
+            exitItem.Text = Loc.T("tray.exit");
         }
 
         public void Update(string label, Color color, string tooltip)

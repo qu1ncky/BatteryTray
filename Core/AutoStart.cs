@@ -68,7 +68,7 @@ namespace BatteryTray.Core
             string xml = $@"<?xml version=""1.0"" encoding=""UTF-16""?>
 <Task version=""1.4"" xmlns=""http://schemas.microsoft.com/windows/2004/02/mit/task"">
   <RegistrationInfo>
-    <Description>Заряд беспроводных устройств в трее и напоминания о разряде (BatteryTray)</Description>
+    <Description>BatteryTray: battery levels of wireless devices in the tray, with low battery reminders</Description>
   </RegistrationInfo>
   <Triggers>
     <LogonTrigger>

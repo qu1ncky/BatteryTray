@@ -14,7 +14,7 @@ namespace BatteryTray.Providers
     {
         const string Id = "razer:barracuda-x";
         const string DeviceName = "Razer Barracuda X";
-        const string NeedsAdmin = "нужны права администратора";
+        static string NeedsAdmin => Loc.T("d.needsAdmin");
         const int NotChargingChecks = 3; // polls in a row without charging before the level may move again
         const int ChargerRiseMv = 15;    // a charger lifts the voltage at least this much above the resting one
         const int HoldMv = 4195;         // the charger's last stage holds the battery at exactly 4.20 V
@@ -59,7 +59,7 @@ namespace BatteryTray.Providers
 
             List<HidInfo> candidates = BarracudaProtocol.ControlInterfaces(all);
             if (candidates.Count == 0)
-                return new[] { Offline(all.Any(i => i.AccessDenied) ? NeedsAdmin : "приёмник не отвечает") };
+                return new[] { Offline(all.Any(i => i.AccessDenied) ? NeedsAdmin : Loc.T("d.receiverSilent")) };
 
             if (events == null || !events.Running || events.Path != candidates[0].Path)
             {
@@ -130,11 +130,11 @@ namespace BatteryTray.Providers
             if (full)
             {
                 levelBeforeCable = 100; // a top-up from here starts full
-                return Online(100, false, charging: false, full: true, "кабель можно отключать");
+                return Online(100, false, charging: false, full: true, Loc.T("d.unplugOk"));
             }
-            string stage = hold ? "последний этап зарядки" : "процент на зарядке не виден";
+            string stage = Loc.T(hold ? "d.almostFull" : "d.cableHidden");
             return Online(null, false, charging: true, full: false,
-                levelBeforeCable is int before ? $"{stage}, до зарядки было {before}%" : stage);
+                levelBeforeCable is int before ? $"{stage} · {Loc.T("d.wasBefore", before)}" : stage);
         }
 
         /// <summary>
@@ -153,7 +153,7 @@ namespace BatteryTray.Providers
             settling = unpluggedAt is DateTime u && now - u < SettleMax
                        && (now - u < SettleQuiet || now - ev.PercentTime < SettleQuiet);
             if (settling)
-                return Online(null, false, charging: false, full: false, "после зарядки процент уточняется, это пара минут");
+                return Online(null, false, charging: false, full: false, Loc.T("d.settling"));
             unpluggedAt = null;
 
             if (ev.Percent is int own)
@@ -164,15 +164,14 @@ namespace BatteryTray.Providers
             }
             int level = Step(r.Percent);
             lastLevel = level;
-            return Online(level, true, charging: false, full: false,
-                $"оценка по напряжению {r.Millivolts / 1000.0:0.00} В, точный процент наушники пришлют, когда он изменится");
+            return Online(level, true, charging: false, full: false, Loc.T("d.estimate"));
         }
 
         static DeviceReading Online(int? level, bool estimate, bool charging, bool full, string? detail)
         {
             return new DeviceReading
             {
-                Id = Id, Name = DeviceName, Kind = DeviceKind.Headset, Via = "2.4 ГГц", Online = true,
+                Id = Id, Name = DeviceName, Kind = DeviceKind.Headset, Via = Loc.T("via.24"), Online = true,
                 Level = level, Estimate = estimate, Charging = charging, FullOnCharger = full, Detail = detail,
             };
         }
@@ -189,7 +188,7 @@ namespace BatteryTray.Providers
         {
             return new DeviceReading
             {
-                Id = Id, Name = DeviceName, Kind = DeviceKind.Headset, Via = "2.4 ГГц", Online = false, Detail = detail,
+                Id = Id, Name = DeviceName, Kind = DeviceKind.Headset, Via = Loc.T("via.24"), Online = false, Detail = detail,
             };
         }
 
@@ -338,7 +337,7 @@ namespace BatteryTray.Providers
                     // charger is only reported along with a changed level: back to the voltage for that
                     news = true;
                     charger = null;
-                    Log.Write($"Barracuda: наушники {(value == 1 ? "на связи" : "отключились")}");
+                    Log.Write($"Barracuda: headset {(value == 1 ? "connected" : "disconnected")}");
                 }
                 else if (id == BatteryEvent && value <= 100)
                 {
@@ -351,7 +350,7 @@ namespace BatteryTray.Providers
                     news = charger != (value == 1);
                     charger = value == 1;
                     if (news) chargerChanged = DateTime.Now;
-                    if (news) Log.Write($"Barracuda: наушники сообщили, что кабель {(value == 1 ? "подключён" : "отключён")}");
+                    if (news) Log.Write($"Barracuda: headset reports the cable {(value == 1 ? "plugged in" : "unplugged")}");
                 }
                 else return;
             }
@@ -439,7 +438,7 @@ namespace BatteryTray.Providers
                 }
             }
             // An interface that talked without error means the dongle works and the headset is just away
-            status = answered || error == null ? "headset off or out of range" : "ошибка: " + error;
+            status = answered || error == null ? "headset off or out of range" : Loc.T("d.error", error);
             return null;
         }
 

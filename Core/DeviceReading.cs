@@ -11,7 +11,7 @@ namespace BatteryTray.Core
         public required string Id { get; init; }
         public required string Name { get; init; }
         public DeviceKind Kind { get; init; } = DeviceKind.Other;
-        /// <summary>How the device is reached: "2.4 ГГц" or "Bluetooth".</summary>
+        /// <summary>How the device is reached, as shown: "2.4 GHz", "Bluetooth", "cable"...</summary>
         public required string Via { get; init; }
         public bool Online { get; init; }
         /// <summary>0-100, or null when the device doesn't report a level right now. Never a stale level passed off
