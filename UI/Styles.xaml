@@ -112,7 +112,8 @@
                         <Border Background="{TemplateBinding Background}" CornerRadius="4" Padding="14,7">
                             <ContentPresenter TextElement.Foreground="{TemplateBinding Foreground}"/>
                         </Border>
-                        <Border x:Name="Underline" Height="3" Width="16" CornerRadius="1.5" VerticalAlignment="Bottom"
+                        <!-- As wide as the label, so it's clear which tab is open -->
+                        <Border x:Name="Underline" Height="3" Margin="14,0" CornerRadius="1.5" VerticalAlignment="Bottom"
                                 Background="{StaticResource AccentBrush}" Visibility="Hidden"/>
                     </Grid>
                     <ControlTemplate.Triggers>
