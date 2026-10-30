@@ -73,7 +73,7 @@ namespace BatteryTray.UI
             if (!rows.Select(r => r.Id).SequenceEqual(deviceSettings.Select(d => d.Id)))
             {
                 deviceSettings.Clear();
-                foreach (var row in rows) deviceSettings.Add(new DeviceSettingsVM(row, s.For(row.Id), app.SettingsChanged));
+                foreach (var row in rows) deviceSettings.Add(new DeviceSettingsVM(row, s, app.SettingsChanged));
             }
         }
 
