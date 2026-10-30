@@ -229,7 +229,7 @@ namespace BatteryTray
                 tray.Update("--", Drawing.Color.Gray, tip);
                 return;
             }
-            var c = Theme.LevelColor(pick.Current!.Level, pick.Current.Charging, true, Settings);
+            var c = Theme.LevelColor(pick.Current!.Level, pick.Current.Charging, true, pick.Id, Settings);
             tray.Update(pick.Current.Level!.Value.ToString(), Drawing.Color.FromArgb(c.R, c.G, c.B), tip);
         }
 

@@ -65,7 +65,7 @@ namespace BatteryTray.UI
                 parts.Add(cur.Via);
                 if (!string.IsNullOrEmpty(cur.Detail)) parts.Add(cur.Detail);
                 Charging = cur.Charging;
-                LevelBrush = Theme.LevelBrush(level, cur.Charging, true, s);
+                LevelBrush = Theme.LevelBrush(level, cur.Charging, true, row.Id, s);
             }
             else
             {

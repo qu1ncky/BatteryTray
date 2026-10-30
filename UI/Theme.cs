@@ -29,19 +29,20 @@ namespace BatteryTray.UI
             return b;
         }
 
-        public static Color LevelColor(int? level, bool charging, bool online, AppSettings s)
+        /// <summary>The level color a device shows at: its own thresholds when set, the global ones otherwise.</summary>
+        public static Color LevelColor(int? level, bool charging, bool online, string id, AppSettings s)
         {
             if (!online) return OfflineColor;
             if (charging) return ChargeColor;
             if (level == null) return OfflineColor;
-            if (level <= s.CriticalPercent) return BadColor;
-            if (level <= s.LowPercent) return WarnColor;
+            if (level <= s.CriticalFor(id)) return BadColor;
+            if (level <= s.LowFor(id)) return WarnColor;
             return GoodColor;
         }
 
-        public static SolidColorBrush LevelBrush(int? level, bool charging, bool online, AppSettings s)
+        public static SolidColorBrush LevelBrush(int? level, bool charging, bool online, string id, AppSettings s)
         {
-            Color c = LevelColor(level, charging, online, s);
+            Color c = LevelColor(level, charging, online, id, s);
             return c == GoodColor ? Good : c == WarnColor ? Warn : c == BadColor ? Bad : c == ChargeColor ? Charge : Offline;
         }
 
