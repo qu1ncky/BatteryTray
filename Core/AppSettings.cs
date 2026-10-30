@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text.Encodings.Web;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace BatteryTray.Core
 {
@@ -12,6 +13,12 @@ namespace BatteryTray.Core
         public string? Name { get; set; }
         public bool Hidden { get; set; }
         public bool Alerts { get; set; } = true;
+        /// <summary>Reminder level for this device; null = the global <see cref="AppSettings.LowPercent"/>.</summary>
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public int? LowPercent { get; set; }
+        /// <summary>Critical level for this device; null = the global <see cref="AppSettings.CriticalPercent"/>.</summary>
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public int? CriticalPercent { get; set; }
     }
 
     /// <summary>User settings, stored as JSON in %LOCALAPPDATA%\BatteryTray\settings.json.</summary>
@@ -44,6 +51,14 @@ namespace BatteryTray.Core
             return s;
         }
 
+        /// <summary>The reminder level a device actually alerts at: its own when set, the global one otherwise.</summary>
+        public int LowFor(string id) => Devices.GetValueOrDefault(id)?.LowPercent ?? LowPercent;
+
+        /// <summary>The critical level a device actually turns red at: its own when set, the global one otherwise.
+        /// Never closer than 5 below the level it alerts at, so a low custom level can't fire critical first.</summary>
+        public int CriticalFor(string id) =>
+            Math.Min(Devices.GetValueOrDefault(id)?.CriticalPercent ?? CriticalPercent, LowFor(id) - 5);
+
         public string DisplayName(string id, string fallback)
         {
             string? custom = Devices.TryGetValue(id, out var s) ? s.Name?.Trim() : null;
@@ -67,6 +82,13 @@ namespace BatteryTray.Core
             s.LowPercent = Math.Clamp(s.LowPercent, 10, 50);
             s.CriticalPercent = Math.Clamp(s.CriticalPercent, 5, s.LowPercent - 5);
             s.RepeatMinutes = Math.Clamp(s.RepeatMinutes, 1, 120);
+            // Per-device levels ride the same rails; a critical level stays below the reminder level in effect
+            foreach (DeviceSettings d in s.Devices.Values)
+            {
+                if (d.LowPercent is int low) d.LowPercent = Math.Clamp(low, 10, 50);
+                if (d.CriticalPercent is int critical)
+                    d.CriticalPercent = Math.Clamp(critical, 5, (d.LowPercent ?? s.LowPercent) - 5);
+            }
             return s;
         }
 
