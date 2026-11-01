@@ -173,8 +173,10 @@ namespace BatteryTray
 
         public void ShowTestAlert()
         {
+            // Each device at its own levels: the first one just below its reminder level, the second one critical
             var sample = Rows().Where(r => r.Online && r.Current?.Level != null).Take(2)
-                .Select((r, i) => new AlertItem(r.Id, r.Name, r.Kind, i == 0 ? Settings.LowPercent - 2 : Settings.CriticalPercent - 1, i > 0))
+                .Select((r, i) => new AlertItem(r.Id, r.Name, r.Kind,
+                    i == 0 ? Settings.LowFor(r.Id) - 2 : Settings.CriticalFor(r.Id) - 1, i > 0))
                 .ToList();
             if (sample.Count == 0)
                 sample.Add(new AlertItem("test", Loc.T("name.mouse"), DeviceKind.Mouse, Settings.LowPercent - 2, false));
