@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -44,6 +45,10 @@ namespace BatteryTray.Core
         {
             WriteIndented = true,
             Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping, // keep Cyrillic names readable in the file
+            // What hand edits tend to leave behind: a number in quotes, a comma after the last value, a // comment
+            NumberHandling = JsonNumberHandling.AllowReadingFromString,
+            AllowTrailingCommas = true,
+            ReadCommentHandling = JsonCommentHandling.Skip,
         };
 
         public DeviceSettings For(string id)
@@ -71,14 +76,13 @@ namespace BatteryTray.Core
             AppSettings s;
             try
             {
-                s = File.Exists(FilePath)
-                    ? JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(FilePath), Json) ?? new AppSettings()
-                    : new AppSettings();
+                s = File.Exists(FilePath) ? Read(File.ReadAllText(FilePath)) : new AppSettings();
             }
             catch (Exception e)
             {
                 Log.Write("settings.json unreadable, using defaults: " + e.Message);
                 s = new AppSettings();
+                KeepCopy();
             }
             s.LowPercent = Math.Clamp(s.LowPercent, 10, 50);
             s.CriticalPercent = Math.Clamp(s.CriticalPercent, 5, s.LowPercent - 5);
@@ -97,6 +101,91 @@ namespace BatteryTray.Core
                 d.CriticalPercent = Math.Clamp(d.CriticalPercent ?? s.CriticalPercent, 5, low - 5);
             }
             return s;
+        }
+
+        /// <summary>The settings in the file. One value of the wrong type (a hand edit) fails the whole file, and
+        /// the save right after start would then write the defaults over everything; so the rest of the file is
+        /// taken value by value, device by device, and the file as it was is kept as settings.json.bak.</summary>
+        static AppSettings Read(string text)
+        {
+            try
+            {
+                // A file that is just null holds no settings: dealt with like a broken one, so a copy is kept too
+                return JsonSerializer.Deserialize<AppSettings>(text, Json)
+                       ?? throw new JsonException("no settings object in the file");
+            }
+            catch (JsonException e)
+            {
+                Log.Write("settings.json: " + e.Message + " - reading it value by value");
+            }
+            // Not even JSON (a missing comma, a stray quote): this throws, and Load falls back to the defaults.
+            // JsonDocument rather than JsonNode: like the serializer, it takes the last of two equal names
+            using JsonDocument doc = JsonDocument.Parse(text, new JsonDocumentOptions
+            {
+                AllowTrailingCommas = true,
+                CommentHandling = JsonCommentHandling.Skip,
+            });
+            var s = new AppSettings();
+            JsonElement root = doc.RootElement;
+            if (root.ValueKind == JsonValueKind.Object)
+            {
+                Fill(s, root);
+                if (root.TryGetProperty(nameof(Devices), out JsonElement devices)
+                    && devices.ValueKind == JsonValueKind.Object)
+                {
+                    foreach (JsonProperty device in devices.EnumerateObject())
+                    {
+                        if (device.Value.ValueKind != JsonValueKind.Object) continue; // a null or a number: skipped
+                        try
+                        {
+                            var d = new DeviceSettings();
+                            Fill(d, device.Value);
+                            s.Devices[device.Name] = d;
+                        }
+                        catch (Exception e)
+                        {
+                            // One entry that can't be read (an odd id) costs only itself
+                            Log.Write("settings.json: a device ignored, " + e.Message);
+                        }
+                    }
+                }
+            }
+            KeepCopy();
+            return s;
+        }
+
+        /// <summary>Sets every property the JSON has a readable value for; one that doesn't read keeps its default.
+        /// The devices are read one by one by the caller.</summary>
+        static void Fill(object target, JsonElement values)
+        {
+            foreach (PropertyInfo p in target.GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance))
+            {
+                if (p.GetSetMethod() == null || p.Name == nameof(Devices)) continue;
+                try
+                {
+                    if (values.TryGetProperty(p.Name, out JsonElement value))
+                        p.SetValue(target, value.Deserialize(p.PropertyType, Json));
+                }
+                catch (Exception e)
+                {
+                    // A null or a value of the wrong type for this property: its default stays
+                    Log.Write($"settings.json: {p.Name} ignored, {e.Message}");
+                }
+            }
+        }
+
+        /// <summary>The file as it was, kept before the next save writes over it, to fix by hand.</summary>
+        static void KeepCopy()
+        {
+            try
+            {
+                File.Copy(FilePath, FilePath + ".bak", overwrite: true);
+                Log.Write("settings.json as it was: settings.json.bak");
+            }
+            catch (Exception e)
+            {
+                Log.Write("cannot keep settings.json.bak: " + e.Message);
+            }
         }
 
         public void Save()

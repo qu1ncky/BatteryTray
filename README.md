@@ -119,7 +119,7 @@ Everything is in Settings → Updates: status, what's new, "Check now" and the a
 | `XInputProvider` | `XInputGetBatteryInformation`: 4 levels → approximate percentage. Skips Bluetooth controllers, whose exact level comes from Windows. |
 | `BluetoothProvider` | The `DEVPKEY_Bluetooth_Battery` device property (what Settings → Bluetooth shows), only while `ConnectionStatus = Connected`. |
 
-Files in `%LOCALAPPDATA%\BatteryTray`: `settings.json` (thresholds, names, hidden devices, language), `state.json` (last known levels), `log.txt` (connections, level changes, reminders).
+Files in `%LOCALAPPDATA%\BatteryTray`: `settings.json` (reminder levels, names, hidden devices, language), `state.json` (last known levels), `log.txt` (connections, level changes, reminders). If a hand edit leaves a mistake in `settings.json`, the app keeps the file as it was in `settings.json.bak`: a value of the wrong type just goes back to its default, while a file that is no longer valid JSON (a missing comma, a stray quote) starts over from the defaults.
 
 A new device family is one class in `Providers/` implementing `IBatteryProvider`: poll the hardware, say when to poll again.
 
