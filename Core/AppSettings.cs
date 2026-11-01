@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -82,12 +83,18 @@ namespace BatteryTray.Core
             s.LowPercent = Math.Clamp(s.LowPercent, 10, 50);
             s.CriticalPercent = Math.Clamp(s.CriticalPercent, 5, s.LowPercent - 5);
             s.RepeatMinutes = Math.Clamp(s.RepeatMinutes, 1, 120);
-            // Per-device levels ride the same rails; a critical level stays below the reminder level in effect
+            // A hand-edited file can hold nulls: dropped here, so they can't stop the app from starting
+            s.Devices ??= new();
+            foreach (string id in s.Devices.Where(d => d.Value == null).Select(d => d.Key).ToList())
+                s.Devices.Remove(id);
+            // Per-device levels ride the same rails. A device has both of its own levels or none: one set alone (by
+            // hand) gets the other from the global ones, so its sliders show the levels it actually uses
             foreach (DeviceSettings d in s.Devices.Values)
             {
-                if (d.LowPercent is int low) d.LowPercent = Math.Clamp(low, 10, 50);
-                if (d.CriticalPercent is int critical)
-                    d.CriticalPercent = Math.Clamp(critical, 5, (d.LowPercent ?? s.LowPercent) - 5);
+                if (d.LowPercent == null && d.CriticalPercent == null) continue;
+                int low = Math.Clamp(d.LowPercent ?? s.LowPercent, 10, 50);
+                d.LowPercent = low;
+                d.CriticalPercent = Math.Clamp(d.CriticalPercent ?? s.CriticalPercent, 5, low - 5);
             }
             return s;
         }
