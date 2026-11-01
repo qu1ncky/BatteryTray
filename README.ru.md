@@ -102,7 +102,7 @@ Get-PnpDevice -PresentOnly | ? InstanceId -match '^USB\\VID_\w{4}&PID_\w{4}\\' |
 | `XInputProvider` | `XInputGetBatteryInformation`: 4 уровня → примерный процент. Геймпады по Bluetooth пропускает — у них точный процент даёт Windows. |
 | `BluetoothProvider` | Свойство устройства `DEVPKEY_Bluetooth_Battery` (то, что показывает «Параметры → Bluetooth»), только при `ConnectionStatus = Connected`. |
 
-Файлы: `%LOCALAPPDATA%\BatteryTray` — `settings.json` (пороги, названия, скрытые устройства, язык), `state.json` (последний известный заряд), `log.txt` (подключения, изменения заряда, напоминания).
+Файлы: `%LOCALAPPDATA%\BatteryTray` — `settings.json` (пороги, названия, скрытые устройства, язык), `state.json` (последний известный заряд), `log.txt` (подключения, изменения заряда, напоминания). Если после ручной правки в `settings.json` осталась ошибка, программа сохранит исходный файл как `settings.json.bak`: значение не того типа просто вернётся к значению по умолчанию, а если файл перестал быть правильным JSON (пропущена запятая, лишняя кавычка), все настройки будут по умолчанию.
 
 ## Сборка из исходников
 
