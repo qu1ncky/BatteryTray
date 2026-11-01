@@ -182,8 +182,8 @@ namespace BatteryTray.UI
                 if (!CustomThresholds) return;
                 if (value == LowPercent) return;
                 settings.LowPercent = Math.Clamp(value, 10, 50);
-                // The critical level must stay below the reminder level
-                if (settings.CriticalPercent >= settings.LowPercent)
+                // The critical level stays at least 5 below the reminder level, as CriticalFor has it
+                if (settings.CriticalPercent > settings.LowPercent - 5)
                     settings.CriticalPercent = settings.LowPercent - 5;
                 NotifyThresholds();
                 changed();
@@ -199,7 +199,7 @@ namespace BatteryTray.UI
                 int critical = Math.Clamp(value, 5, 45);
                 if (critical == CriticalPercent) return;
                 settings.CriticalPercent = critical;
-                if (critical >= LowPercent) LowPercent = critical + 5;
+                if (critical > LowPercent - 5) LowPercent = critical + 5;
                 NotifyThresholds();
                 changed();
             }
