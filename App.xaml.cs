@@ -221,8 +221,12 @@ namespace BatteryTray
                 .ToList();
             string tip = lines.Count == 0 ? Loc.T("tray.nodata") : string.Join("\n", lines);
 
-            // The icon shows the device that will run out first; charging ones only when nothing else is left
-            DeviceRow? pick = live.Where(r => !r.Current!.Charging).OrderBy(r => r.Current!.Level).FirstOrDefault()
+            // The icon shows the device that needs charging most by its own levels: a critical one first, then one
+            // below its reminder level, the least charged among equals; charging ones only when nothing else is left
+            int Urgency(DeviceRow r) =>
+                r.Current!.Level <= Settings.CriticalFor(r.Id) ? 2 : r.Current.Level <= Settings.LowFor(r.Id) ? 1 : 0;
+            DeviceRow? pick = live.Where(r => !r.Current!.Charging)
+                                  .OrderByDescending(Urgency).ThenBy(r => r.Current!.Level).FirstOrDefault()
                               ?? live.OrderBy(r => r.Current!.Level).FirstOrDefault();
             if (pick == null)
             {

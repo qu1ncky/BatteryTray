@@ -13,7 +13,7 @@ See how much battery your wireless headset, mouse, keyboard and controller have 
 
 ## Features
 
-- **Battery level in the tray** — the icon shows the device that will run out first: green, yellow below your reminder level, red below the critical level, blue while charging. Hover it to see every device.
+- **Battery level in the tray** — the icon shows the device that most needs charging: green, yellow below its reminder level, red below its critical level, blue while charging. Hover it to see every device.
 - **All devices in one window** — connected ones as cards with their percentage, the rest with the last known level and when it was seen.
 - **Low battery reminder that can't be missed** — its own always-on-top window in the corner, not a toast: Do Not Disturb doesn't hide it, it doesn't time out and it doesn't steal focus from a game. "Remind me in N min" or "Don't remind me until it's charged"; at the critical level it comes back even if snoozed.
 - **A level for every device** — the headset that runs out first can alert at 40% while the mouse waits for 15%: each device gets its own reminder and critical levels, and follows the global ones until you set them.
