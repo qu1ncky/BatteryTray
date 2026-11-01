@@ -6,10 +6,10 @@ namespace BatteryTray.Core
     public sealed record AlertItem(string Id, string Name, DeviceKind Kind, int Level, bool Critical);
 
     /// <summary>
-    /// Decides which devices need a low-battery reminder right now. A reminder stays due until the user snoozes it
-    /// (it comes back after the repeat interval) or mutes it (quiet until the device is charged). Reaching the
-    /// critical level breaks through a snooze or mute once. Charging, or a level clearly above the threshold,
-    /// re-arms everything.
+    /// Decides which devices need a low-battery reminder right now. Each device alerts at its own level when one is
+    /// set, and at the global one otherwise. A reminder stays due until the user snoozes it (it comes back after the
+    /// repeat interval) or mutes it (quiet until the device is charged). Reaching the critical level breaks through
+    /// a snooze or mute once. Charging, or a level clearly above the threshold, re-arms everything.
     /// </summary>
     public sealed class AlertManager
     {
@@ -32,15 +32,16 @@ namespace BatteryTray.Core
                 DeviceReading? r = row.Current;
                 if (r == null) continue; // provider lost the device (dongle unplugged): keep its state as is
                 DeviceSettings ds = settings.For(row.Id);
-                if (ds.Hidden || !ds.Alerts || r.Charging || r.Level > settings.LowPercent + RearmMargin)
+                int low = settings.LowFor(row.Id);
+                if (ds.Hidden || !ds.Alerts || r.Charging || r.Level > low + RearmMargin)
                 {
                     states.Remove(row.Id);
                     continue;
                 }
-                if (!r.Online || r.Level is not int level || level > settings.LowPercent) continue;
+                if (!r.Online || r.Level is not int level || level > low) continue;
 
                 if (!states.TryGetValue(row.Id, out var st)) states[row.Id] = st = new State();
-                bool critical = level <= settings.CriticalPercent;
+                bool critical = level <= settings.CriticalFor(row.Id);
                 if (critical && !st.CriticalSeen)
                 {
                     st.CriticalSeen = true;

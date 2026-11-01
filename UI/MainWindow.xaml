@@ -106,6 +106,27 @@
                               IsChecked="{Binding Visible}"/>
                     <CheckBox Style="{StaticResource Toggle}" Content="{l:T device.alerts}" Margin="34,10,0,0"
                               IsChecked="{Binding Alerts}"/>
+                    <CheckBox Style="{StaticResource Toggle}" Content="{l:T device.thresholds}" Margin="34,10,0,0"
+                              IsChecked="{Binding CustomThresholds}" ToolTip="{l:T device.thresholds.tip}"/>
+                    <StackPanel Margin="34,10,0,0" Visibility="{Binding ThresholdsVisibility}">
+                        <Grid>
+                            <TextBlock Text="{l:T alerts.low}"/>
+                            <TextBlock Text="{Binding LowText}" HorizontalAlignment="Right" FontWeight="SemiBold"
+                                       Foreground="{StaticResource AccentBrush}"/>
+                        </Grid>
+                        <Slider Minimum="10" Maximum="50" TickFrequency="5" SmallChange="5" LargeChange="5"
+                                Margin="0,6,0,14" Value="{Binding LowPercent}"/>
+
+                        <Grid>
+                            <TextBlock Text="{l:T alerts.critical}"/>
+                            <TextBlock Text="{Binding CriticalText}" HorizontalAlignment="Right" FontWeight="SemiBold"
+                                       Foreground="{StaticResource AccentBrush}"/>
+                        </Grid>
+                        <Slider Minimum="5" Maximum="45" TickFrequency="5" SmallChange="5" LargeChange="5"
+                                Margin="0,6,0,4" Value="{Binding CriticalPercent}"/>
+                        <TextBlock Text="{l:T alerts.critical.hint}" FontSize="12"
+                                   Foreground="{StaticResource SecondaryBrush}" TextWrapping="Wrap"/>
+                    </StackPanel>
                 </StackPanel>
             </Border>
         </DataTemplate>

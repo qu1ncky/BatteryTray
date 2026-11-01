@@ -173,8 +173,10 @@ namespace BatteryTray
 
         public void ShowTestAlert()
         {
+            // Each device at its own levels: the first one just below its reminder level, the second one critical
             var sample = Rows().Where(r => r.Online && r.Current?.Level != null).Take(2)
-                .Select((r, i) => new AlertItem(r.Id, r.Name, r.Kind, i == 0 ? Settings.LowPercent - 2 : Settings.CriticalPercent - 1, i > 0))
+                .Select((r, i) => new AlertItem(r.Id, r.Name, r.Kind,
+                    i == 0 ? Settings.LowFor(r.Id) - 2 : Settings.CriticalFor(r.Id) - 1, i > 0))
                 .ToList();
             if (sample.Count == 0)
                 sample.Add(new AlertItem("test", Loc.T("name.mouse"), DeviceKind.Mouse, Settings.LowPercent - 2, false));
@@ -221,15 +223,19 @@ namespace BatteryTray
                 .ToList();
             string tip = lines.Count == 0 ? Loc.T("tray.nodata") : string.Join("\n", lines);
 
-            // The icon shows the device that will run out first; charging ones only when nothing else is left
-            DeviceRow? pick = live.Where(r => !r.Current!.Charging).OrderBy(r => r.Current!.Level).FirstOrDefault()
+            // The icon shows the device that needs charging most by its own levels: a critical one first, then one
+            // below its reminder level, the least charged among equals; charging ones only when nothing else is left
+            int Urgency(DeviceRow r) =>
+                r.Current!.Level <= Settings.CriticalFor(r.Id) ? 2 : r.Current.Level <= Settings.LowFor(r.Id) ? 1 : 0;
+            DeviceRow? pick = live.Where(r => !r.Current!.Charging)
+                                  .OrderByDescending(Urgency).ThenBy(r => r.Current!.Level).FirstOrDefault()
                               ?? live.OrderBy(r => r.Current!.Level).FirstOrDefault();
             if (pick == null)
             {
                 tray.Update("--", Drawing.Color.Gray, tip);
                 return;
             }
-            var c = Theme.LevelColor(pick.Current!.Level, pick.Current.Charging, true, Settings);
+            var c = Theme.LevelColor(pick.Current!.Level, pick.Current.Charging, true, pick.Id, Settings);
             tray.Update(pick.Current.Level!.Value.ToString(), Drawing.Color.FromArgb(c.R, c.G, c.B), tip);
         }
 

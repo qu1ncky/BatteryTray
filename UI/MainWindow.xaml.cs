@@ -73,7 +73,7 @@ namespace BatteryTray.UI
             if (!rows.Select(r => r.Id).SequenceEqual(deviceSettings.Select(d => d.Id)))
             {
                 deviceSettings.Clear();
-                foreach (var row in rows) deviceSettings.Add(new DeviceSettingsVM(row, s.For(row.Id), app.SettingsChanged));
+                foreach (var row in rows) deviceSettings.Add(new DeviceSettingsVM(row, s, app.SettingsChanged));
             }
         }
 
@@ -120,9 +120,11 @@ namespace BatteryTray.UI
         {
             if (loading) return;
             loading = true;
-            // The critical level must stay below the reminder level
-            if (sender == LowSlider && CriticalSlider.Value >= LowSlider.Value) CriticalSlider.Value = LowSlider.Value - 5;
-            if (sender == CriticalSlider && CriticalSlider.Value >= LowSlider.Value) LowSlider.Value = CriticalSlider.Value + 5;
+            // The critical level stays at least 5 below the reminder level, as Load and CriticalFor have it
+            if (sender == LowSlider && CriticalSlider.Value > LowSlider.Value - 5)
+                CriticalSlider.Value = LowSlider.Value - 5;
+            if (sender == CriticalSlider && CriticalSlider.Value > LowSlider.Value - 5)
+                LowSlider.Value = CriticalSlider.Value + 5;
             loading = false;
 
             AppSettings s = app.Settings;

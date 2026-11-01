@@ -7,7 +7,8 @@ using BatteryTray.Core;
 
 namespace BatteryTray.UI
 {
-    /// <summary>The notification-area icon: the lowest battery level as a colored number, with a small menu.</summary>
+    /// <summary>The notification-area icon: the level of the device that most needs charging as a colored number,
+    /// with a small menu.</summary>
     public sealed class TrayIcon : IDisposable
     {
         readonly NotifyIcon icon = new();

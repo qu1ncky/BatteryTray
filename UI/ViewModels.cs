@@ -18,6 +18,12 @@ namespace BatteryTray.UI
             field = value;
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
         }
+
+        /// <summary>Raises <see cref="PropertyChanged"/> for a property whose value came from somewhere else.</summary>
+        protected void Notify([CallerMemberName] string? name = null)
+        {
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+        }
     }
 
     /// <summary>One card on the devices tab.</summary>
@@ -65,7 +71,7 @@ namespace BatteryTray.UI
                 parts.Add(cur.Via);
                 if (!string.IsNullOrEmpty(cur.Detail)) parts.Add(cur.Detail);
                 Charging = cur.Charging;
-                LevelBrush = Theme.LevelBrush(level, cur.Charging, true, s);
+                LevelBrush = Theme.LevelBrush(level, cur.Charging, true, row.Id, s);
             }
             else
             {
@@ -100,12 +106,14 @@ namespace BatteryTray.UI
     public sealed class DeviceSettingsVM : Observable
     {
         readonly DeviceSettings settings;
+        readonly AppSettings app;
         readonly Action changed;
 
-        public DeviceSettingsVM(DeviceRow row, DeviceSettings settings, Action changed)
+        public DeviceSettingsVM(DeviceRow row, AppSettings app, Action changed)
         {
-            this.settings = settings;
+            this.app = app;
             this.changed = changed;
+            settings = app.For(row.Id);
             Id = row.Id;
             DefaultName = row.Any.Name;
             Glyph = Theme.Glyph(row.Kind);
@@ -145,6 +153,69 @@ namespace BatteryTray.UI
                 settings.Alerts = value;
                 changed();
             }
+        }
+
+        /// <summary>Off = this device follows the global levels; on = the two sliders below apply to it alone.</summary>
+        public bool CustomThresholds
+        {
+            get => settings.LowPercent != null || settings.CriticalPercent != null;
+            set
+            {
+                if (value == CustomThresholds) return;
+                // Turning it on starts from the global levels, turning it off goes back to following them
+                settings.LowPercent = value ? app.LowPercent : null;
+                settings.CriticalPercent = value ? app.CriticalPercent : null;
+                NotifyThresholds();
+                changed();
+            }
+        }
+
+        public Visibility ThresholdsVisibility => CustomThresholds ? Visibility.Visible : Visibility.Collapsed;
+
+        public int LowPercent
+        {
+            get => settings.LowPercent ?? app.LowPercent;
+            set
+            {
+                // The sliders stay bound while collapsed; a value arriving here uninvited would make this device
+                // custom again, so only write while the custom levels are actually on
+                if (!CustomThresholds) return;
+                if (value == LowPercent) return;
+                settings.LowPercent = Math.Clamp(value, 10, 50);
+                // The critical level stays at least 5 below the reminder level, as CriticalFor has it
+                if (settings.CriticalPercent > settings.LowPercent - 5)
+                    settings.CriticalPercent = settings.LowPercent - 5;
+                NotifyThresholds();
+                changed();
+            }
+        }
+
+        public int CriticalPercent
+        {
+            get => settings.CriticalPercent ?? app.CriticalPercent;
+            set
+            {
+                if (!CustomThresholds) return;
+                int critical = Math.Clamp(value, 5, 45);
+                if (critical == CriticalPercent) return;
+                settings.CriticalPercent = critical;
+                if (critical > LowPercent - 5) LowPercent = critical + 5;
+                NotifyThresholds();
+                changed();
+            }
+        }
+
+        public string LowText => $"{LowPercent}%";
+
+        public string CriticalText => $"{CriticalPercent}%";
+
+        void NotifyThresholds()
+        {
+            Notify(nameof(ThresholdsVisibility));
+            Notify(nameof(LowPercent));
+            Notify(nameof(CriticalPercent));
+            Notify(nameof(LowText));
+            Notify(nameof(CriticalText));
         }
     }
 }
