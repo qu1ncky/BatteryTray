@@ -189,6 +189,8 @@ namespace BatteryTray.Core
             ["d.readFailed"] = ("заряд не прочитался", "couldn't read the battery", "无法读取电量"),
             ["d.levelUnknown"] = ("заряд пока неизвестен", "level not known yet", "暂未获取电量"),
             ["d.cableHidden"] = ("процент будет виден без кабеля", "the level shows once unplugged", "拔掉线后显示电量"),
+            ["d.chargerHidden"] = ("процент будет виден, когда мышь снимут с зарядки", "the level shows once it's off the charger",
+                "离开充电器后显示电量"),
             ["d.wasBefore"] = ("до зарядки было {0}%", "{0}% before charging", "充电前为 {0}%"),
             ["d.almostFull"] = ("почти заряжено", "almost full", "即将充满"),
             ["d.unplugOk"] = ("можно отключать кабель", "you can unplug it", "可以拔掉充电线了"),
@@ -201,6 +203,10 @@ namespace BatteryTray.Core
                 "the level shows once a game or Steam uses the controller", "游戏或 Steam 使用手柄后才会显示电量"),
             ["d.fourLevels"] = ("примерно: геймпад сообщает только 4 уровня", "approximate: the controller reports only 4 levels",
                 "约值：手柄仅报告 4 个等级"),
+            ["d.tenSteps"] = ("примерно: мышь сообщает заряд шагами по 10%", "approximate: the mouse reports the level in 10% steps",
+                "约值：鼠标以 10% 为单位报告电量"),
+            ["d.unknownModel"] = ("заряд этой модели программа пока не читает — её поможет добавить лог",
+                "this model's level can't be read yet; its log can help add it", "暂时无法读取此型号的电量，日志可帮助添加支持"),
         };
     }
 }

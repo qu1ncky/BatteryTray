@@ -26,13 +26,16 @@
 | Razer Barracuda X (2022), вариант донгла `1532:0552` | 2.4 ГГц | ⚠️ не проверено |
 | Attack Shark R3 | приёмник 2.4 ГГц (`3151:402D`) | ✅ проверено |
 | Другие мыши и клавиатуры на платформе Rongyuan (Attack Shark и др., 81 модель приёмника) | приёмник 2.4 ГГц | ⚠️ не проверено |
+| Клавиатура Attack Shark X82 PRO HE | приёмник 2.4 ГГц (`3151:5026`) | ✅ проверено пользователем |
+| Мыши Attack Shark на приёмнике Xenta: X11, X3 Max, X6 / R1 и др. | приёмник 2.4 ГГц (`1D57:FA60`) или кабель | ⚠️ не проверено |
 | SteelSeries Aerox 3 / 5 / 9 Wireless, Prime Wireless, Prime Mini Wireless, Rival 3 Wireless (и Gen 2), Rival 650 Wireless | приёмник 2.4 ГГц или кабель | ⚠️ не проверено |
 | Мыши Razer: Viper Ultimate / V2 Pro / V3 Pro / Mini SE, DeathAdder V2 Pro / V3 Pro / V3 HyperSpeed / V4 Pro, Basilisk Ultimate / V3 Pro / V3 Pro 35K / X HyperSpeed, Naga Pro / V2 Pro, Cobra Pro / HyperSpeed, Pro Click (и Mini, V2), Lancehead, Mamba, Orochi V2, Atheris и др. — около 40 моделей | приёмник HyperSpeed или кабель | ⚠️ не проверено |
 | Клавиатуры Razer: BlackWidow V3 Pro / V3 Mini / V4 Mini / V4 TKL HyperSpeed, DeathStalker V2 Pro (и TKL), Joro | приёмник или кабель | ⚠️ не проверено |
 | Мыши, клавиатуры и другие устройства Logitech с протоколом HID++ (MX Master / Anywhere, MX Keys, серия G Lightspeed, M- и K-серии и др.) | приёмник Unifying / Bolt / Lightspeed / Nano или кабель | ⚠️ не проверено |
 | Гарнитуры HyperX: Cloud Alpha Wireless, Cloud II Wireless, Cloud Flight | приёмник | ⚠️ не проверено |
 | Гарнитуры Logitech G: G533, G535, G633 / G635 / G733 / G933 / G935, G PRO / PRO X Wireless, G930, ASTRO A50 (Gen 5) | приёмник | ⚠️ не проверено |
-| Гарнитуры SteelSeries Arctis: 1, 7, 9, Pro Wireless, 7+, Nova 3P, Nova 5, Nova 7 (и 7X, 7P, Gen 2), Nova Pro Wireless, GameBuds | приёмник | ⚠️ не проверено |
+| Гарнитура SteelSeries Arctis Nova 5 | приёмник (`1038:2232`) | ✅ проверено пользователем |
+| Гарнитуры SteelSeries Arctis: 1, 7, 9, Pro Wireless, 7+, Nova 3P, Nova 7 (и 7X, 7P, Gen 2), Nova Pro Wireless, GameBuds | приёмник | ⚠️ не проверено |
 | Гарнитуры Corsair: Void (вся серия), HS70, Void / Virtuoso / HS80 MAX Wireless, Virtuoso XT / SE | приёмник | ⚠️ не проверено |
 | Sony INZONE H5, MCHOSE X9, Lenovo Wireless VoIP | приёмник | ⚠️ не проверено |
 | Sony DualSense, DualSense Edge, DualShock 4 | кабель, адаптер Sony; Bluetooth — если игра или Steam включили полный режим геймпада | ⚠️ не проверено |
@@ -45,6 +48,8 @@ Bluetooth-устройства показываются, только пока �
 Razer Barracuda X сама присылает через донгл свой процент (при каждом изменении на 1%) и состояние кабеля — программа их слушает. Сразу после запуска программы, пока числа от наушников ещё не было, показывается оценка по напряжению батареи со знаком «≈». Во время зарядки процента нет: число наушников — сглаженное напряжение, и на кабеле оно просто ползёт к 100% по 1% за 20 секунд, хотя последняя четверть заряжается больше часа. Вместо него видно, что идёт зарядка, её последний этап (зарядка держит ровно 4,20 В) и момент, когда она закончилась. Пару минут после отключения кабеля процент тоже не показывается, пока число наушников оседает.
 
 Мышь Rongyuan / Attack Shark на кабеле уходит из приёмника и по проводу заряд не сообщает (официальный веб-драйвер его тоже не показывает). Поэтому она показывается как «заряжается · кабель» без процента, а настоящий процент приёмник отдаст, когда кабель отключат.
+
+Мыши Attack Shark на приёмнике Xenta (`1D57:FA60`) сами присылают свой заряд каждые 2 секунды: программа их только слушает и ничего им не отправляет. На кабеле или на зарядной станции число от мыши замирает, поэтому вместо него видна зарядка, а настоящий процент появляется через несколько секунд после того, как мышь сняли с зарядки. Модель мышь сообщает кодом в этих сообщениях. Мышь с ещё незнакомым кодом видна без процента, а её сообщения пишутся в лог: пришлите строки `Xenta` из `%LOCALAPPDATA%\BatteryTray\log.txt` в [Issues](https://github.com/qu1ncky/BatteryTray/issues), и модель добавится.
 
 ## Установка
 
@@ -93,6 +98,7 @@ Get-PnpDevice -PresentOnly | ? InstanceId -match '^USB\\VID_\w{4}&PID_\w{4}\\' |
 |---|---|
 | `RazerBarracudaProvider` | Команды Airoha RACE через донгл: перевести донгл в remote-режим, запросить напряжение (`GET_BATTERY`), вернуть local-режим (порт из [razer-barracuda-x-battery](https://github.com/mehdibouchami/razer-barracuda-x-battery)). Плюс уведомления, которые наушники шлют сами (кадры RACE типа `0x08`, полезная нагрузка `[id 02 01 значение]`): `0x20` — наушники включились / выключились, `0x21` — их собственный процент заряда, `0x2A` — кабель подключён / отключён; найдены прослушиванием донгла. Пока уведомлений ещё не было — процент по кривой Li-ion из напряжения, зарядка по напряжению. Конец зарядки: после удержания 4,20 В напряжение падает ниже 4,18 В при подключённом кабеле. |
 | `RongyuanDongleProvider` | Feature-отчёт `[00 F7 …]` на интерфейсе 2 (vendor page `FFFF`), ответ `[00 canRead kbBattery mouseBattery kbOffline mouseOffline …]`. Найден в официальном веб-драйвере ATTACK SHARK, который шлёт эту команду каждые 5 секунд. Мышь на кабеле (32 USB ID из того же драйвера) занимает слот приёмника, который в этот момент её потерял. |
+| `XentaReceiverProvider` | Ничего не отправляет: слушает на коллекции приёмника с usage page `000A` (интерфейс 2) 5-байтовый входной отчёт `03 MM 40 ST LL`, который мышь шлёт каждые 2 секунды: `MM` — код модели, `ST` — `01` от батареи или `02` / `03` от внешнего питания, `LL` — заряд (у кода `0x10` — десятками). Читаются только известные коды моделей, а уровень засчитывается, когда два кадра подряд совпали: каждое подключение начинается с ложных 100%. Мышь на кабеле (`1D57:FA55`) занимает слот приёмника. По [attackshark-battery-windows](https://github.com/daeoxide/attackshark-battery-windows), [Attack-Shark-Battery-KDE](https://gitlab.com/gabriel17166/Attack-Shark-Battery-KDE) и [форку HaloBattery](https://github.com/ahmedkhursheed23/HaloBattery). |
 | `SteelSeriesProvider` | Output-отчёт `0x92` / `0xD2` (Aerox, Prime) или `AA 01` (Rival) на служебном интерфейсе, по [rivalcfg](https://github.com/flozz/rivalcfg). |
 | `RazerPeripheralProvider` | 90-байтный feature-отчёт OpenRazer: команда `07 80` (заряд 0–255), `07 84` (зарядка), CRC — XOR байтов 2–87; transaction id и пауза между запросом и ответом — свои у каждой модели, по таблице OpenRazer. |
 | `LogitechProvider` | HID++: пинг слотов 1–6 приёмника (или индекса `0xFF` у устройства на кабеле), поиск фичи заряда `0x1004` / `0x1000` / `0x1001` / `0x1F20` и имени `0x0005`; для старых устройств HID++ 1.0 — регистры `0x0D` / `0x07`. Короткие запросы пишутся в короткую коллекцию, ответы читаются из обеих — Windows делит интерфейс на две. По [Solaar](https://github.com/pwr-Solaar/Solaar). |

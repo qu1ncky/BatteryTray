@@ -30,6 +30,7 @@ namespace BatteryTray.Providers
             {
                 new RazerBarracudaProvider(state),
                 new RongyuanDongleProvider(state),
+                new XentaReceiverProvider(state),
                 new SteelSeriesProvider(),
                 new RazerPeripheralProvider(),
                 new HeadsetProvider(),

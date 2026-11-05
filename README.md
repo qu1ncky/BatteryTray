@@ -31,12 +31,15 @@ See how much battery your wireless headset, mouse, keyboard and controller have 
 | Razer Barracuda X (2022), dongle `1532:0552` | 2.4 GHz | ⚠️ untested |
 | **Attack Shark R3** | 2.4 GHz receiver (`3151:402D`) | ✅ tested |
 | Other mice and keyboards on the Rongyuan platform (Attack Shark and others, 81 receiver models) | 2.4 GHz receiver | ⚠️ untested |
+| Attack Shark X82 PRO HE keyboard | 2.4 GHz receiver (`3151:5026`) | ✅ tested by a user |
+| **Attack Shark** mice on the Xenta receiver: X11, X3 Max, X6 / R1 and others | 2.4 GHz receiver (`1D57:FA60`) or cable | ⚠️ untested |
 | **Razer mice**: Viper Ultimate / V2 Pro / V3 Pro / Mini SE, DeathAdder V2 Pro / V3 Pro / V3 HyperSpeed / V4 Pro, Basilisk Ultimate / V3 Pro / V3 Pro 35K / X HyperSpeed, Naga Pro / V2 Pro, Cobra Pro / HyperSpeed, Pro Click (Mini, V2), Lancehead, Mamba, Orochi V2, Atheris and more — about 40 models | HyperSpeed receiver or cable | ⚠️ untested |
 | **Razer keyboards**: BlackWidow V3 Pro / V3 Mini / V4 Mini / V4 TKL HyperSpeed, DeathStalker V2 Pro (and TKL), Joro | receiver or cable | ⚠️ untested |
 | **Logitech** mice, keyboards and other HID++ devices: MX Master / Anywhere, MX Keys, G Lightspeed series, M and K series and more | Unifying / Bolt / Lightspeed / Nano receiver or cable | ⚠️ untested |
 | **Logitech G headsets**: G533, G535, G633 / G635 / G733 / G933 / G935, G PRO / PRO X Wireless, G930, ASTRO A50 (Gen 5) | receiver | ⚠️ untested |
 | **SteelSeries** mice: Aerox 3 / 5 / 9 Wireless, Prime Wireless, Prime Mini Wireless, Rival 3 Wireless (and Gen 2), Rival 650 Wireless | receiver or cable | ⚠️ untested |
-| **SteelSeries Arctis** headsets: 1, 7, 9, Pro Wireless, 7+, Nova 3P, Nova 5, Nova 7 (7X, 7P, Gen 2), Nova Pro Wireless, GameBuds | receiver | ⚠️ untested |
+| **SteelSeries Arctis Nova 5** | receiver (`1038:2232`) | ✅ tested by a user |
+| **SteelSeries Arctis** headsets: 1, 7, 9, Pro Wireless, 7+, Nova 3P, Nova 7 (7X, 7P, Gen 2), Nova Pro Wireless, GameBuds | receiver | ⚠️ untested |
 | **HyperX** headsets: Cloud Alpha Wireless, Cloud II Wireless, Cloud Flight | receiver | ⚠️ untested |
 | **Corsair** headsets: Void series, HS70, Void / Virtuoso / HS80 MAX Wireless, Virtuoso XT / SE | receiver | ⚠️ untested |
 | Sony INZONE H5, MCHOSE X9, Lenovo Wireless VoIP | receiver | ⚠️ untested |
@@ -51,6 +54,7 @@ Notes on specific devices:
 
 - **Razer Barracuda X** sends its own percentage through the dongle whenever it changes by 1%. Until it has sent one (right after the app starts), the level is estimated from the battery voltage and shown with "≈". While charging there is no percentage at all — the headset's number only creeps towards 100% at a fixed pace — so you see that it's charging, when it's almost full and when it's done.
 - **Attack Shark / Rongyuan mice** on their cable leave the receiver and report no level over the cable (the vendor's own driver doesn't show one either), so they show as charging, and the receiver reports the real level once the cable is out.
+- **Attack Shark mice on the Xenta receiver** (`1D57:FA60`) send their level by themselves every 2 seconds; BatteryTray only listens and sends them nothing. On the cable or the charging dock the number they send stays frozen, so you see a charging sign instead, and the real level is back a few seconds after the mouse leaves the charger. The model is told by a code in these messages: a mouse whose code isn't known yet is listed without a level and its messages go to the log, so please post the `Xenta` lines from `%LOCALAPPDATA%\BatteryTray\log.txt` in [Issues](https://github.com/qu1ncky/BatteryTray/issues) to get it added.
 - **Bluetooth** devices are listed only while connected: Windows keeps a stale percentage after they disconnect.
 
 ## Download and install
@@ -110,6 +114,7 @@ Everything is in Settings → Updates: status, what's new, "Check now" and the a
 |---|---|
 | `RazerBarracudaProvider` | Airoha RACE commands through the dongle: switch it to remote mode, ask for the voltage (`GET_BATTERY`), back to local mode (ported from [razer-barracuda-x-battery](https://github.com/mehdibouchami/razer-barracuda-x-battery)). Plus the notifications the headset sends by itself (RACE frames of type `0x08`, payload `[id 02 01 value]`): `0x20` headset on/off, `0x21` its own battery percentage, `0x2A` cable in/out — found by listening to the dongle. End of charge: after holding 4.20 V, the voltage drops below 4.18 V with the cable still in. |
 | `RongyuanDongleProvider` | Feature report `[00 F7 …]` on interface 2 (vendor page `FFFF`), reply `[00 canRead kbBattery mouseBattery kbOffline mouseOffline …]`, from the official ATTACK SHARK web driver. A mouse on its cable (32 USB IDs from the same driver) takes over the receiver slot that lost it. |
+| `XentaReceiverProvider` | Sends nothing: listens on the receiver's collection with usage page `000A` (interface 2) for the 5-byte input report `03 MM 40 ST LL` the mouse sends every 2 s: `MM` model code, `ST` `01` on battery or `02` / `03` on external power, `LL` level (in tens for code `0x10`). Only known model codes are read, and a level counts once two frames in a row agree, because every link-up starts with a false 100%. A mouse on its cable (`1D57:FA55`) takes over the receiver slot. After [attackshark-battery-windows](https://github.com/daeoxide/attackshark-battery-windows), [Attack-Shark-Battery-KDE](https://gitlab.com/gabriel17166/Attack-Shark-Battery-KDE) and the [HaloBattery community fork](https://github.com/ahmedkhursheed23/HaloBattery). |
 | `SteelSeriesProvider` | Output report `0x92` / `0xD2` (Aerox, Prime) or `AA 01` (Rival) on the service interface, after [rivalcfg](https://github.com/flozz/rivalcfg). |
 | `RazerPeripheralProvider` | OpenRazer's 90-byte feature report: command `07 80` (level 0–255), `07 84` (charging), CRC = XOR of bytes 2–87; transaction id and reply delay per model, from OpenRazer's tables. |
 | `LogitechProvider` | HID++: ping receiver slots 1–6 (or index `0xFF` for a device on its cable), find the battery feature `0x1004` / `0x1000` / `0x1001` / `0x1F20` and the name `0x0005`; HID++ 1.0 registers `0x0D` / `0x07` for older devices. After [Solaar](https://github.com/pwr-Solaar/Solaar). |
