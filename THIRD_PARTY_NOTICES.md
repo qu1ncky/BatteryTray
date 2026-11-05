@@ -42,6 +42,7 @@ The following projects document the device protocols that the providers below im
 
 - `Providers/RazerPeripheralProvider.cs` — report layout, commands, per-device transaction IDs and waits from [OpenRazer](https://github.com/openrazer/openrazer) (GPL-2.0).
 - `Providers/LogitechProvider.cs` — HID++ requests, battery features and voltage curve from [Solaar](https://github.com/pwr-Solaar/Solaar) (GPL-2.0), the Linux driver `drivers/hid/hid-logitech-hidpp.c` (GPL-2.0) and [LGSTrayBattery](https://github.com/andyvorld/LGSTrayBattery); the 2012 Logitech HID++ 2.0 draft specification.
+- `Providers/XentaReceiverProvider.cs` — the battery frame of the Xenta receiver `1D57:FA60` (`03 MM 40 ST LL`), its states, the false 100% on link-up, the cable IDs and the model codes from [attackshark-battery-windows](https://github.com/daeoxide/attackshark-battery-windows) (MIT; `docs/PROTOCOL.md`), [Attack-Shark-Battery-KDE](https://gitlab.com/gabriel17166/Attack-Shark-Battery-KDE) (MIT) and the [HaloBattery community fork](https://github.com/ahmedkhursheed23/HaloBattery) (MIT; `providers/inphic.py`).
 - `Providers/HeadsetProvider.cs` — headset requests and responses from [HeadsetControl](https://github.com/Sapd/HeadsetControl) (GPL-3.0).
 - `Providers/PlayStationProvider.cs` — DualSense / DualShock 4 battery bytes from the Linux kernel driver `drivers/hid/hid-playstation.c` (GPL-2.0).
 - `Providers/XInputProvider.cs` — Bluetooth product IDs of Xbox controllers as listed by [SDL](https://github.com/libsdl-org/SDL) (zlib).
