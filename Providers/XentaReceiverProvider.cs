@@ -14,10 +14,10 @@ namespace BatteryTray.Providers
     /// 0x000A, and this only reads it, on its own GENERIC_READ handle:
     ///   03 MM 40 ST LL  -  report ID 3, model code, 0x40 = battery frame, state, level.
     /// What ST and LL mean depends on the model code, so only codes seen on real mice are read:
-    ///   0x55 (X11), 0x4E (X3 Max), 0xE5 (the mouse of Attack-Shark-Battery-KDE): ST 01 = on battery, LL = percent;
-    ///     02 and 03 = on external power (cable or dock). 02 isn't "full": the X11 alternates 02 and 03 while topping
-    ///     up at 85% and the X3 Max sends 02 at 67%. The level they send on power is frozen (85% for minutes on the
-    ///     cable, 97% right after unplugging), so none is shown then.
+    ///   0x55 (X11), 0x4E (X3 Max), 0xE5 (V3 Pro, also the mouse of Attack-Shark-Battery-KDE):
+    ///     ST 01 = on battery, LL = percent; 02 and 03 = on external power (cable or dock). 02 isn't "full": the X11
+    ///     alternates 02 and 03 while topping up at 85% and the X3 Max sends 02 at 67%. The level they send on power is
+    ///     frozen (85% for minutes on the cable, 97% right after unplugging), so none is shown then.
     ///   0x10 (X6 / R1): ST is the DPI stage and LL the level in tens; there is no charging state.
     /// A mouse with another code is listed without a level, and its frames go to the log so that it can be added.
     /// Each time the mouse links up it sends one "on battery, 100%" frame before the real one, so a reading only
@@ -50,7 +50,7 @@ namespace BatteryTray.Providers
         {
             [0x55] = new("Attack Shark X11", false),
             [0x4E] = new("Attack Shark X3 Max", false),
-            [0xE5] = new("mouse of Attack-Shark-Battery-KDE", false),
+            [0xE5] = new("Attack Shark V3 Pro", false),
             [0x10] = new("Attack Shark X6 / R1", true),
         };
 

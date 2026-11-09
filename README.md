@@ -31,8 +31,9 @@ See how much battery your wireless headset, mouse, keyboard and controller have 
 | Razer Barracuda X (2022), dongle `1532:0552` | 2.4 GHz | ⚠️ untested |
 | **Attack Shark R3** | 2.4 GHz receiver (`3151:402D`) | ✅ tested |
 | Other mice and keyboards on the Rongyuan platform (Attack Shark and others, 81 receiver models) | 2.4 GHz receiver | ⚠️ untested |
-| Attack Shark X82 PRO HE keyboard | 2.4 GHz receiver (`3151:5026`) | ✅ tested by a user |
-| **Attack Shark** mice on the Xenta receiver: X11, X3 Max, X6 / R1 and others | 2.4 GHz receiver (`1D57:FA60`) or cable | ⚠️ untested |
+| Attack Shark X82 PRO HE keyboard | 2.4 GHz receiver (`3151:5026`) | ✅ tested by a user; the level reads too high while charging (see below) |
+| Attack Shark V3 Pro mouse | 2.4 GHz receiver (`1D57:FA60`), charging dock | ✅ tested by a user |
+| Other **Attack Shark** mice on the Xenta receiver: X11, X3 Max, X6 / R1 and others | 2.4 GHz receiver (`1D57:FA60`) or cable | ⚠️ untested |
 | **Razer mice**: Viper Ultimate / V2 Pro / V3 Pro / Mini SE, DeathAdder V2 Pro / V3 Pro / V3 HyperSpeed / V4 Pro, Basilisk Ultimate / V3 Pro / V3 Pro 35K / X HyperSpeed, Naga Pro / V2 Pro, Cobra Pro / HyperSpeed, Pro Click (Mini, V2), Lancehead, Mamba, Orochi V2, Atheris and more — about 40 models | HyperSpeed receiver or cable | ⚠️ untested |
 | **Razer keyboards**: BlackWidow V3 Pro / V3 Mini / V4 Mini / V4 TKL HyperSpeed, DeathStalker V2 Pro (and TKL), Joro | receiver or cable | ⚠️ untested |
 | **Logitech** mice, keyboards and other HID++ devices: MX Master / Anywhere, MX Keys, G Lightspeed series, M and K series and more | Unifying / Bolt / Lightspeed / Nano receiver or cable | ⚠️ untested |
@@ -54,6 +55,7 @@ Notes on specific devices:
 
 - **Razer Barracuda X** sends its own percentage through the dongle whenever it changes by 1%. Until it has sent one (right after the app starts), the level is estimated from the battery voltage and shown with "≈". While charging there is no percentage at all — the headset's number only creeps towards 100% at a fixed pace — so you see that it's charging, when it's almost full and when it's done.
 - **Attack Shark / Rongyuan mice** on their cable leave the receiver and report no level over the cable (the vendor's own driver doesn't show one either), so they show as charging, and the receiver reports the real level once the cable is out.
+- **Attack Shark X82 PRO HE** keyboard stays on its receiver while it charges on the cable, but reports a level about 20% too high then, and the real one again once the cable is out. Most likely the keyboard estimates its level from the battery voltage, which the charger raises. It isn't known yet how the receiver tells that the keyboard is on the cable, so for now the number is shown as it comes ([#5](https://github.com/qu1ncky/BatteryTray/issues/5)).
 - **Attack Shark mice on the Xenta receiver** (`1D57:FA60`) send their level by themselves every 2 seconds; BatteryTray only listens and sends them nothing. On the cable or the charging dock the number they send stays frozen, so you see a charging sign instead, and the real level is back a few seconds after the mouse leaves the charger. The model is told by a code in these messages: a mouse whose code isn't known yet is listed without a level and its messages go to the log, so please post the `Xenta` lines from `%LOCALAPPDATA%\BatteryTray\log.txt` in [Issues](https://github.com/qu1ncky/BatteryTray/issues) to get it added.
 - **Bluetooth** devices are listed only while connected: Windows keeps a stale percentage after they disconnect.
 
