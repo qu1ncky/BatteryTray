@@ -19,7 +19,7 @@
 
 ## 支持的设备
 
-Razer Barracuda X（2.4 GHz 接收器，已测试）、Attack Shark R3 及其他 Rongyuan 平台鼠标键盘、Xenta 接收器（`1D57:FA60`）上的 Attack Shark 鼠标（X11、X3 Max、X6 / R1 等）、约 40 款 Razer 无线鼠标和 HyperSpeed 键盘、Logitech HID++ 设备（MX Master、MX Keys、G Lightspeed 系列等）、Logitech G / SteelSeries Arctis / HyperX Cloud / Corsair Void 等约 70 款无线耳机、SteelSeries 无线鼠标、Sony DualSense / DualShock 4、Xbox 手柄，以及 Windows 能显示电量的任何蓝牙设备。完整列表见 [英文说明](README.md#supported-devices)。
+Razer Barracuda X（2.4 GHz 接收器，已测试）、Attack Shark R3 及其他 Rongyuan 平台鼠标键盘、Xenta 接收器（`1D57:FA60`）上的 Attack Shark 鼠标（V3 Pro 已由用户测试，以及 X11、X3 Max、X6 / R1 等）、约 40 款 Razer 无线鼠标和 HyperSpeed 键盘、Logitech HID++ 设备（MX Master、MX Keys、G Lightspeed 系列等）、Logitech G / SteelSeries Arctis / HyperX Cloud / Corsair Void 等约 70 款无线耳机、SteelSeries 无线鼠标、Sony DualSense / DualShock 4、Xbox 手柄，以及 Windows 能显示电量的任何蓝牙设备。完整列表见 [英文说明](README.md#supported-devices)。
 
 标记为“未测试”的设备是按照公开的开源协议实现的，尚未在真机上验证；如果你有这些设备，欢迎在 [Issues](https://github.com/qu1ncky/BatteryTray/issues) 反馈。
 

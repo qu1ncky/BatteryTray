@@ -57,8 +57,12 @@ namespace BatteryTray.Providers
             [0x3151402D] = "Attack Shark R3",
         };
 
+        /// <summary>How many different status replies a receiver logs per session, in case some byte changes all the time.</summary>
+        const int LoggedRepliesMax = 16;
+
         readonly StateStore state;
         readonly HashSet<string> seenOnline = new();
+        readonly Dictionary<string, HashSet<string>> loggedReplies = new(); // by collection path
 
         public RongyuanDongleProvider(StateStore state)
         {
@@ -90,6 +94,7 @@ namespace BatteryTray.Providers
                     {
                         status = QueryStatus(info);
                         if (status == null) error = Loc.T("d.receiverSilent");
+                        else LogReply(info, status);
                     }
                     catch (Exception e)
                     {
@@ -156,6 +161,28 @@ namespace BatteryTray.Providers
                 Id = id, Name = name, Kind = kind, Via = Loc.T("via.24"), Online = online, Level = level, Detail = detail,
             });
             return true;
+        }
+
+        /// <summary>
+        /// Logs each different status reply of a receiver once per session, all of it. Only the first 7 bytes are
+        /// known, and the rest may hold what isn't read yet: a keyboard on its cable reports a level some 20% too high
+        /// (issue #5), and a new line as the cable goes in would point to a byte that says so. The two levels don't
+        /// make a reply different - they change by themselves and have log lines of their own - but are kept in it.
+        /// </summary>
+        void LogReply(HidInfo info, byte[] reply)
+        {
+            if (!loggedReplies.TryGetValue(info.Path, out HashSet<string>? seen))
+                loggedReplies[info.Path] = seen = new HashSet<string>();
+            if (seen.Count >= LoggedRepliesMax) return;
+            var masked = (byte[])reply.Clone();
+            masked[2] = masked[3] = 0;
+            if (!seen.Add(Convert.ToHexString(masked))) return;
+
+            int used = Math.Max(7, Array.FindLastIndex(reply, b => b != 0) + 1);
+            string hex = BitConverter.ToString(reply, 0, used).Replace('-', ' ').ToLowerInvariant();
+            string rest = used < reply.Length ? $", then {reply.Length - used} zero bytes" : "";
+            string last = seen.Count == LoggedRepliesMax ? " (the last one logged this session)" : "";
+            Log.Write($"Rongyuan {info.VendorId:x4}:{info.ProductId:x4}: status reply {hex}{rest}{last}");
         }
 
         static byte[]? QueryStatus(HidInfo info)
