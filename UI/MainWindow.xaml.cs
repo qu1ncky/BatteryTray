@@ -4,6 +4,7 @@ using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.Linq;
 using System.Windows;
+using System.Windows.Input;
 using System.Windows.Threading;
 using BatteryTray.Core;
 
@@ -31,10 +32,13 @@ namespace BatteryTray.UI
             clock.Tick += (_, _) => Refresh();
             clock.Start();
             Loc.Changed += OnLanguageChanged;
+            app.Overlay.Changed += RefreshOverlayStatus;
             Closed += (_, _) =>
             {
                 clock.Stop();
                 Loc.Changed -= OnLanguageChanged;
+                app.Overlay.Changed -= RefreshOverlayStatus;
+                app.Overlay.SuspendShortcut(false);
             };
             LoadSettings();
             Refresh();
@@ -101,6 +105,13 @@ namespace BatteryTray.UI
             ChargedToggle.IsChecked = s.NotifyCharged;
             AutoUpdateToggle.IsChecked = s.AutoUpdate;
             AutoStartToggle.IsChecked = AutoStart.IsRegistered();
+            OverlayToggle.IsChecked = s.OverlayEnabled;
+            OverlayTimed.IsChecked = s.OverlayMode == OverlayMode.Timed;
+            OverlayToggleMode.IsChecked = s.OverlayMode == OverlayMode.Toggle;
+            OverlayNames.IsChecked = s.OverlayShowNames;
+            foreach (var option in new[] { OverlayTopLeft, OverlayTopRight, OverlayBottomLeft, OverlayBottomRight })
+                option.IsChecked = (string)option.Tag == s.OverlayCorner.ToString();
+            RefreshOverlayStatus();
             string language = s.Language ?? Loc.Auto;
             foreach (var option in new[] { LangAuto, LangRu, LangEn, LangZh })
                 option.IsChecked = (string)option.Tag == language || (option == LangAuto && Array.IndexOf(Loc.Languages, language) < 0);
@@ -115,6 +126,59 @@ namespace BatteryTray.UI
             CriticalValue.Text = $"{(int)CriticalSlider.Value}%";
             RepeatValue.Text = Loc.T("minutes", (int)RepeatSlider.Value);
         }
+
+        void RefreshOverlayStatus()
+        {
+            var s = app.Settings;
+            OverlayShortcut.Text = GlobalHotkey.Label(new HotkeyGesture(s.OverlayHotkeyKey, s.OverlayHotkeyModifiers));
+            bool error = s.OverlayEnabled && !app.Overlay.ShortcutAvailable;
+            OverlayStatus.Text = Loc.T(!s.OverlayEnabled ? "overlay.disabled" : error ? "overlay.unavailable" : "overlay.ready");
+            OverlayStatus.Foreground = error ? Theme.Bad : Theme.Offline;
+        }
+
+        void OverlaySetting_Changed(object sender, RoutedEventArgs e)
+        {
+            if (loading) return;
+            var s = app.Settings;
+            s.OverlayEnabled = OverlayToggle.IsChecked == true;
+            s.OverlayMode = OverlayToggleMode.IsChecked == true ? OverlayMode.Toggle : OverlayMode.Timed;
+            s.OverlayShowNames = OverlayNames.IsChecked == true;
+            foreach (var option in new[] { OverlayTopLeft, OverlayTopRight, OverlayBottomLeft, OverlayBottomRight })
+                if (option.IsChecked == true) s.OverlayCorner = Enum.Parse<OverlayCorner>((string)option.Tag);
+            app.SettingsChanged();
+        }
+
+        void OverlayShortcut_Focus(object sender, KeyboardFocusChangedEventArgs e) => app.Overlay.SuspendShortcut(true);
+        void OverlayShortcut_Blur(object sender, KeyboardFocusChangedEventArgs e) => app.Overlay.SuspendShortcut(false);
+
+        void OverlayShortcut_KeyDown(object sender, KeyEventArgs e)
+        {
+            Key key = e.Key == Key.System ? e.SystemKey : e.Key;
+            if (key == Key.Tab) return; // keyboard users can leave the recorder
+            e.Handled = true;
+            if (e.IsRepeat || key is Key.LeftCtrl or Key.RightCtrl or Key.LeftAlt or Key.RightAlt or Key.LeftShift or Key.RightShift)
+                return;
+            ModifierKeys modifiers = Keyboard.Modifiers;
+            int flags = ((modifiers & ModifierKeys.Alt) != 0 ? HotkeyGesture.Alt : 0)
+                | ((modifiers & ModifierKeys.Control) != 0 ? HotkeyGesture.Control : 0)
+                | ((modifiers & ModifierKeys.Shift) != 0 ? HotkeyGesture.Shift : 0)
+                | ((modifiers & ModifierKeys.Windows) != 0 ? 8 : 0);
+            SetOverlayShortcut(new HotkeyGesture(KeyInterop.VirtualKeyFromKey(key), flags));
+        }
+
+        void SetOverlayShortcut(HotkeyGesture gesture)
+        {
+            if (!gesture.IsValid || !app.Overlay.TrySetShortcut(gesture))
+            {
+                OverlayStatus.Text = Loc.T(gesture.IsValid ? "overlay.conflict" : "overlay.invalid");
+                OverlayStatus.Foreground = Theme.Bad;
+                return;
+            }
+            app.SettingsChanged();
+        }
+
+        void OverlayReset_Click(object sender, RoutedEventArgs e) => SetOverlayShortcut(HotkeyGesture.Default);
+        void OverlayPreview_Click(object sender, RoutedEventArgs e) => app.Overlay.Preview();
 
         void Setting_Changed(object sender, RoutedEventArgs e)
         {
