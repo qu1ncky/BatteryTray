@@ -18,6 +18,11 @@ namespace BatteryTray.Providers
     /// the R3 on cable, 3151:4026, just echoes the status command). So a mouse on the cable is shown as charging with
     /// no level - the one from before would only grow stale - and the receiver reports the real one once the cable
     /// is out.
+    /// A keyboard is different: in 2.4 GHz mode the cable only charges it, so it stays on the receiver and no USB
+    /// device appears. The X82 PRO HE (receiver 3151:5026) then reports a level 20-30% too high, most likely because
+    /// it estimates the level from the battery voltage, and nothing marks the cable: the reply stays the same but
+    /// for the level, and the web driver shows the same number with no charging sign (issue #5, tested by a user).
+    /// Guessing from the jump would catch the cable going in but not coming out, so the level is shown as it comes.
     /// </summary>
     public sealed class RongyuanDongleProvider : IBatteryProvider
     {
@@ -165,9 +170,9 @@ namespace BatteryTray.Providers
 
         /// <summary>
         /// Logs each different status reply of a receiver once per session, all of it. Only the first 7 bytes are
-        /// known, and the rest may hold what isn't read yet: a keyboard on its cable reports a level some 20% too high
-        /// (issue #5), and a new line as the cable goes in would point to a byte that says so. The two levels don't
-        /// make a reply different - they change by themselves and have log lines of their own - but are kept in it.
+        /// known, and on an untested receiver the rest may hold what isn't read yet, such as a charging flag: a new
+        /// line as the cable goes in would point to it. The X82 PRO HE's receiver has none (issue #5). The two levels
+        /// don't make a reply different - they change by themselves and have log lines of their own - but are kept in it.
         /// </summary>
         void LogReply(HidInfo info, byte[] reply)
         {
