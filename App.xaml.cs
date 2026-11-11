@@ -116,7 +116,7 @@ namespace BatteryTray
 
             Overlay = new OverlayController(Settings, Rows, () => OverlayWindow.BoundsOf(alertWindow));
 
-            Updates = new UpdateService(Settings, () => window != null || alertWindow != null || Overlay.IsVisible, AnnounceUpdate,
+            Updates = new UpdateService(Settings, () => window != null || alertWindow != null || Overlay.IsTimedVisible, AnnounceUpdate,
                 RestartIntoUpdate);
             Updates.Changed += () => window?.RefreshUpdate();
 

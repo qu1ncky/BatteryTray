@@ -18,7 +18,10 @@ namespace BatteryTray.Core
             && Key is >= 0x08 and <= 0xFE
             && Key is not (0x10 or 0x11 or 0x12 or 0x14 or 0x5B or 0x5C or 0x5D or 0x7B or 0x90 or 0x91)
             && Key is not (>= 0xA0 and <= 0xA5)
-            && (Modifiers != 0 || Key is >= 0x70 and <= 0x87);
+            && ((Modifiers & (Alt | Control)) != 0 || Key is >= 0x70 and <= 0x87)
+            // Leave the standard clipboard shortcuts and Alt+F4 with the focused app.
+            && !(Modifiers == Control && Key is (0x43 or 0x56 or 0x58))
+            && !(Modifiers == Alt && Key == 0x73);
     }
 
     public interface IHotkeyRegistration

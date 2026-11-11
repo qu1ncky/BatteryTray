@@ -35,7 +35,7 @@ namespace BatteryTray.Core
         /// <summary>A Windows notification when a device finishes charging.</summary>
         public bool NotifyCharged { get; set; } = true;
         public bool AutoUpdate { get; set; } = true;
-        public bool OverlayEnabled { get; set; } = true;
+        public bool OverlayEnabled { get; set; }
         public int OverlayHotkeyKey { get; set; } = HotkeyGesture.Default.Key;
         public int OverlayHotkeyModifiers { get; set; } = HotkeyGesture.Default.Modifiers;
         public OverlayMode OverlayMode { get; set; } = OverlayMode.Timed;

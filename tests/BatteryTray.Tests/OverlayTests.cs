@@ -76,7 +76,15 @@ namespace BatteryTray.Tests
         [InlineData(0x56, 3, true)] // Ctrl+Alt+V
         [InlineData(0x74, 0, true)] // F5
         [InlineData(0x74, 1, true)] // Alt+F5
+        [InlineData(0x74, 4, true)] // Shift+F5
         [InlineData(0x87, 0, true)] // F24
+        [InlineData(0x56, 4, false)] // Shift+V
+        [InlineData(0x56, 5, true)] // Alt+Shift+V
+        [InlineData(0x56, 6, true)] // Ctrl+Shift+V
+        [InlineData(0x56, 2, false)] // Ctrl+V
+        [InlineData(0x43, 2, false)] // Ctrl+C
+        [InlineData(0x58, 2, false)] // Ctrl+X
+        [InlineData(0x73, 1, false)] // Alt+F4
         [InlineData(0x56, 0, false)]
         [InlineData(0x56, 8, false)] // Windows modifier
         [InlineData(0x7B, 3, false)] // F12
@@ -147,7 +155,7 @@ namespace BatteryTray.Tests
             settings.NormalizeOverlay();
             Assert.Equal(35, settings.LowPercent);
             Assert.False(settings.Sound);
-            Assert.True(settings.OverlayEnabled);
+            Assert.False(settings.OverlayEnabled);
             Assert.Equal(OverlayMode.Timed, settings.OverlayMode);
             Assert.Equal(OverlayCorner.TopRight, settings.OverlayCorner);
             Assert.Equal(HotkeyGesture.Default, new HotkeyGesture(settings.OverlayHotkeyKey, settings.OverlayHotkeyModifiers));
@@ -176,11 +184,12 @@ namespace BatteryTray.Tests
         {
             var settings = new AppSettings
             {
-                OverlayMode = OverlayMode.Toggle, OverlayCorner = OverlayCorner.BottomLeft,
+                OverlayEnabled = true, OverlayMode = OverlayMode.Toggle, OverlayCorner = OverlayCorner.BottomLeft,
                 OverlayHotkeyKey = 0x74, OverlayHotkeyModifiers = 0, OverlayShowNames = true,
             };
             var copy = JsonSerializer.Deserialize<AppSettings>(JsonSerializer.Serialize(settings))!;
             copy.NormalizeOverlay();
+            Assert.True(copy.OverlayEnabled);
             Assert.Equal(settings.OverlayMode, copy.OverlayMode);
             Assert.Equal(settings.OverlayCorner, copy.OverlayCorner);
             Assert.Equal(settings.OverlayHotkeyKey, copy.OverlayHotkeyKey);

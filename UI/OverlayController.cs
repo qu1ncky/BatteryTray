@@ -19,10 +19,10 @@ namespace BatteryTray.UI
         readonly DispatcherTimer placement = new() { Interval = TimeSpan.FromSeconds(3) };
         OverlayWindow? window;
         OverlayMode mode;
-        bool disposed, suspended;
+        bool disposed, suspended, enabled;
 
         public event Action? Changed;
-        public bool IsVisible => session.IsVisible;
+        public bool IsTimedVisible => session.IsTimed;
         public bool ShortcutAvailable => binding.Active != null;
 
         public OverlayController(AppSettings settings, Func<IReadOnlyList<DeviceRow>> rows, Func<Rect?> obstruction)
@@ -41,9 +41,10 @@ namespace BatteryTray.UI
         public void ApplySettings()
         {
             if (disposed) return;
-            if (!settings.OverlayEnabled || mode != settings.OverlayMode) Hide();
+            if (mode != settings.OverlayMode || (enabled && !settings.OverlayEnabled)) Hide();
             mode = settings.OverlayMode;
-            if (!settings.OverlayEnabled) binding.Clear();
+            enabled = settings.OverlayEnabled;
+            if (!enabled) binding.Clear();
             else binding.TryChange(new HotkeyGesture(settings.OverlayHotkeyKey, settings.OverlayHotkeyModifiers));
             Refresh();
             Changed?.Invoke();
