@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Linq;
 using System.Threading;
 using BatteryTray.Core;
@@ -10,17 +11,20 @@ namespace BatteryTray.Providers
     /// <summary>
     /// Wireless gaming headsets that answer a battery request on a vendor HID collection: HyperX, Logitech G,
     /// SteelSeries Arctis, Corsair, Sony INZONE and a few more. The request/response bytes are the protocol facts
-    /// collected by HeadsetControl (github.com/Sapd/HeadsetControl, lib/devices/*); this is an independent
+    /// collected by HeadsetControl (github.com/Sapd/HeadsetControl, lib/devices/*) and, for the HyperX Cloud III
+    /// Wireless, by HyperHeadset (github.com/LennardKittner/HyperHeadset, src/devices/*); this is an independent
     /// implementation. Byte positions below are as hidapi returns them: for devices without report IDs Windows puts
     /// a 0x00 in front of every input report, which <see cref="Io.Data"/> strips the same way hidapi does.
-    /// Read-only status queries; not yet verified on hardware by this project.
+    /// Read-only status queries; not yet verified on hardware by this project, which is why the first exchange with
+    /// each headset goes to the log (<see cref="LogOnce"/>).
     /// </summary>
     public sealed class HeadsetProvider : IBatteryProvider
     {
         const int TimeoutMs = 2000;
 
         /// <param name="Detail">A text key (see <see cref="Loc"/>) or a ready text.</param>
-        readonly record struct State(bool Online, int? Level, bool Charging, string? Detail = null);
+        /// <param name="Full">The headset itself says it is full, with the charger still connected.</param>
+        readonly record struct State(bool Online, int? Level, bool Charging, string? Detail = null, bool Full = false);
 
         static readonly State Off = new(false, null, false, "d.offOrAway");
 
@@ -67,6 +71,18 @@ namespace BatteryTray.Providers
                 }
                 if (Ask(0x02) is not byte[] b) return Off;
                 return On(b[7], Ask(0x03) is byte[] c && c[4] == 0x01);
+            }),
+            new("hyperx-cloud-iii-wireless", "HyperX Cloud III Wireless", 0x03F0, new ushort[] { 0x05B7, 0x0C9D }, 0, 0, -1, io =>
+            {
+                // The dongle also sends the same reports by itself when something changes, with 0B / 0C / 0D in
+                // place of the command: either one is the answer
+                byte[]? Ask(byte cmd, byte unasked) => io.Ask(Pad(62, 0x66, cmd),
+                    d => d.Length > 4 && d[0] == 0x66 && (d[1] == cmd || d[1] == unasked), orFeature: true);
+                if (Ask(0x82, 0x0B) is not byte[] link || link[2] != 0x01) return Off;
+                int power = Ask(0x8A, 0x0C) is byte[] c ? c[2] : 0; // 1 = charging, 2 = full with the cable still in
+                // The level counts only when one of the two bytes in front of it is set
+                int? level = Ask(0x89, 0x0D) is byte[] b && (b[2] | b[3]) != 0 ? Math.Clamp((int)b[4], 0, 100) : null;
+                return new State(true, level, power == 1, level == null ? "d.levelUnknown" : null, power == 2);
             }),
             new("hyperx-cloud-flight", "HyperX Cloud Flight", 0x0951, new ushort[] { 0x16C4, 0x1723 }, 0, 0, -1, io =>
             {
@@ -221,6 +237,9 @@ namespace BatteryTray.Providers
         public static readonly HashSet<uint> HandledIds =
             Specs.SelectMany(s => s.Pids.Select(p => ((uint)s.Vid << 16) | p)).ToHashSet();
 
+        /// <summary>What this session's log already has: see <see cref="LogOnce"/>.</summary>
+        readonly HashSet<string> logged = new();
+
         public string Name => "Headsets";
 
         public IReadOnlyList<DeviceReading> Poll()
@@ -230,11 +249,14 @@ namespace BatteryTray.Providers
             foreach (var device in found.GroupBy(i => (i.VendorId, i.ProductId)))
             {
                 Spec spec = Specs.First(s => s.Vid == device.Key.VendorId && s.Pids.Contains(device.Key.ProductId));
-                State state = Query(spec, device.ToList());
+                var collections = device.ToList();
+                var asked = new List<(HidInfo Info, List<string> Trace)>();
+                State state = Query(spec, collections, asked);
+                LogOnce(spec, collections, asked, state);
                 var reading = new DeviceReading
                 {
                     Id = "headset:" + spec.Key, Name = spec.Name, Kind = DeviceKind.Headset, Via = Loc.T("via.24"),
-                    Online = state.Online, Level = state.Level, Charging = state.Charging,
+                    Online = state.Online, Level = state.Level, Charging = state.Charging, FullOnCharger = state.Full,
                     Detail = state.Detail != null ? Loc.T(state.Detail) : null,
                 };
                 if (!result.TryGetValue(reading.Id, out var other) || (reading.Online && !other.Online))
@@ -248,7 +270,8 @@ namespace BatteryTray.Providers
             return last.Any(r => r.Online) ? TimeSpan.FromSeconds(60) : TimeSpan.FromSeconds(30);
         }
 
-        static State Query(Spec spec, List<HidInfo> collections)
+        /// <param name="asked">Filled with the collections that were tried and what was sent to and received from each.</param>
+        static State Query(Spec spec, List<HidInfo> collections, List<(HidInfo Info, List<string> Trace)> asked)
         {
             var candidates = collections
                 .Where(i => spec.Interface < 0 || Math.Max(i.InterfaceNumber, 0) == spec.Interface)
@@ -265,19 +288,40 @@ namespace BatteryTray.Providers
             State error = Off;
             foreach (HidInfo info in candidates.Where(i => !i.AccessDenied))
             {
+                var trace = new List<string>();
+                asked.Add((info, trace));
                 try
                 {
                     using var dev = new HidDevice(info);
-                    State state = spec.Query(new Io(dev));
+                    State state = spec.Query(new Io(dev, trace));
                     if (state.Online) return state;
                     clean ??= state;
                 }
                 catch (Exception e)
                 {
+                    trace.Add("error: " + e.Message);
                     error = Off with { Detail = Loc.T("d.error", e.Message) };
                 }
             }
             return clean ?? error;
+        }
+
+        /// <summary>
+        /// Logs how a headset was queried - its HID collections, the requests and the replies - the first time it is
+        /// found off and the first time it is found on in a session. When a headset isn't reached or reads wrong,
+        /// these lines show which collection answered and with what bytes; the level changes have log lines of
+        /// their own.
+        /// </summary>
+        void LogOnce(Spec spec, List<HidInfo> collections, List<(HidInfo Info, List<string> Trace)> asked, State state)
+        {
+            string id = $"{collections[0].VendorId:x4}:{collections[0].ProductId:x4}";
+            if (!logged.Add(id + state.Online)) return;
+            Log.Write($"{spec.Name} {id}: found {(state.Online ? "on" : "off")}, {collections.Count} HID collections");
+            foreach (HidInfo info in collections)
+            {
+                List<string>? trace = asked.FirstOrDefault(a => a.Info == info).Trace;
+                Log.Write($"  mi={info.InterfaceNumber} {info}: {(trace == null ? "not asked" : string.Join("  ", trace))}");
+            }
         }
 
         /// <summary>Status reports (B0) can also arrive unasked on this interface; other replies start with 20.</summary>
@@ -323,11 +367,15 @@ namespace BatteryTray.Providers
         /// <summary>Request/response helpers over one HID collection, with hidapi's view of input reports.</summary>
         sealed class Io
         {
-            readonly HidDevice dev;
+            const int ErrorInvalidFunction = 1;
 
-            public Io(HidDevice dev)
+            readonly HidDevice dev;
+            readonly List<string> trace; // what was sent and received, for LogOnce
+
+            public Io(HidDevice dev, List<string> trace)
             {
                 this.dev = dev;
+                this.trace = trace;
             }
 
             public ushort ProductId => dev.Info.ProductId;
@@ -335,13 +383,30 @@ namespace BatteryTray.Providers
             /// <summary>An input report as hidapi returns it: without the 0x00 Windows adds when there are no report IDs.</summary>
             public static byte[] Data(byte[] raw) => raw.Length > 0 && raw[0] == 0x00 ? raw[1..] : raw;
 
-            public bool Send(byte[] report) => dev.Write(report, TimeoutMs);
+            public bool Send(byte[] report)
+            {
+                trace.Add("> " + Hex(report));
+                bool sent = dev.Write(report, TimeoutMs);
+                if (!sent) trace.Add("(not sent)");
+                return sent;
+            }
 
             /// <summary>Sends a request and returns the first input report that <paramref name="match"/> accepts.</summary>
-            public byte[]? Ask(byte[] request, Func<byte[], bool> match, int reads = 4)
+            /// <param name="orFeature">Send the request as a feature report when the collection doesn't take it as
+            /// an output one: HyperHeadset found HyperX dongles that take theirs only that way on Windows.</param>
+            public byte[]? Ask(byte[] request, Func<byte[], bool> match, int reads = 4, bool orFeature = false)
             {
                 dev.Flush();
-                return Send(request) ? Receive(match, reads) : null;
+                bool sent;
+                try
+                {
+                    sent = Send(request);
+                }
+                catch (Win32Exception e) when (orFeature && e.NativeErrorCode == ErrorInvalidFunction)
+                {
+                    sent = false; // what Windows answers to an output report the collection doesn't have
+                }
+                return sent || (orFeature && SetFeature(request)) ? Receive(match, reads) : null;
             }
 
             public byte[]? Receive(Func<byte[], bool> match, int reads = 4)
@@ -350,8 +415,13 @@ namespace BatteryTray.Providers
                 for (int i = 0; i < reads && DateTime.UtcNow < deadline; i++)
                 {
                     byte[]? raw = dev.Read(Math.Max((int)(deadline - DateTime.UtcNow).TotalMilliseconds, 1));
-                    if (raw == null) return null;
+                    if (raw == null)
+                    {
+                        trace.Add("< nothing");
+                        return null;
+                    }
                     byte[] data = Data(raw);
+                    trace.Add("< " + Hex(data));
                     if (match(data)) return data;
                 }
                 return null;
@@ -368,12 +438,32 @@ namespace BatteryTray.Providers
                 // Exactly the length the device declares, as hidapi does
                 var buf = new byte[dev.Info.FeatureLength > 0 ? dev.Info.FeatureLength : report.Length];
                 Array.Copy(report, buf, Math.Min(report.Length, buf.Length));
-                return dev.SetFeature(buf);
+                trace.Add("feature > " + Hex(buf));
+                bool taken = dev.SetFeature(buf);
+                if (!taken) trace.Add("(not taken)");
+                return taken;
             }
 
-            public byte[]? GetFeature(byte reportId) => dev.Info.FeatureLength > 0 ? dev.GetFeature(reportId) : null;
+            public byte[]? GetFeature(byte reportId) =>
+                dev.Info.FeatureLength > 0 ? Traced("feature < ", dev.GetFeature(reportId)) : null;
 
-            public byte[]? GetInputReport(byte reportId) => dev.Info.InputLength > 0 ? dev.GetInputReport(reportId) : null;
+            public byte[]? GetInputReport(byte reportId) =>
+                dev.Info.InputLength > 0 ? Traced("input < ", dev.GetInputReport(reportId)) : null;
+
+            byte[]? Traced(string what, byte[]? report)
+            {
+                trace.Add(what + (report == null ? "nothing" : Hex(report)));
+                return report;
+            }
+
+            /// <summary>A report for the log: without the zeros that pad it, and no more than its first 32 bytes.</summary>
+            static string Hex(byte[] report)
+            {
+                int used = Array.FindLastIndex(report, b => b != 0) + 1;
+                if (used == 0) return "00";
+                string hex = BitConverter.ToString(report, 0, Math.Min(used, 32)).Replace('-', ' ').ToLowerInvariant();
+                return used > 32 ? hex + " ..." : hex;
+            }
         }
     }
 }

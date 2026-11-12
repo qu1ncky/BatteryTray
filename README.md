@@ -42,6 +42,7 @@ See how much battery your wireless headset, mouse, keyboard and controller have 
 | **SteelSeries** mice: Aerox 3 / 5 / 9 Wireless, Prime Wireless, Prime Mini Wireless, Rival 3 Wireless (and Gen 2), Rival 650 Wireless | receiver or cable | ⚠️ untested |
 | **SteelSeries Arctis Nova 5** | receiver (`1038:2232`) | ✅ tested by a user |
 | **SteelSeries Arctis** headsets: 1, 7, 9, Pro Wireless, 7+, Nova 3P, Nova 7 (7X, 7P, Gen 2), Nova Pro Wireless, GameBuds | receiver | ⚠️ untested |
+| **HyperX Cloud III Wireless** | receiver | ✅ tested by a user |
 | **HyperX** headsets: Cloud Alpha Wireless, Cloud II Wireless, Cloud Flight | receiver | ⚠️ untested |
 | **Corsair** headsets: Void series, HS70, Void / Virtuoso / HS80 MAX Wireless, Virtuoso XT / SE | receiver | ⚠️ untested |
 | Sony INZONE H5, MCHOSE X9, Lenovo Wireless VoIP | receiver | ⚠️ untested |
@@ -121,7 +122,7 @@ Everything is in Settings → Updates: status, what's new, "Check now" and the a
 | `SteelSeriesProvider` | Output report `0x92` / `0xD2` (Aerox, Prime) or `AA 01` (Rival) on the service interface, after [rivalcfg](https://github.com/flozz/rivalcfg). |
 | `RazerPeripheralProvider` | OpenRazer's 90-byte feature report: command `07 80` (level 0–255), `07 84` (charging), CRC = XOR of bytes 2–87; transaction id and reply delay per model, from OpenRazer's tables. |
 | `LogitechProvider` | HID++: ping receiver slots 1–6 (or index `0xFF` for a device on its cable), find the battery feature `0x1004` / `0x1000` / `0x1001` / `0x1F20` and the name `0x0005`; HID++ 1.0 registers `0x0D` / `0x07` for older devices. After [Solaar](https://github.com/pwr-Solaar/Solaar). |
-| `HeadsetProvider` | Request and reply on the headset's vendor HID channel, bytes after [HeadsetControl](https://github.com/Sapd/HeadsetControl) (own implementation). Logitech G headsets report a voltage, converted with per-model tables. |
+| `HeadsetProvider` | Request and reply on the headset's vendor HID channel, bytes after [HeadsetControl](https://github.com/Sapd/HeadsetControl) and, for the HyperX Cloud III Wireless, [HyperHeadset](https://github.com/LennardKittner/HyperHeadset) (own implementation). The first exchange with a headset goes to the log. Logitech G headsets report a voltage, converted with per-model tables. |
 | `StandardHidBatteryProvider` | Reads the Generic Device Controls / Battery Strength field (`06:20`) from the feature reports of any USB HID device. |
 | `PlayStationProvider` | Sends nothing: reads one input report and its status byte (DualSense `data[53]` USB / `data[54]` Bluetooth, DualShock 4 `data[30]` / `data[32]`), like Linux's `hid-playstation`. |
 | `XInputProvider` | `XInputGetBatteryInformation`: 4 levels → approximate percentage. Skips Bluetooth controllers, whose exact level comes from Windows. |
