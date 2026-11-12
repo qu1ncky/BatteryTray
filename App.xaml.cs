@@ -34,6 +34,7 @@ namespace BatteryTray
         public StateStore State { get; private set; } = null!;
         public BatteryMonitor Watcher { get; private set; } = null!;
         public UpdateService Updates { get; private set; } = null!;
+        public OverlayController Overlay { get; private set; } = null!;
 
         protected override void OnStartup(StartupEventArgs e)
         {
@@ -113,7 +114,9 @@ namespace BatteryTray
 
             activator = new InstanceActivator(ShowMainWindow);
 
-            Updates = new UpdateService(Settings, () => window != null || alertWindow != null, AnnounceUpdate,
+            Overlay = new OverlayController(Settings, Rows, () => OverlayWindow.BoundsOf(alertWindow));
+
+            Updates = new UpdateService(Settings, () => window != null || alertWindow != null || Overlay.IsTimedVisible, AnnounceUpdate,
                 RestartIntoUpdate);
             Updates.Changed += () => window?.RefreshUpdate();
 
@@ -157,6 +160,7 @@ namespace BatteryTray
             saveTimer.Stop();
             saveTimer.Start();
             UpdateTray();
+            Overlay.ApplySettings();
             window?.Refresh();
             EvaluateAlerts();
         }
@@ -195,6 +199,7 @@ namespace BatteryTray
             window?.Refresh();
             EvaluateAlerts();
             AnnounceCharged();
+            Overlay.Refresh();
             State.SaveIfDirty();
         }
 
@@ -271,6 +276,7 @@ namespace BatteryTray
             }
             alertWindow.SetItems(due, Settings.RepeatMinutes);
             if (!alertWindow.IsVisible) alertWindow.Show();
+            Overlay.Refresh();
             if (fresh)
             {
                 Log.Write("alert: " + string.Join(", ", due.Select(d => $"{d.Name} {d.Level}%")));
@@ -288,6 +294,7 @@ namespace BatteryTray
         {
             alertWindow?.Close();
             alertWindow = null;
+            Overlay?.Refresh();
         }
 
         /// <summary>Announced once per version when it can't install by itself (needs an admin prompt, or automatic
@@ -329,6 +336,9 @@ namespace BatteryTray
         void TearDown()
         {
             stopping = true;
+            alertTimer.Stop();
+            saveTimer.Stop();
+            Overlay.Dispose();
             Watcher.Dispose();
             State.Save();
             Settings.Save();

@@ -15,6 +15,7 @@ See how much battery your wireless headset, mouse, keyboard and controller have 
 
 - **Battery level in the tray** — the icon shows the device that most needs charging: green, yellow below its reminder level, red below its critical level, blue while charging. Hover it to see every device.
 - **All devices in one window** — connected ones as cards with their percentage, the rest with the last known level and when it was seen.
+- **Battery overlay** — enable the shortcut in **Settings → Battery overlay**, then press **Ctrl+Alt+V** to see connected, visible devices for five seconds on the active app's monitor. Press again to restart the timer, or choose toggle mode to show and hide it with the same shortcut. You can change the shortcut, choose a corner, and preview the overlay before enabling it. Names appear automatically for devices of the same type, and you can always show them. Supports desktop apps and borderless games without taking focus or mouse input.
 - **Low battery reminder that can't be missed** — its own always-on-top window in the corner, not a toast: Do Not Disturb doesn't hide it, it doesn't time out and it doesn't steal focus from a game. "Remind me in N min" or "Don't remind me until it's charged"; at the critical level it comes back even if snoozed.
 - **A level for every device** — the headset that drains fastest can remind you at 40% while the mouse waits for 15%: each device can have its own reminder and critical levels, and follows the global ones until you set them.
 - **Charging complete notification** — when a device that can tell finishes charging with the cable still in.
@@ -138,6 +139,12 @@ Needs the [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0).
 dotnet build                        # debug build
 install.cmd                         # build and install
 powershell -File build-release.ps1  # release exe and zip in dist\
+```
+
+Overlay tests (no hardware polling or access to your saved settings):
+
+```
+dotnet test tests/BatteryTray.Tests/BatteryTray.Tests.csproj
 ```
 
 ### Releasing a version

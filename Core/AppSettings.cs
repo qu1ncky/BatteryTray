@@ -35,6 +35,12 @@ namespace BatteryTray.Core
         /// <summary>A Windows notification when a device finishes charging.</summary>
         public bool NotifyCharged { get; set; } = true;
         public bool AutoUpdate { get; set; } = true;
+        public bool OverlayEnabled { get; set; }
+        public int OverlayHotkeyKey { get; set; } = HotkeyGesture.Default.Key;
+        public int OverlayHotkeyModifiers { get; set; } = HotkeyGesture.Default.Modifiers;
+        public OverlayMode OverlayMode { get; set; } = OverlayMode.Timed;
+        public OverlayCorner OverlayCorner { get; set; } = OverlayCorner.TopRight;
+        public bool OverlayShowNames { get; set; }
         /// <summary>Version that ran last time; a different one means the app was just updated.</summary>
         public string? LastRunVersion { get; set; }
         public Dictionary<string, DeviceSettings> Devices { get; set; } = new();
@@ -87,6 +93,7 @@ namespace BatteryTray.Core
             s.LowPercent = Math.Clamp(s.LowPercent, 10, 50);
             s.CriticalPercent = Math.Clamp(s.CriticalPercent, 5, s.LowPercent - 5);
             s.RepeatMinutes = Math.Clamp(s.RepeatMinutes, 1, 120);
+            s.NormalizeOverlay();
             // A hand-edited file can hold nulls: dropped here, so they can't stop the app from starting
             s.Devices ??= new();
             foreach (string id in s.Devices.Where(d => d.Value == null).Select(d => d.Key).ToList())
@@ -101,6 +108,17 @@ namespace BatteryTray.Core
                 d.CriticalPercent = Math.Clamp(d.CriticalPercent ?? s.CriticalPercent, 5, low - 5);
             }
             return s;
+        }
+
+        public void NormalizeOverlay()
+        {
+            if (!new HotkeyGesture(OverlayHotkeyKey, OverlayHotkeyModifiers).IsValid)
+            {
+                OverlayHotkeyKey = HotkeyGesture.Default.Key;
+                OverlayHotkeyModifiers = HotkeyGesture.Default.Modifiers;
+            }
+            if (!Enum.IsDefined(OverlayMode)) OverlayMode = OverlayMode.Timed;
+            if (!Enum.IsDefined(OverlayCorner)) OverlayCorner = OverlayCorner.TopRight;
         }
 
         /// <summary>The settings in the file. One value of the wrong type (a hand edit) fails the whole file, and
