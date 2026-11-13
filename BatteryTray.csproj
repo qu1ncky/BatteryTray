@@ -10,7 +10,7 @@
     <Nullable>enable</Nullable>
     <AssemblyName>BatteryTray</AssemblyName>
     <RootNamespace>BatteryTray</RootNamespace>
-    <Version>1.8.1</Version>
+    <Version>1.8.2</Version>
     <Product>BatteryTray</Product>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>app.ico</ApplicationIcon>
