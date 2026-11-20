@@ -7,7 +7,7 @@
 use crate::log;
 use serde::Serialize;
 use serde_json::{Map, Value};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::path::PathBuf;
 
@@ -33,13 +33,25 @@ pub struct DeviceSettings {
     /// Critical level for this device; None = the global one.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub critical_percent: Option<i32>,
+    /// Kept in the top block of the list, connected or not. Written only when set, as the levels are: a device
+    /// nobody pinned looks in the file as it always did.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub pinned: bool,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
 
 impl Default for DeviceSettings {
     fn default() -> Self {
-        Self { name: None, hidden: false, alerts: true, low_percent: None, critical_percent: None, extra: Map::new() }
+        Self {
+            name: None,
+            hidden: false,
+            alerts: true,
+            low_percent: None,
+            critical_percent: None,
+            pinned: false,
+            extra: Map::new(),
+        }
     }
 }
 
@@ -66,6 +78,14 @@ pub struct AppSettings {
     /// Version that ran last time; a different one means the app was just updated.
     pub last_run_version: Option<String>,
     pub devices: BTreeMap<String, DeviceSettings>,
+    /// The banner that offers to start with Windows has been answered ("don't show again", or autostart turned off
+    /// by hand): it stays away.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub autostart_banner_dismissed: bool,
+    /// The devices in the order the user put them in; the list shows the pinned ones of them first. Empty until the
+    /// first pin or drag: until then the list goes by kind and name.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub device_order: Vec<String>,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
@@ -88,6 +108,8 @@ impl Default for AppSettings {
             overlay_show_names: false,
             last_run_version: None,
             devices: BTreeMap::new(),
+            autostart_banner_dismissed: false,
+            device_order: Vec::new(),
             extra: Map::new(),
         }
     }
@@ -184,6 +206,20 @@ impl AppSettings {
                     }
                     _ => false,
                 },
+                "AutostartBannerDismissed" => set(&mut s.autostart_banner_dismissed, v.as_bool()),
+                "DeviceOrder" => match v {
+                    Value::Array(ids) => {
+                        for id in ids {
+                            // A null or a number: skipped
+                            match id.as_str() {
+                                Some(id) => s.device_order.push(id.to_string()),
+                                None => clean = false,
+                            }
+                        }
+                        true
+                    }
+                    _ => false,
+                },
                 _ => {
                     s.extra.insert(key.clone(), v.clone());
                     true
@@ -222,6 +258,9 @@ impl AppSettings {
             d.low_percent = Some(own_low);
             d.critical_percent = Some(d.critical_percent.unwrap_or(critical).clamp(5, own_low - 5));
         }
+        // A device has one place in the user's order: named twice (by hand), the first one counts
+        let mut seen = HashSet::new();
+        self.device_order.retain(|id| seen.insert(id.clone()));
     }
 
     pub fn save(&self) {
@@ -269,6 +308,75 @@ impl AppSettings {
             _ => fallback.to_string(),
         }
     }
+
+    /// Asked of every row at every refresh, so it never adds an entry for a device, as `device` doesn't.
+    pub fn is_pinned(&self, id: &str) -> bool {
+        self.devices.get(id).is_some_and(|d| d.pinned)
+    }
+
+    /// The name the user gives a device, without the spaces around it; an empty one gives the device's own name back.
+    /// False when that is the name it has already: a rename left as it was writes nothing, not even an entry for a
+    /// device the file doesn't name yet.
+    pub fn set_name(&mut self, id: &str, text: &str) -> bool {
+        let name = text.trim();
+        let stored = self.devices.get(id).and_then(|d| d.name.as_deref()).unwrap_or("");
+        if name == stored {
+            return false;
+        }
+        self.device_mut(id).name = (!name.is_empty()).then(|| name.to_string());
+        true
+    }
+
+    /// The general reminder level; the critical one stays at least 5 below it.
+    pub fn set_low(&mut self, value: i32) {
+        self.low_percent = value.clamp(10, 50);
+        self.critical_percent = self.critical_percent.min(self.low_percent - 5);
+    }
+
+    /// The general critical level; the reminder level stays at least 5 above it.
+    pub fn set_critical(&mut self, value: i32) {
+        self.critical_percent = value.clamp(5, 45);
+        self.low_percent = self.low_percent.max(self.critical_percent + 5);
+    }
+
+    pub fn set_repeat(&mut self, minutes: i32) {
+        self.repeat_minutes = minutes.clamp(1, 120);
+    }
+
+    /// A reminder level entered for one device. It becomes the device's own, and the critical level with it: the one
+    /// in effect until now, pulled down when it would be closer than 5. Entering the level the device has already
+    /// changes nothing, so a device that follows the general levels goes on following them when the focus only
+    /// passes through its field.
+    pub fn set_device_low(&mut self, id: &str, value: i32) {
+        let (was, critical) = (self.low_for(id), self.critical_for(id));
+        let low = value.clamp(10, 50);
+        if low == was {
+            return;
+        }
+        let d = self.device_mut(id);
+        d.low_percent = Some(low);
+        d.critical_percent = Some(critical.min(low - 5));
+    }
+
+    /// A critical level entered for one device: no higher than 5 below its reminder level, which becomes the
+    /// device's own with it. Entering the level the device has already changes nothing.
+    pub fn set_device_critical(&mut self, id: &str, value: i32) {
+        let (low, was) = (self.low_for(id), self.critical_for(id));
+        let critical = value.min(low - 5).max(5);
+        if critical == was {
+            return;
+        }
+        let d = self.device_mut(id);
+        d.low_percent = Some(low);
+        d.critical_percent = Some(critical);
+    }
+
+    /// Back to the general levels.
+    pub fn reset_device_levels(&mut self, id: &str) {
+        let d = self.device_mut(id);
+        d.low_percent = None;
+        d.critical_percent = None;
+    }
 }
 
 fn device_from(fields: &Map<String, Value>) -> (DeviceSettings, bool) {
@@ -284,6 +392,7 @@ fn device_from(fields: &Map<String, Value>) -> (DeviceSettings, bool) {
             "Alerts" => set(&mut d.alerts, v.as_bool()),
             "LowPercent" => v.is_null() || set(&mut d.low_percent, int(v).map(Some)),
             "CriticalPercent" => v.is_null() || set(&mut d.critical_percent, int(v).map(Some)),
+            "Pinned" => set(&mut d.pinned, v.as_bool()),
             _ => {
                 d.extra.insert(key.clone(), v.clone());
                 true
@@ -475,5 +584,159 @@ mod tests {
         assert!(!hotkey_valid(0x7B, 0), "F12 is the debugger's");
         assert!(!hotkey_valid(0x41, 0), "an ordinary key needs Ctrl or Alt");
         assert!(!hotkey_valid(0x43, MOD_CONTROL), "Ctrl+C");
+    }
+
+    #[test]
+    fn the_pin_the_order_and_the_banner_are_written_only_when_set() {
+        // Without them the file is what it was before they existed, and reads as nothing pinned or ordered
+        let mut s = AppSettings::default();
+        s.device_mut("a");
+        let text = serde_json::to_string_pretty(&s).unwrap();
+        for key in ["Pinned", "DeviceOrder", "AutostartBannerDismissed"] {
+            assert!(!text.contains(key), "{text}");
+        }
+        assert_eq!(AppSettings::from_value(&serde_json::from_str(&text).unwrap()), (s.clone(), true));
+
+        s.device_mut("a").pinned = true;
+        s.device_order = vec!["b".into(), "a".into()];
+        s.autostart_banner_dismissed = true;
+        let value = serde_json::to_value(&s).unwrap();
+        let pinned = serde_json::json!({ "Name": null, "Hidden": false, "Alerts": true, "Pinned": true });
+        assert_eq!(value["Devices"]["a"], pinned);
+        assert_eq!(value["DeviceOrder"], serde_json::json!(["b", "a"]));
+        assert_eq!(value["AutostartBannerDismissed"], serde_json::json!(true));
+        assert_eq!(AppSettings::from_value(&value), (s, true));
+    }
+
+    #[test]
+    fn a_wrong_value_in_the_order_costs_only_itself() {
+        let text = r#"{ "DeviceOrder": ["b", 5, null, "a", ["c"]], "AutostartBannerDismissed": "yes",
+            "Devices": { "a": { "Pinned": 1, "Hidden": true } } }"#;
+        let (s, clean) = AppSettings::from_value(&parse_lenient(text).unwrap());
+        assert!(!clean);
+        assert_eq!(s.device_order, ["b", "a"]);
+        assert!(!s.autostart_banner_dismissed && !s.device("a").pinned && s.device("a").hidden);
+        let (s, clean) = AppSettings::from_value(&serde_json::json!({ "DeviceOrder": "a" }));
+        assert!(!clean && s.device_order.is_empty());
+        let (s, clean) = AppSettings::from_value(&serde_json::json!({ "DeviceOrder": ["a", 5] }));
+        assert!(!clean, "what was left out is worth the copy of the file");
+        assert_eq!(s.device_order, ["a"]);
+    }
+
+    #[test]
+    fn the_order_names_a_device_once() {
+        let mut s =
+            AppSettings { device_order: ["b", "a", "b", "c", "a"].map(String::from).to_vec(), ..Default::default() };
+        s.normalize();
+        assert_eq!(s.device_order, ["b", "a", "c"]);
+    }
+
+    #[test]
+    fn a_level_entered_for_a_device_becomes_its_own() {
+        let levels = |s: &AppSettings, id: &str| (s.device(id).low_percent, s.device(id).critical_percent);
+        let mut s = AppSettings::default(); // 20% and 10%
+        s.set_device_low("a", 30);
+        assert_eq!(levels(&s, "a"), (Some(30), Some(10)), "the other one as it was shown");
+        // Lowering it pulls the critical level along, 5 below
+        s.set_device_low("a", 12);
+        assert_eq!(levels(&s, "a"), (Some(12), Some(7)));
+        // The critical level goes no higher than 5 below the reminder level, which it doesn't move
+        s.set_device_critical("b", 40);
+        assert_eq!(levels(&s, "b"), (Some(20), Some(15)));
+        s.set_device_critical("b", 6);
+        assert_eq!(levels(&s, "b"), (Some(20), Some(6)));
+        // Out of range: the nearest that is in it
+        s.set_device_low("c", 99);
+        s.set_device_critical("c", 0);
+        assert_eq!(levels(&s, "c"), (Some(50), Some(5)));
+        s.set_device_low("c", 3);
+        assert_eq!(levels(&s, "c"), (Some(10), Some(5)));
+        // The general levels and the reminders' switch are someone else's
+        assert_eq!((s.low_percent, s.critical_percent, s.device("a").alerts), (20, 10, true));
+        let entered = s.clone();
+        s.normalize();
+        assert_eq!(s, entered, "nothing left to put right");
+    }
+
+    #[test]
+    fn entering_the_level_a_device_has_changes_nothing() {
+        let mut s = AppSettings::default();
+        s.set_device_low("a", 20);
+        s.set_device_critical("a", 10);
+        assert_eq!(s, AppSettings::default(), "it still follows the general levels");
+        s.set_low(10);
+        s.set_device_low("a", 3);
+        s.set_device_critical("a", 99);
+        assert!(s.devices.is_empty(), "nor when the nearest level in range is the one it has");
+        // A device with its own levels keeps them, also when they equal the general ones again
+        s.set_device_low("a", 30);
+        s.set_device_low("a", 10);
+        assert_eq!((s.device("a").low_percent, s.device("a").critical_percent), (Some(10), Some(5)));
+    }
+
+    #[test]
+    fn a_device_goes_back_to_the_general_levels() {
+        let mut s = AppSettings::default();
+        s.set_device_low("a", 30);
+        s.set_device_critical("a", 25);
+        s.device_mut("a").alerts = false;
+        assert_eq!((s.low_for("a"), s.critical_for("a")), (30, 25), "its own levels stay while its reminders are off");
+        s.reset_device_levels("a");
+        assert_eq!((s.device("a").low_percent, s.device("a").critical_percent), (None, None));
+        s.set_low(40);
+        assert_eq!((s.low_for("a"), s.critical_for("a")), (40, 10));
+        assert!(!s.device("a").alerts);
+    }
+
+    #[test]
+    fn the_general_levels_keep_their_distance() {
+        let mut s = AppSettings::default();
+        s.set_device_low("own", 30);
+        s.set_low(12);
+        assert_eq!((s.low_percent, s.critical_percent), (12, 7));
+        s.set_critical(30);
+        assert_eq!((s.low_percent, s.critical_percent), (35, 30));
+        s.set_low(99);
+        s.set_critical(99);
+        assert_eq!((s.low_percent, s.critical_percent), (50, 45));
+        s.set_critical(0);
+        s.set_low(0);
+        assert_eq!((s.low_percent, s.critical_percent), (10, 5));
+        s.set_repeat(0);
+        assert_eq!(s.repeat_minutes, 1);
+        s.set_repeat(500);
+        assert_eq!(s.repeat_minutes, 120);
+        assert_eq!((s.low_for("own"), s.critical_for("own")), (30, 10), "a device's own levels stay out of it");
+    }
+
+    #[test]
+    fn a_name_is_kept_without_the_spaces_around_it() {
+        let mut s = AppSettings::default();
+        assert!(s.set_name("a", "  Mine "));
+        assert_eq!(s.device("a").name.as_deref(), Some("Mine"));
+        assert!(!s.set_name("a", "Mine  "), "the same name");
+        assert!(s.set_name("a", "   "));
+        assert_eq!(s.device("a").name, None);
+        assert_eq!(s.display_name("a", "Own"), "Own");
+        // Nothing typed for a device without a name of its own: nothing to keep, not even its entry
+        assert!(!s.set_name("b", ""));
+        assert!(!s.set_name("b", "  "));
+        assert!(!s.devices.contains_key("b"));
+    }
+
+    #[test]
+    fn the_new_keys_never_land_in_extra() {
+        // Each read by its own arm: a key left to `extra` as well would be written twice
+        let text = r#"{ "AutostartBannerDismissed": true, "DeviceOrder": ["b", "a"],
+            "Devices": { "a": { "Name": null, "Hidden": false, "Alerts": true, "Pinned": true } } }"#;
+        let (s, clean) = AppSettings::from_value(&parse_lenient(text).unwrap());
+        assert!(clean);
+        assert!(s.extra.is_empty() && s.device("a").extra.is_empty());
+        assert!(s.autostart_banner_dismissed && s.is_pinned("a") && !s.is_pinned("b"));
+        assert_eq!(s.device_order, ["b", "a"]);
+        let written = serde_json::to_string_pretty(&s).unwrap();
+        for key in ["\"Pinned\"", "\"DeviceOrder\"", "\"AutostartBannerDismissed\""] {
+            assert_eq!(written.matches(key).count(), 1, "{key} in {written}");
+        }
     }
 }

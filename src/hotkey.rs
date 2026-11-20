@@ -112,8 +112,9 @@ pub fn is_modifier(vk: u32) -> bool {
     matches!(vk, 0x10 | 0x11 | 0x12 | 0x5B | 0x5C | 0xA0..=0xA5)
 }
 
-/// "Ctrl+Alt+V", "F5", "Ctrl+Shift+Пробел": as the keyboard calls the key.
-pub fn label(gesture: Gesture) -> String {
+/// The parts of a shortcut as the keyboard calls them: ["Ctrl", "Alt", "V"]. Key caps are drawn from these: a key's
+/// own name may contain "+", so the joined label cannot be split again.
+pub fn parts(gesture: Gesture) -> Vec<String> {
     let mut parts = Vec::new();
     if gesture.modifiers & MOD_CONTROL != 0 {
         parts.push("Ctrl".to_string());
@@ -125,7 +126,12 @@ pub fn label(gesture: Gesture) -> String {
         parts.push("Shift".to_string());
     }
     parts.push(key_name(gesture.key as u32));
-    parts.join("+")
+    parts
+}
+
+/// "Ctrl+Alt+V", "F5", "Ctrl+Shift+Пробел": as the keyboard calls the key.
+pub fn label(gesture: Gesture) -> String {
+    parts(gesture).join("+")
 }
 
 fn key_name(vk: u32) -> String {
@@ -230,5 +236,13 @@ mod tests {
             assert!(!binding.is_current(2));
         }
         assert_eq!(fake.calls, ["register:1", "register:2", "remove:1", "remove:2"]);
+    }
+
+    #[test]
+    fn the_parts_are_the_label_s() {
+        assert_eq!(parts(DEFAULT), ["Ctrl", "Alt", "V"]);
+        assert_eq!(label(DEFAULT), "Ctrl+Alt+V");
+        assert_eq!(parts(Gesture { key: 0x74, modifiers: 0 }), ["F5"]);
+        assert_eq!(label(Gesture { key: 0x74, modifiers: 0 }), "F5");
     }
 }

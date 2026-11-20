@@ -1,5 +1,5 @@
-// The app's look: the Windows 11 dark palette, and the few controls the windows use, drawn the
-// same way as in the C# app.
+// The app's look: the Windows 11 dark palette, and the few controls the windows share. The main window's own
+// controls are in controls.slint.
 
 export global Palette {
     out property <color> window: #202020;
@@ -18,6 +18,14 @@ export global Palette {
     out property <color> warn: #F7C04A;
     out property <color> bad: #FF6B6B;
     out property <color> offline: #7A7A7A;
+    // Menus, dropdown lists, tooltips and key caps
+    out property <color> popup: #2C2C2C;
+    out property <color> popup-stroke: #4A4A4A;
+    // The name of a device without connection
+    out property <color> dim-text: #B4B4B4;
+    // The window's colour at half strength: laid over a block it fades it as a whole, which `opacity` doesn't do
+    // with the software renderer (it fades every shape on its own, and overlapping ones show through each other)
+    out property <color> scrim: #20202080;
 }
 
 // The app's texts: Rust answers T.tr(language, key); a binding that reads `lang` follows a change of language.
@@ -60,8 +68,11 @@ export component Hint inherits Text {
 
 export component Btn inherits Rectangle {
     in property <string> text;
+    // What a screen reader says, when the text alone would not tell this button from another one
+    in property <string> accessible-text: root.text;
     in property <bool> accent;
     in property <bool> enabled: true;
+    in property <length> padding-x: 14px;
     callback clicked();
     min-height: 32px;
     border-radius: 4px;
@@ -72,12 +83,12 @@ export component Btn inherits Rectangle {
         : (touch.pressed ? Palette.control-pressed : touch.has-hover && root.enabled ? Palette.control-hover : Palette.control);
     border-color: root.accent ? self.background : Palette.stroke;
     accessible-role: button;
-    accessible-label: root.text;
+    accessible-label: root.accessible-text;
     accessible-enabled: root.enabled;
     accessible-action-default => { if (root.enabled) { root.clicked(); } }
     HorizontalLayout {
-        padding-left: 14px;
-        padding-right: 14px;
+        padding-left: root.padding-x;
+        padding-right: root.padding-x;
         padding-top: 6px;
         padding-bottom: 6px;
         label := Text {
@@ -117,139 +128,10 @@ export component IconButton inherits Rectangle {
     }
 }
 
-// Tab header and language choice: the label in grey, white and underlined with the accent when chosen
-export component TabButton inherits Rectangle {
-    in property <string> text;
-    in property <bool> checked;
-    callback clicked();
-    border-radius: 4px;
-    background: touch.has-hover ? Palette.card : transparent;
-    accessible-role: tab;
-    accessible-label: root.text;
-    accessible-checked: root.checked;
-    accessible-action-default => { root.clicked(); }
-    HorizontalLayout {
-        padding-left: 14px;
-        padding-right: 14px;
-        padding-top: 7px;
-        padding-bottom: 7px;
-        label := Text {
-            text: root.text;
-            font-size: 14px;
-            color: root.checked ? Palette.text : Palette.secondary;
-        }
-    }
-    Rectangle {
-        x: 14px;
-        y: parent.height - 3px;
-        width: parent.width - 28px;
-        height: 3px;
-        border-radius: 1.5px;
-        background: Palette.accent;
-        visible: root.checked;
-    }
-    touch := TouchArea {
-        mouse-cursor: pointer;
-        clicked => { root.clicked(); }
-    }
-}
-
-// Toggle switch with its label on the left. It only asks for the change (`toggled`); `checked` always shows what the
-// app has, so a change the app refuses (autostart without the UAC prompt accepted) doesn't show as made.
-export component Toggle {
-    in property <string> text;
-    in property <bool> checked;
-    callback toggled(bool);
-    min-height: 22px;
-    accessible-role: switch;
-    accessible-label: root.text;
-    accessible-checked: root.checked;
-    accessible-action-default => { root.flip(); }
-    function flip() {
-        root.toggled(!root.checked);
-    }
-    HorizontalLayout {
-        spacing: 12px;
-        Text {
-            text: root.text;
-            color: Palette.text;
-            vertical-alignment: center;
-            wrap: word-wrap;
-            horizontal-stretch: 1;
-        }
-        VerticalLayout {
-            alignment: center;
-            Rectangle {
-                width: 40px;
-                height: 20px;
-                border-radius: 10px;
-                border-width: 1px;
-                border-color: root.checked ? Palette.accent : #9A9A9A;
-                background: root.checked ? Palette.accent : transparent;
-                knob := Rectangle {
-                    width: touch.has-hover ? 14px : 12px;
-                    height: self.width;
-                    border-radius: self.width / 2;
-                    background: root.checked ? #1A1A1A : #CFCFCF;
-                    x: root.checked ? parent.width - self.width - 4px : 4px;
-                    y: (parent.height - self.height) / 2;
-                }
-            }
-        }
-    }
-    touch := TouchArea {
-        mouse-cursor: pointer;
-        clicked => { root.flip(); }
-    }
-}
-
-// Radio option: the same ring, accent and dot as the toggle switch
-export component OptionButton {
-    in property <string> text;
-    in property <bool> checked;
-    callback clicked();
-    accessible-role: radio-button;
-    accessible-label: root.text;
-    accessible-checked: root.checked;
-    accessible-action-default => { root.clicked(); }
-    HorizontalLayout {
-        spacing: 8px;
-        VerticalLayout {
-            alignment: start;
-            Rectangle {
-                width: 20px;
-                height: 20px;
-                border-radius: 10px;
-                border-width: 1px;
-                border-color: root.checked ? Palette.accent : #9A9A9A;
-                background: root.checked ? Palette.accent
-                    : touch.pressed ? Palette.control-pressed : touch.has-hover ? Palette.control-hover : transparent;
-                Rectangle {
-                    visible: root.checked;
-                    width: touch.pressed ? 10px : touch.has-hover ? 14px : 12px;
-                    height: self.width;
-                    border-radius: self.width / 2;
-                    background: #1A1A1A;
-                }
-            }
-        }
-        Text {
-            text: root.text;
-            color: Palette.text;
-            wrap: word-wrap;
-            vertical-alignment: center;
-            horizontal-stretch: 1;
-        }
-    }
-    touch := TouchArea {
-        mouse-cursor: pointer;
-        clicked => { root.clicked(); }
-    }
-}
-
-// Slider in steps (5%), the part up to the knob in the accent color. As the toggle, it only asks for a value
-// (`changed`); `value` shows what the app has, also when it moves another slider along (the critical level stays
-// 5 below the reminder level).
+// Slider in steps (5%), the part up to the knob in the accent color. As the switches (SwitchRow in controls.slint), it
+// only asks for a value (`changed`); `value` shows what the app has, also when it moves another slider along (the
+// critical level stays 5 below the reminder level). The knob stays on the track for a value the slider can't reach
+// (the repeat field takes 1 to 120 minutes, the slider goes from 5 to 60).
 export component StepSlider {
     in property <int> minimum;
     in property <int> maximum;
@@ -266,7 +148,8 @@ export component StepSlider {
     accessible-value-step: root.step;
     accessible-action-increment => { root.set(root.value + root.step); }
     accessible-action-decrement => { root.set(root.value - root.step); }
-    property <length> knob-x: (root.width - 20px) * (root.value - root.minimum) / (root.maximum - root.minimum);
+    property <length> knob-x: (root.width - 20px)
+        * max(0, min(1, (root.value - root.minimum) / (root.maximum - root.minimum)));
     function set(v: int) {
         let snapped = max(root.minimum, min(root.maximum, v));
         if (snapped != root.value) {
@@ -319,39 +202,5 @@ export component StepSlider {
                 root.set-from(self.mouse-x);
             }
         }
-    }
-}
-
-// Text box with a grey placeholder while empty
-export component Field inherits Rectangle {
-    in property <string> placeholder;
-    in-out property <string> text <=> input.text;
-    callback edited(string);
-    height: 32px;
-    border-radius: 4px;
-    border-width: 1px;
-    background: Palette.input;
-    border-color: input.has-focus ? Palette.accent : Palette.stroke;
-    Text {
-        x: 8px;
-        width: parent.width - 16px;
-        height: parent.height;
-        text: root.placeholder;
-        color: Palette.secondary;
-        vertical-alignment: center;
-        overflow: elide;
-        visible: input.text == "";
-    }
-    input := TextInput {
-        x: 8px;
-        width: parent.width - 16px;
-        height: parent.height;
-        color: Palette.text;
-        vertical-alignment: center;
-        single-line: true;
-        selection-background-color: Palette.accent;
-        selection-foreground-color: #000000;
-        accessible-label: root.placeholder;
-        edited => { root.edited(self.text); }
     }
 }

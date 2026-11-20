@@ -102,6 +102,29 @@ pub fn ui_language() -> &'static str {
     }
 }
 
+/// The Windows build number (22000 and up is Windows 11), as the kernel reports it whatever the manifest says.
+pub fn windows_build() -> u32 {
+    #[repr(C)]
+    struct OsVersion {
+        size: u32,
+        major: u32,
+        minor: u32,
+        build: u32,
+        platform: u32,
+        service_pack: [u16; 128],
+    }
+    let mut info = OsVersion {
+        size: std::mem::size_of::<OsVersion>() as u32,
+        major: 0,
+        minor: 0,
+        build: 0,
+        platform: 0,
+        service_pack: [0; 128],
+    };
+    unsafe { RtlGetVersion(&mut info as *mut OsVersion as *mut c_void) };
+    info.build
+}
+
 pub const INVALID_HANDLE: isize = -1;
 
 #[link(name = "kernel32", kind = "raw-dylib")]
@@ -134,6 +157,11 @@ extern "system" {
 extern "system" {
     fn OpenProcessToken(process: isize, access: u32, token: *mut isize) -> i32;
     fn GetTokenInformation(token: isize, class: i32, info: *mut c_void, len: u32, returned: *mut u32) -> i32;
+}
+
+#[link(name = "ntdll", kind = "raw-dylib")]
+extern "system" {
+    fn RtlGetVersion(info: *mut c_void) -> i32;
 }
 
 /// Opens a device path for sharing: GENERIC_* access as given, OPEN_EXISTING.

@@ -24,6 +24,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 pub const MENU_OPEN: u32 = 1;
 pub const MENU_REFRESH: u32 = 2;
 pub const MENU_EXIT: u32 = 3;
+pub const MENU_SETTINGS: u32 = 4;
 
 pub struct Tray {
     hwnd: HWND,
@@ -109,9 +110,11 @@ pub fn show_menu(hwnd: HWND) -> u32 {
     unsafe {
         let Ok(menu) = CreatePopupMenu() else { return 0 };
         let open = crate::win::wide(&t("tray.open"));
+        let settings = crate::win::wide(&t("settings"));
         let refresh = crate::win::wide(&t("refresh"));
         let exit = crate::win::wide(&t("tray.exit"));
         let _ = AppendMenuW(menu, MF_STRING, MENU_OPEN as usize, windows::core::PCWSTR(open.as_ptr()));
+        let _ = AppendMenuW(menu, MF_STRING, MENU_SETTINGS as usize, windows::core::PCWSTR(settings.as_ptr()));
         let _ = AppendMenuW(menu, MF_STRING, MENU_REFRESH as usize, windows::core::PCWSTR(refresh.as_ptr()));
         let _ = AppendMenuW(menu, MF_SEPARATOR, 0, None);
         let _ = AppendMenuW(menu, MF_STRING, MENU_EXIT as usize, windows::core::PCWSTR(exit.as_ptr()));

@@ -1,13 +1,17 @@
-//! The main window's contents: what each card, row and setting shows,
-//! built from the app's state. The window's callbacks go to the app (app.rs).
+//! The main window's contents: what each card, row and setting shows, built from the app's state. The window's
+//! callbacks go to the app (app.rs).
+//! The device lists are changed row by row and never replaced: a row that stays keeps its element, and with it an
+//! open menu's anchor, a name being typed, a card being dragged and a running animation.
 
 use crate::app::{level_color, with_app, App};
 use crate::autostart;
-use crate::gui::{self, DeviceCard, DeviceSettingsRow, Kind, MainWindow};
+use crate::feedback;
+use crate::gui::{self, DeviceItem, Kind, MainWindow};
 use crate::hotkey::{self, Gesture};
+use crate::list_diff::{self, Step};
 use crate::loc::{self, t, tf};
 use crate::reading::DeviceKind;
-use crate::rows::DeviceRow;
+use crate::rows::{self, Block, DeviceRow};
 use crate::settings::AppSettings;
 use crate::update_service::{Stage, Status};
 use crate::updater::Version;
@@ -35,11 +39,22 @@ fn color((r, g, b): (u8, u8, u8)) -> slint::Color {
 
 pub struct MainView {
     pub ui: MainWindow,
-    online: Rc<VecModel<DeviceCard>>,
-    offline: Rc<VecModel<DeviceCard>>,
-    device_settings: Rc<VecModel<DeviceSettingsRow>>,
+    pinned: Rc<VecModel<DeviceItem>>,
+    connected: Rc<VecModel<DeviceItem>>,
+    offline: Rc<VecModel<DeviceItem>>,
+    hidden: Rc<VecModel<DeviceItem>>,
     /// Keeps "N min ago" fresh
     _clock: slint::Timer,
+}
+
+/// The device list as the window shows it, block by block.
+pub struct DeviceLists {
+    pub pinned: Vec<DeviceItem>,
+    pub connected: Vec<DeviceItem>,
+    pub offline: Vec<DeviceItem>,
+    pub hidden: Vec<DeviceItem>,
+    /// No device of the first two blocks is connected: the window says so instead
+    pub none_online: bool,
 }
 
 impl MainView {
@@ -47,15 +62,18 @@ impl MainView {
         let ui = gui::create(Kind::Normal, MainWindow::new)?;
         gui::setup_texts(&ui.global::<gui::T>());
         let view = Self {
-            online: Rc::new(VecModel::default()),
+            pinned: Rc::new(VecModel::default()),
+            connected: Rc::new(VecModel::default()),
             offline: Rc::new(VecModel::default()),
-            device_settings: Rc::new(VecModel::default()),
+            hidden: Rc::new(VecModel::default()),
             _clock: slint::Timer::default(),
             ui,
         };
-        view.ui.set_online(ModelRc::from(view.online.clone()));
-        view.ui.set_offline(ModelRc::from(view.offline.clone()));
-        view.ui.set_device_settings(ModelRc::from(view.device_settings.clone()));
+        // Handed over once: a model given again would build every row anew
+        view.ui.set_pinned_devices(ModelRc::from(view.pinned.clone()));
+        view.ui.set_connected_devices(ModelRc::from(view.connected.clone()));
+        view.ui.set_offline_devices(ModelRc::from(view.offline.clone()));
+        view.ui.set_hidden_devices(ModelRc::from(view.hidden.clone()));
         view.ui.set_version_text(format!("BatteryTray {}", Version::current()).into());
         connect(&view.ui);
         view._clock.start(slint::TimerMode::Repeated, Duration::from_secs(15), || {
@@ -87,7 +105,6 @@ impl MainView {
         ui.set_low(s.low_percent);
         ui.set_critical(s.critical_percent);
         ui.set_repeat(s.repeat_minutes);
-        ui.set_repeat_text(tf("minutes", &[&s.repeat_minutes]).into());
         ui.set_sound(s.sound);
         ui.set_notify_charged(s.notify_charged);
         ui.set_auto_update(s.auto_update);
@@ -96,72 +113,89 @@ impl MainView {
         ui.set_overlay_corner(s.overlay_corner);
         ui.set_overlay_names(s.overlay_show_names);
         ui.set_language(s.language.clone().into());
-        ui.set_elevation_text(
-            t(if win::is_elevated() {
-                "elev.admin"
-            } else if autostart::is_installed() {
-                "elev.installed"
-            } else {
-                "elev.portable"
-            })
-            .into(),
-        );
+        ui.set_autostart_banner_dismissed(s.autostart_banner_dismissed);
+        // With administrator rights every device can be read: nothing to warn about
+        let elevation = if win::is_elevated() {
+            String::new()
+        } else if autostart::is_installed() {
+            t("elev.installed")
+        } else {
+            t("elev.portable")
+        };
+        ui.set_elevation_text(elevation.into());
         self.refresh_overlay_status(s, app.overlay.shortcut_available());
     }
 
+    /// The shortcut as key caps, and why it doesn't work when it can't be registered.
     pub fn refresh_overlay_status(&self, s: &AppSettings, available: bool) {
-        self.ui.set_shortcut_text(
-            hotkey::label(Gesture { key: s.overlay_hotkey_key, modifiers: s.overlay_hotkey_modifiers }).into(),
-        );
-        let error = s.overlay_enabled && !available;
-        self.ui.set_overlay_status(
-            t(if !s.overlay_enabled {
-                "overlay.disabled"
-            } else if error {
-                "overlay.unavailable"
-            } else {
-                "overlay.ready"
-            })
-            .into(),
-        );
-        self.ui.set_overlay_status_error(error);
+        let gesture = Gesture { key: s.overlay_hotkey_key, modifiers: s.overlay_hotkey_modifiers };
+        let keys: Vec<SharedString> = hotkey::parts(gesture).into_iter().map(SharedString::from).collect();
+        // A new model draws the caps again: only when they changed
+        if !self.ui.get_shortcut_keys().iter().eq(keys.iter().cloned()) {
+            self.ui.set_shortcut_keys(ModelRc::new(VecModel::from(keys)));
+        }
+        self.ui.set_shortcut_text(hotkey::label(gesture).into());
+        let error = if s.overlay_enabled && !available { t("overlay.unavailable") } else { String::new() };
+        self.ui.set_shortcut_error(error.into());
     }
 
     /// A shortcut that can't be taken: says why, in red, until the next change.
     pub fn shortcut_refused(&self, valid: bool) {
-        self.ui.set_overlay_status(t(if valid { "overlay.conflict" } else { "overlay.invalid" }).into());
-        self.ui.set_overlay_status_error(true);
+        self.ui.set_shortcut_error(t(if valid { "overlay.conflict" } else { "overlay.invalid" }).into());
     }
 
     pub fn refresh(&self, rows: &[DeviceRow], s: &AppSettings) {
-        let now = Local::now();
-        let shown: Vec<&DeviceRow> = rows.iter().filter(|r| !s.device(&r.id).hidden).collect();
-        sync(&self.online, shown.iter().filter(|r| r.online()).map(|r| card(r, s, now)).collect());
-        sync(&self.offline, shown.iter().filter(|r| !r.online()).map(|r| card(r, s, now)).collect());
+        let ui = &self.ui;
+        let mut lists = device_lists(rows, s, Local::now());
+        ui.set_none_online(lists.none_online);
+
+        // A menu or a name field belongs to its device: when the device leaves the list, it goes too
+        let shown = |id: &SharedString| {
+            [&lists.pinned, &lists.connected, &lists.offline].iter().any(|l| l.iter().any(|d| d.id == *id))
+        };
+        let menu = ui.get_menu_id();
+        if !menu.is_empty() && !shown(&menu) {
+            ui.invoke_close_menu();
+        }
+        let renaming = ui.get_renaming_id();
+        if !renaming.is_empty() && !shown(&renaming) {
+            ui.invoke_cancel_rename();
+        }
+        // A name being typed keeps its field: the device stays in the block it is shown in until the rename ends, and
+        // the app refreshes the list then
+        let renaming = ui.get_renaming_id();
+        if !renaming.is_empty() {
+            let models = [&self.pinned, &self.connected, &self.offline];
+            let home =
+                models.iter().enumerate().find_map(|(i, m)| m.iter().position(|d| d.id == renaming).map(|at| (i, at)));
+            if let Some((home, index)) = home {
+                hold_renaming(&mut lists, home, index, &renaming);
+            }
+        }
+
+        let drag = ui.get_drag_list();
+        let blocks = [
+            (&self.pinned, lists.pinned),
+            (&self.connected, lists.connected),
+            (&self.offline, lists.offline),
+            (&self.hidden, lists.hidden),
+        ];
+        for (i, (model, fresh)) in blocks.into_iter().enumerate() {
+            // A drag is laid out over the rows it started with: when they change it ends, and nothing moves
+            if drag == i as i32 && !same_ids(model, &fresh) {
+                ui.invoke_cancel_drag();
+            }
+            sync(model, fresh, &renaming);
+        }
 
         let newest = rows.iter().filter_map(|r| r.current.as_ref().map(|c| c.time)).max();
-        self.ui.set_updated_text(
+        ui.set_updated_text(
             match newest {
                 Some(t) => tf("updated.at", &[&t.format("%H:%M:%S")]),
                 None => t("polling"),
             }
             .into(),
         );
-
-        // Rebuilt only when the set of devices changes, so a name being typed keeps its focus. Its order doesn't go
-        // by that name, or every keystroke that changed it would be such a change
-        let fresh: Vec<DeviceSettingsRow> =
-            crate::rows::settings_order(rows).into_iter().map(|r| settings_row(r, s)).collect();
-        let ids_now: Vec<SharedString> = self.device_settings.iter().map(|r| r.id).collect();
-        if ids_now != fresh.iter().map(|r| r.id.clone()).collect::<Vec<_>>() {
-            self.device_settings.set_vec(fresh);
-        } else {
-            for (i, row) in fresh.into_iter().enumerate() {
-                if self.device_settings.row_data(i).as_ref() != Some(&row) {
-                    self.device_settings.set_row_data(i, row);
-                }
-            }
-        }
     }
 
     pub fn refresh_update(&self, u: &Status) {
@@ -169,16 +203,19 @@ impl MainView {
         let latest = u.latest.as_ref().map(|l| l.version.to_string()).unwrap_or_default();
         let status = match u.stage {
             Stage::Checking => t("upd.checking"),
-            Stage::UpToDate => tf(
-                "upd.uptodate",
-                &[&version, &u.last_check.map(|c| c.format("%H:%M").to_string()).unwrap_or_default()],
-            ),
+            Stage::UpToDate => tf("upd.uptodate", &[&version]),
             Stage::Available => tf("upd.available", &[&latest, &version]),
             Stage::Installing if u.progress > 0 && u.progress < 100 => tf("upd.downloading", &[&latest, &u.progress]),
             Stage::Installing => tf("upd.installing", &[&latest]),
             Stage::Failed => tf("upd.failed", &[&u.error.clone().unwrap_or_default()]),
             Stage::NotChecked => tf("upd.idle", &[&version]),
         };
+        // When it was last asked, as a second line while there is nothing newer
+        let checked = match u.last_check {
+            Some(c) if u.stage == Stage::UpToDate => tf("upd.checked", &[&c.format("%H:%M")]),
+            _ => String::new(),
+        };
+        self.ui.set_update_checked_text(checked.into());
         let newer = u.newer_available();
         self.ui.set_install_visible(newer && matches!(u.stage, Stage::Available | Stage::Failed));
         self.ui.set_install_text(tf("upd.install", &[&latest]).into());
@@ -207,15 +244,72 @@ impl MainView {
     }
 }
 
-/// Replaces a model's rows only when something changed, so nothing redraws for nothing.
-fn sync(model: &VecModel<DeviceCard>, cards: Vec<DeviceCard>) {
-    if model.iter().collect::<Vec<_>>() != cards {
-        model.set_vec(cards);
+/// Brings a block of the list up to date row by row: a row that stays keeps its element (an open menu's anchor, a
+/// name being typed, a card being dragged, a running animation), only what changed is replaced.
+fn sync(model: &VecModel<DeviceItem>, fresh: Vec<DeviceItem>, renaming: &SharedString) {
+    let shown: Vec<DeviceItem> = model.iter().collect();
+    let keep = (!renaming.is_empty()).then(|| renaming.clone());
+    for step in list_diff::steps(&shown, fresh, |d| d.id.clone(), keep) {
+        match step {
+            Step::Remove(i) => {
+                model.remove(i);
+            }
+            Step::Insert(i, d) => model.insert(i, d),
+            Step::Replace(i, d) => model.set_row_data(i, d),
+        }
     }
 }
 
-/// One card on the devices tab, or one row under "Not connected".
-fn card(row: &DeviceRow, s: &AppSettings, now: DateTime<Local>) -> DeviceCard {
+fn same_ids(model: &VecModel<DeviceItem>, fresh: &[DeviceItem]) -> bool {
+    model.row_count() == fresh.len() && model.iter().zip(fresh).all(|(shown, f)| shown.id == f.id)
+}
+
+/// Keeps the device whose name is being typed in list `home` (0 pinned, 1 connected, 2 offline), where its field is:
+/// with its fresh data, where the fresh list has it when its block did not change, else at `index`, its place in the
+/// block it is shown in. Every other row stays where the fresh lists put it.
+fn hold_renaming(lists: &mut DeviceLists, home: usize, index: usize, id: &str) {
+    let blocks = [&mut lists.pinned, &mut lists.connected, &mut lists.offline];
+    let Some((from, at)) =
+        blocks.iter().enumerate().find_map(|(b, l)| l.iter().position(|d| d.id == id).map(|at| (b, at)))
+    else {
+        return;
+    };
+    if from != home {
+        let item = blocks[from].remove(at);
+        let len = blocks[home].len();
+        blocks[home].insert(index.min(len), item);
+    }
+}
+
+/// The rows in the list's order, each in the block it is shown in.
+pub fn device_lists(rows: &[DeviceRow], s: &AppSettings, now: DateTime<Local>) -> DeviceLists {
+    let mut lists = DeviceLists {
+        pinned: Vec::new(),
+        connected: Vec::new(),
+        offline: Vec::new(),
+        hidden: Vec::new(),
+        none_online: true,
+    };
+    for row in rows::list_order(rows, s) {
+        let block = rows::block(row, s);
+        // A pinned device is shown with or without a connection; a hidden one doesn't count
+        if row.online() && matches!(block, Block::Pinned | Block::Connected) {
+            lists.none_online = false;
+        }
+        let item = device_item(row, s, now);
+        match block {
+            Block::Pinned => lists.pinned.push(item),
+            Block::Connected => lists.connected.push(item),
+            Block::Offline => lists.offline.push(item),
+            Block::Hidden => lists.hidden.push(item),
+        }
+    }
+    lists
+}
+
+/// One device as any part of the list shows it (a card, a "Not connected" row, a hidden row), and what its menu and
+/// its name field start from.
+pub fn device_item(row: &DeviceRow, s: &AppSettings, now: DateTime<Local>) -> DeviceItem {
     let mut parts = Vec::new();
     let (mut level, mut estimate, mut unknown, mut charging) = (None, false, false, false);
     let mut level_rgb = (0x7A, 0x7A, 0x7A);
@@ -251,11 +345,15 @@ fn card(row: &DeviceRow, s: &AppSettings, now: DateTime<Local>) -> DeviceCard {
             }
         }
     }
-    DeviceCard {
+    let ds = s.device(&row.id);
+    let any = row.any();
+    DeviceItem {
         id: row.id.clone().into(),
         name: row.name.clone().into(),
         glyph: glyph(row.kind()).into(),
         subtitle: parts.join(" · ").into(),
+        connected: row.online(),
+        pinned: s.is_pinned(&row.id),
         // An estimate is marked as one; while charging with no readable level the lightning alone says it all
         level_text: match level {
             Some(l) => format!("{}{l}%", if estimate { "≈" } else { "" }),
@@ -267,6 +365,13 @@ fn card(row: &DeviceRow, s: &AppSettings, now: DateTime<Local>) -> DeviceCard {
         charging,
         indeterminate: unknown,
         fill: (level.unwrap_or(0) as f32 / 100.0).clamp(0.0, 1.0),
+        custom_name: ds.name.clone().unwrap_or_default().into(),
+        own_name: any.name.clone().into(),
+        source: format!("{} · {}", any.via, any.name).into(),
+        alerts: ds.alerts,
+        low: s.low_for(&row.id),
+        critical: s.critical_for(&row.id),
+        own_levels: ds.low_percent.is_some() || ds.critical_percent.is_some(),
     }
 }
 
@@ -280,24 +385,6 @@ fn ago(time: DateTime<Local>, now: DateTime<Local>) -> String {
         tf("ago.hours", &[&d.num_hours()])
     } else {
         loc::date_time(&time)
-    }
-}
-
-/// One device block on the settings tab.
-fn settings_row(row: &DeviceRow, s: &AppSettings) -> DeviceSettingsRow {
-    let ds = s.device(&row.id);
-    let any = row.any();
-    DeviceSettingsRow {
-        id: row.id.clone().into(),
-        glyph: glyph(row.kind()).into(),
-        custom_name: ds.name.clone().unwrap_or_default().into(),
-        default_name: any.name.clone().into(),
-        source: format!("{} · {}", any.via, any.name).into(),
-        visible: !ds.hidden,
-        alerts: ds.alerts,
-        custom_thresholds: ds.low_percent.is_some() || ds.critical_percent.is_some(),
-        low: ds.low_percent.unwrap_or(s.low_percent),
-        critical: ds.critical_percent.unwrap_or(s.critical_percent),
     }
 }
 
@@ -321,8 +408,18 @@ fn connect(ui: &MainWindow) {
     ui.on_open_folder(|| {
         let _ = std::process::Command::new("explorer.exe").arg(crate::log::folder()).spawn();
     });
+    ui.on_suggest_improvement(|| {
+        use std::os::windows::process::CommandExt;
+        let url = feedback::issue_url(&Version::current().to_string(), win::windows_build(), loc::current());
+        // Explorer hands the address to the shell, so the browser runs with the user's own rights also when this app
+        // runs elevated. Quoted as one field: Explorer splits its command line at commas and equals signs
+        let _ = std::process::Command::new("explorer.exe").raw_arg(format!("\"{url}\"")).spawn();
+    });
     ui.on_autostart_changed(|on| {
         with_app(|a| a.set_autostart(on));
+    });
+    ui.on_dismiss_autostart_banner(|| {
+        with_app(|a| a.dismiss_autostart_banner());
     });
     ui.on_overlay_reset(|| {
         with_app(|a| {
@@ -336,25 +433,15 @@ fn connect(ui: &MainWindow) {
         with_app(|a| a.overlay_preview());
     });
 
+    // Typed values come in as they were typed; the settings keep them in range and 5 apart
     ui.on_low_changed(|v| {
-        with_app(|a| {
-            a.edit(|s| {
-                s.low_percent = v;
-                // The critical level stays at least 5 below the reminder level
-                s.critical_percent = s.critical_percent.min(v - 5);
-            })
-        });
+        with_app(|a| a.edit(|s| s.set_low(v)));
     });
     ui.on_critical_changed(|v| {
-        with_app(|a| {
-            a.edit(|s| {
-                s.critical_percent = v;
-                s.low_percent = s.low_percent.max(v + 5);
-            })
-        });
+        with_app(|a| a.edit(|s| s.set_critical(v)));
     });
     ui.on_repeat_changed(|v| {
-        with_app(|a| a.edit(|s| s.repeat_minutes = v));
+        with_app(|a| a.edit(|s| s.set_repeat(v)));
     });
     ui.on_sound_changed(|on| {
         with_app(|a| a.edit(|s| s.sound = on));
@@ -378,91 +465,197 @@ fn connect(ui: &MainWindow) {
         with_app(|a| a.edit(|s| s.overlay_show_names = on));
     });
 
-    ui.on_device_name_edited(|id, text| {
-        with_app(|a| {
-            a.edit(|s| {
-                let name = text.trim();
-                s.device_mut(&id).name = if name.is_empty() { None } else { Some(text.to_string()) };
-            })
-        });
+    ui.on_device_renamed(|id, text| {
+        with_app(|a| a.rename_device(&id, &text));
     });
-    ui.on_device_visible_changed(|id, on| {
-        with_app(|a| a.edit(|s| s.device_mut(&id).hidden = !on));
+    ui.on_device_pinned_changed(|id, pinned| {
+        with_app(|a| a.pin_device(&id, pinned));
+    });
+    ui.on_device_hidden_changed(|id, hidden| {
+        with_app(|a| a.edit(|s| s.device_mut(&id).hidden = hidden));
+    });
+    ui.on_device_moved(|id, onto| {
+        with_app(|a| a.move_device(&id, &onto));
     });
     ui.on_device_alerts_changed(|id, on| {
         with_app(|a| a.edit(|s| s.device_mut(&id).alerts = on));
     });
-    ui.on_device_thresholds_changed(|id, on| {
-        with_app(|a| {
-            a.edit(|s| {
-                // Turning it on starts from the global levels, turning it off goes back to following them
-                let (low, critical) = (s.low_percent, s.critical_percent);
-                let d = s.device_mut(&id);
-                d.low_percent = on.then_some(low);
-                d.critical_percent = on.then_some(critical);
-            })
-        });
-    });
     ui.on_device_low_changed(|id, v| {
-        with_app(|a| {
-            a.edit(|s| {
-                let d = s.device_mut(&id);
-                if d.low_percent.is_none() && d.critical_percent.is_none() {
-                    return; // only while this device's own levels are on
-                }
-                let low = v.clamp(10, 50);
-                d.low_percent = Some(low);
-                if d.critical_percent.is_some_and(|c| c > low - 5) {
-                    d.critical_percent = Some(low - 5);
-                }
-            })
-        });
+        with_app(|a| a.edit(|s| s.set_device_low(&id, v)));
     });
     ui.on_device_critical_changed(|id, v| {
-        with_app(|a| {
-            a.edit(|s| {
-                let d = s.device_mut(&id);
-                if d.low_percent.is_none() && d.critical_percent.is_none() {
-                    return;
-                }
-                let critical = v.clamp(5, 45);
-                d.critical_percent = Some(critical);
-                if d.low_percent.is_some_and(|l| critical > l - 5) {
-                    d.low_percent = Some((critical + 5).min(50));
-                }
-            })
-        });
+        with_app(|a| a.edit(|s| s.set_device_critical(&id, v)));
+    });
+    ui.on_device_levels_reset(|id| {
+        with_app(|a| a.edit(|s| s.reset_device_levels(&id)));
     });
 
-    // Closing drops the window and everything it holds; it is built again the next time it opens
-    ui.window().on_close_requested(|| {
-        slint::Timer::single_shot(Duration::ZERO, || {
+    // Closing drops the window and everything it holds; it is built again the next time it opens. What is open in
+    // it is settled first, as when it loses the focus: a name being typed is saved
+    let weak = ui.as_weak();
+    ui.window().on_close_requested(move || {
+        let weak = weak.clone();
+        slint::Timer::single_shot(Duration::ZERO, move || {
+            if let Some(ui) = weak.upgrade() {
+                ui.invoke_deactivated();
+            }
             with_app(|a| a.close_main());
         });
         slint::CloseRequestResponse::HideWindow
     });
 
-    // The shortcut field records the next key combination from the raw key event: the physical key, so the same
-    // shortcut on every keyboard layout
+    // What Slint has no window-wide hook for, taken from winit before Slint sees the event. Whatever it starts in
+    // the window runs later, from the event loop: Windows sends these also while the app is in the middle of
+    // something, and a window callback reached then would find the app busy and be dropped
     let weak = ui.as_weak();
     ui.window().on_winit_window_event(move |_, event| {
         use winit::event::{ElementState, WindowEvent};
+        use winit::keyboard::{Key, NamedKey};
         use winit::platform::scancode::PhysicalKeyExtScancode;
-        let WindowEvent::KeyboardInput { event, .. } = event else { return EventResult::Propagate };
-        if !weak.upgrade().is_some_and(|ui| ui.get_recording_shortcut()) {
-            return EventResult::Propagate;
+        let Some(ui) = weak.upgrade() else { return EventResult::Propagate };
+        match event {
+            // A menu, a list or a tooltip doesn't stay open in a window that lost the focus, and a name being typed
+            // is saved
+            WindowEvent::Focused(false) => {
+                let weak = ui.as_weak();
+                slint::Timer::single_shot(Duration::ZERO, move || {
+                    if let Some(ui) = weak.upgrade() {
+                        // The release of a button that is down goes to another window: whatever holds the pointer
+                        // (a grip being dragged) has to be told it is gone, or it eats the next click
+                        ui.window().dispatch_event(slint::platform::WindowEvent::PointerExited);
+                        ui.invoke_deactivated();
+                    }
+                });
+                EventResult::Propagate
+            }
+            // Escape is the window's whatever has the focus (also nothing, also the shortcut field: it ends the
+            // recording). The logical key: an input method that takes Escape for itself reports another one
+            WindowEvent::KeyboardInput { event, .. } if event.logical_key == Key::Named(NamedKey::Escape) => {
+                if event.state == ElementState::Pressed && !event.repeat {
+                    let weak = ui.as_weak();
+                    slint::Timer::single_shot(Duration::ZERO, move || {
+                        if let Some(ui) = weak.upgrade() {
+                            let renaming = !ui.get_renaming_id().is_empty();
+                            ui.invoke_escape();
+                            // A cancelled rename raises nothing, but the list may have held its device back
+                            if renaming && ui.get_renaming_id().is_empty() {
+                                with_app(|a| a.refresh_main());
+                            }
+                        }
+                    });
+                }
+                EventResult::PreventDefault
+            }
+            // The shortcut field records the next key combination from the raw key event: the physical key, so the
+            // same shortcut on every keyboard layout
+            WindowEvent::KeyboardInput { event, .. } if ui.get_recording_shortcut() => {
+                let Some(scancode) = event.physical_key.to_scancode() else { return EventResult::Propagate };
+                let vk = hotkey::virtual_key(scancode);
+                if vk == 0x09 {
+                    return EventResult::Propagate; // keyboard users can leave the field
+                }
+                if event.state == ElementState::Pressed && !event.repeat && !hotkey::is_modifier(vk) {
+                    let gesture = Gesture { key: vk as i32, modifiers: hotkey::modifiers_down() };
+                    slint::Timer::single_shot(Duration::ZERO, move || {
+                        with_app(|a| a.set_overlay_shortcut(gesture));
+                    });
+                }
+                EventResult::PreventDefault
+            }
+            _ => EventResult::Propagate,
         }
-        let Some(scancode) = event.physical_key.to_scancode() else { return EventResult::Propagate };
-        let vk = hotkey::virtual_key(scancode);
-        if vk == 0x09 {
-            return EventResult::Propagate; // keyboard users can leave the field
-        }
-        if event.state == ElementState::Pressed && !event.repeat && !hotkey::is_modifier(vk) {
-            let gesture = Gesture { key: vk as i32, modifiers: hotkey::modifiers_down() };
-            slint::Timer::single_shot(Duration::ZERO, move || {
-                with_app(|a| a.set_overlay_shortcut(gesture));
-            });
-        }
-        EventResult::PreventDefault
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::reading::DeviceReading;
+
+    fn row(id: &str, kind: DeviceKind, online: bool) -> DeviceRow {
+        let reading = DeviceReading { online, level: Some(50), ..DeviceReading::new(id, id, kind, "2.4 GHz") };
+        DeviceRow { id: id.into(), current: Some(reading), last: None, name: id.into() }
+    }
+
+    fn ids(list: &[DeviceItem]) -> Vec<&str> {
+        list.iter().map(|d| d.id.as_str()).collect()
+    }
+
+    #[test]
+    fn a_device_is_listed_in_one_block_in_list_order() {
+        let rows = [
+            row("mouse", DeviceKind::Mouse, false),
+            row("hidden", DeviceKind::Headset, true),
+            row("keyboard", DeviceKind::Keyboard, true),
+            row("pad", DeviceKind::Gamepad, false),
+            row("headset", DeviceKind::Headset, true),
+            row("pinned-mouse", DeviceKind::Mouse, true),
+        ];
+        let mut s = AppSettings::default();
+        s.device_mut("pinned-mouse").pinned = true;
+        s.device_mut("pad").pinned = true;
+        // Hiding a pinned device keeps its pin, and it is shown with the hidden ones only
+        s.device_mut("hidden").pinned = true;
+        s.device_mut("hidden").hidden = true;
+        s.device_order = vec!["keyboard".into(), "headset".into()];
+        let lists = device_lists(&rows, &s, Local::now());
+        assert_eq!(ids(&lists.pinned), ["pinned-mouse", "pad"]);
+        assert_eq!(ids(&lists.connected), ["keyboard", "headset"]);
+        assert_eq!(ids(&lists.offline), ["mouse"]);
+        assert_eq!(ids(&lists.hidden), ["hidden"]);
+        let pad = &lists.pinned[1];
+        assert_eq!((pad.connected, pad.pinned, pad.level_text.as_str()), (false, true, "—"));
+    }
+
+    #[test]
+    fn no_device_online_counts_pinned_ones() {
+        let mut s = AppSettings::default();
+        assert!(device_lists(&[], &s, Local::now()).none_online, "no devices at all");
+
+        let rows = [row("pinned", DeviceKind::Mouse, true), row("away", DeviceKind::Keyboard, false)];
+        s.device_mut("pinned").pinned = true;
+        assert!(!device_lists(&rows, &s, Local::now()).none_online, "a pinned device is connected");
+
+        s.device_mut("pinned").hidden = true;
+        assert!(device_lists(&rows, &s, Local::now()).none_online, "a hidden one doesn't count");
+    }
+
+    fn item(id: &str, subtitle: &str) -> DeviceItem {
+        DeviceItem { id: id.into(), subtitle: subtitle.into(), ..Default::default() }
+    }
+
+    fn lists(pinned: &[&str], connected: &[&str], offline: &[&str]) -> DeviceLists {
+        let block = |ids: &[&str]| ids.iter().map(|id| item(id, "")).collect();
+        DeviceLists {
+            pinned: block(pinned),
+            connected: block(connected),
+            offline: block(offline),
+            hidden: Vec::new(),
+            none_online: false,
+        }
+    }
+
+    fn blocks(lists: &DeviceLists) -> [Vec<&str>; 3] {
+        [ids(&lists.pinned), ids(&lists.connected), ids(&lists.offline)]
+    }
+
+    #[test]
+    fn a_device_being_renamed_stays_where_it_is_shown() {
+        // Its block did not change: where the fresh list has it
+        let mut fresh = lists(&["a"], &["b", "d", "c"], &["e"]);
+        hold_renaming(&mut fresh, 1, 1, "c");
+        assert_eq!(blocks(&fresh), [vec!["a"], vec!["b", "d", "c"], vec!["e"]]);
+
+        // It went offline while its name is typed on a card: it stays a card, at its place, with what it shows now
+        let mut fresh = lists(&["a"], &["b", "d"], &["c", "e"]);
+        fresh.offline[0].subtitle = "not connected".into();
+        hold_renaming(&mut fresh, 1, 1, "c");
+        assert_eq!(blocks(&fresh), [vec!["a"], vec!["b", "c", "d"], vec!["e"]]);
+        assert_eq!(fresh.connected[1].subtitle, "not connected");
+
+        // Its old place is past the end of a block that got shorter
+        let mut fresh = lists(&["c"], &["b"], &[]);
+        hold_renaming(&mut fresh, 2, 4, "c");
+        assert_eq!(blocks(&fresh), [vec![], vec!["b"], vec!["c"]]);
+    }
 }

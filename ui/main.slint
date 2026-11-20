@@ -1,815 +1,463 @@
-// The main window: the devices tab with a card per device on the air and a row per device
-// that isn't, and the settings tab. Every text and value comes from Rust; edits go back through the callbacks.
+// The main window: the devices screen and the settings screen, stacked and hidden rather than destroyed, and
+// above them the layers of what can be open over everything: the lifted device of a drag, the device menu, a
+// dropdown list, a tooltip. Every text and value comes from Rust; edits go back through the callbacks. The
+// window's own state (the screen, what is open) is the UI's; Rust resets it through `reset-screen`.
 
-import { ScrollView } from "std-widgets.slint";
-import { Palette, T, Glyph, Card, SectionHeader, Hint, Btn, IconButton, TabButton, Toggle, OptionButton, StepSlider, Field } from "theme.slint";
-
-export struct DeviceCard {
-    id: string,
-    name: string,
-    glyph: string,
-    subtitle: string,
-    level-text: string,
-    color: color,
-    charging: bool,
-    // Charging, but the level can't be read right now: no number, a dimmed full bar instead
-    indeterminate: bool,
-    fill: float,
-}
-
-export struct DeviceSettingsRow {
-    id: string,
-    glyph: string,
-    custom-name: string,
-    default-name: string,
-    source: string,
-    visible: bool,
-    alerts: bool,
-    custom-thresholds: bool,
-    low: int,
-    critical: int,
-}
-
-component DeviceCardView inherits Card {
-    in property <DeviceCard> card;
-    VerticalLayout {
-        padding-left: 16px;
-        padding-right: 16px;
-        padding-top: 14px;
-        padding-bottom: 14px;
-        spacing: 12px;
-        HorizontalLayout {
-            spacing: 0;
-            Glyph {
-                width: 38px;
-                text: root.card.glyph;
-                font-size: 22px;
-            }
-            VerticalLayout {
-                alignment: center;
-                spacing: 2px;
-                horizontal-stretch: 1;
-                Text {
-                    text: root.card.name;
-                    font-size: 15px;
-                    font-weight: 600;
-                    color: Palette.text;
-                    overflow: elide;
-                }
-                Text {
-                    text: root.card.subtitle;
-                    font-size: 12px;
-                    color: Palette.secondary;
-                    wrap: word-wrap;
-                }
-            }
-            HorizontalLayout {
-                padding-left: 12px;
-                spacing: 4px;
-                alignment: end;
-                Glyph {
-                    visible: root.card.charging;
-                    width: root.card.charging ? self.preferred-width : 0;
-                    text: "\u{E945}";
-                    font-size: root.card.indeterminate ? 26px : 16px;
-                    color: root.card.color;
-                }
-                Text {
-                    text: root.card.level-text;
-                    font-size: 26px;
-                    font-weight: 600;
-                    color: root.card.color;
-                    vertical-alignment: center;
-                }
-            }
-        }
-        Rectangle {
-            height: 4px;
-            border-radius: 2px;
-            background: Palette.track;
-            Rectangle {
-                x: 0;
-                width: parent.width * (root.card.indeterminate ? 1 : root.card.fill);
-                border-radius: 2px;
-                background: root.card.color;
-                opacity: root.card.indeterminate ? 0.45 : 1;
-            }
-        }
-    }
-}
-
-component OfflineRowView {
-    in property <DeviceCard> card;
-    opacity: 0.75;
-    HorizontalLayout {
-        padding-left: 16px;
-        padding-right: 16px;
-        padding-top: 6px;
-        padding-bottom: 6px;
-        Glyph {
-            width: 38px;
-            text: root.card.glyph;
-            font-size: 18px;
-        }
-        VerticalLayout {
-            horizontal-stretch: 1;
-            Text {
-                text: root.card.name;
-                color: Palette.text;
-                overflow: elide;
-            }
-            Text {
-                text: root.card.subtitle;
-                font-size: 12px;
-                color: Palette.secondary;
-                overflow: elide;
-            }
-        }
-    }
-}
-
-component DeviceSettingsView inherits Card {
-    in property <DeviceSettingsRow> device;
-    callback name-edited(string, string);
-    callback visible-changed(string, bool);
-    callback alerts-changed(string, bool);
-    callback thresholds-changed(string, bool);
-    callback low-changed(string, int);
-    callback critical-changed(string, int);
-    VerticalLayout {
-        padding-left: 16px;
-        padding-right: 16px;
-        padding-top: 14px;
-        padding-bottom: 14px;
-        spacing: 10px;
-        HorizontalLayout {
-            Glyph {
-                width: 34px;
-                text: root.device.glyph;
-                font-size: 18px;
-            }
-            Field {
-                horizontal-stretch: 1;
-                text: root.device.custom-name;
-                placeholder: root.device.default-name;
-                edited(text) => { root.name-edited(root.device.id, text); }
-            }
-        }
-        VerticalLayout {
-            padding-left: 34px;
-            spacing: 10px;
-            Hint {
-                text: root.device.source;
-            }
-            Toggle {
-                text: T.t("device.visible");
-                checked: root.device.visible;
-                toggled(on) => { root.visible-changed(root.device.id, on); }
-            }
-            Toggle {
-                text: T.t("device.alerts");
-                checked: root.device.alerts;
-                toggled(on) => { root.alerts-changed(root.device.id, on); }
-            }
-            Toggle {
-                text: T.t("device.thresholds");
-                checked: root.device.custom-thresholds;
-                toggled(on) => { root.thresholds-changed(root.device.id, on); }
-            }
-            if root.device.custom-thresholds: VerticalLayout {
-                spacing: 6px;
-                HorizontalLayout {
-                    Text {
-                        text: T.t("alerts.low");
-                        color: Palette.text;
-                        horizontal-stretch: 1;
-                        wrap: word-wrap;
-                    }
-                    Text {
-                        text: root.device.low + "%";
-                        font-weight: 600;
-                        color: Palette.accent;
-                    }
-                }
-                StepSlider {
-                    minimum: 10;
-                    maximum: 50;
-                    label: T.t("alerts.low");
-                    value: root.device.low;
-                    changed(v) => { root.low-changed(root.device.id, v); }
-                }
-                HorizontalLayout {
-                    padding-top: 8px;
-                    Text {
-                        text: T.t("alerts.critical");
-                        color: Palette.text;
-                        horizontal-stretch: 1;
-                    }
-                    Text {
-                        text: root.device.critical + "%";
-                        font-weight: 600;
-                        color: Palette.accent;
-                    }
-                }
-                StepSlider {
-                    minimum: 5;
-                    maximum: 45;
-                    label: T.t("alerts.critical");
-                    value: root.device.critical;
-                    changed(v) => { root.critical-changed(root.device.id, v); }
-                }
-                Hint {
-                    text: T.t("alerts.critical.hint");
-                }
-            }
-        }
-    }
-}
-
-// A section's header, with room above it
-component Header inherits VerticalLayout {
-    in property <string> text;
-    in property <length> top: 14px;
-    padding-top: root.top;
-    padding-left: 2px;
-    SectionHeader {
-        text: root.text;
-    }
-}
-
-// A caption inside a card, above the control it names
-component Caption inherits VerticalLayout {
-    in property <string> text;
-    padding-top: 8px;
-    Text {
-        text: root.text;
-        color: Palette.text;
-        wrap: word-wrap;
-    }
-}
-
-// The field that records the overlay shortcut: focused, it takes the next key combination (read in Rust from the
-// raw key event, so it works the same on every keyboard layout)
-component ShortcutField inherits Rectangle {
-    in property <string> text;
-    in property <string> label;
-    out property <bool> recording: focus.has-focus;
-    height: 32px;
-    border-radius: 4px;
-    border-width: 1px;
-    background: Palette.input;
-    border-color: focus.has-focus ? Palette.accent : Palette.stroke;
-    accessible-role: text-input;
-    accessible-label: root.label;
-    accessible-value: root.text;
-    Text {
-        x: 8px;
-        width: parent.width - 16px;
-        text: root.text;
-        color: Palette.text;
-        vertical-alignment: center;
-        overflow: elide;
-    }
-    focus := FocusScope {
-        key-pressed(e) => {
-            // Tab leaves the field; every other key is the shortcut, handled before it gets here
-            if (e.text == Key.Tab || e.text == Key.Backtab) {
-                return reject;
-            }
-            accept
-        }
-    }
-    TouchArea {
-        mouse-cursor: pointer;
-        clicked => { focus.focus(); }
-    }
-}
+import { Palette, T } from "theme.slint";
+import { Tip, TipLayer, DropdownList, DropdownLayer } from "controls.slint";
+import { DeviceItem, DeviceUi, Drag, DeviceView, DevicesScreen, DeviceMenu } from "devices.slint";
+import { SettingsScreen, GeneralPage, RemindersPage, OverlayPage } from "settings.slint";
 
 export component MainWindow inherits Window {
     title: T.t("app.title");
     preferred-width: 440px;
     preferred-height: 640px;
-    min-width: 380px;
+    min-width: 400px;
     min-height: 420px;
     background: Palette.window;
     // Chinese in its own font: the fallback Windows picks for Han on a non-Chinese system is Japanese, which lacks
     // the simplified characters. Microsoft YaHei UI has Latin and Cyrillic too.
     default-font-family: T.lang == "zh" ? "Microsoft YaHei UI" : "Segoe UI";
     default-font-size: 13px;
+    // Keys go to `keys` until something inside takes the focus
+    forward-focus: keys;
 
-    in-out property <int> tab: 0;
-
-    // Devices tab
-    in property <[DeviceCard]> online;
-    in property <[DeviceCard]> offline;
+    // Device list: each model is made once by Rust and then only changed row by row
+    in property <[DeviceItem]> pinned-devices;
+    in property <[DeviceItem]> connected-devices;
+    in property <[DeviceItem]> offline-devices;
+    in property <[DeviceItem]> hidden-devices;
+    in property <bool> none-online;
     in property <string> updated-text;
     in property <string> version-text;
     in property <bool> banner-visible;
     in property <string> banner-text;
     in property <bool> banner-button-visible;
+    in property <bool> autostart;
+    in property <bool> autostart-banner-dismissed;
 
-    // Settings tab
+    // Settings / General
     in property <string> language;
-    in property <bool> overlay-enabled;
-    in property <string> shortcut-text;
-    in property <string> overlay-status;
-    in property <bool> overlay-status-error;
-    in property <int> overlay-mode;
-    in property <int> overlay-corner;
-    in property <bool> overlay-names;
-    in property <int> low;
-    in property <int> critical;
-    in property <int> repeat;
-    in property <string> repeat-text;
-    in property <bool> sound;
-    in property <bool> notify-charged;
-    in property <[DeviceSettingsRow]> device-settings;
+    in property <string> elevation-text;
     in property <string> update-status;
+    in property <string> update-checked-text;
     in property <string> update-notes;
     in property <bool> install-visible;
     in property <string> install-text;
     in property <bool> check-enabled: true;
     in property <bool> auto-update;
-    in property <bool> autostart;
-    in property <string> elevation-text;
-    in-out property <bool> shortcut-focused;
-    out property <bool> recording-shortcut: root.tab == 1 && root.shortcut-focused;
+    // Settings / Reminders
+    in property <int> low;
+    in property <int> critical;
+    in property <int> repeat;
+    in property <bool> sound;
+    in property <bool> notify-charged;
+    // Settings / Overlay
+    in property <bool> overlay-enabled;
+    in property <[string]> shortcut-keys;
+    in property <string> shortcut-text;
+    in property <string> shortcut-error;
+    in property <int> overlay-mode;
+    in property <int> overlay-corner;
+    in property <bool> overlay-names;
+
+    // The UI's own state
+    in-out property <int> screen: 0;
+    in-out property <int> settings-tab: 0;
+    in-out property <bool> hidden-open: false;
+    // What Rust reads
+    out property <string> menu-id: DeviceUi.menu-id;
+    out property <string> renaming-id: DeviceUi.renaming-id;
+    out property <int> drag-list: Drag.list;
+    // Derived from what is on screen, so it can't go stale: leaving the tab or the screen takes the focus away
+    out property <bool> recording-shortcut: root.screen == 1 && root.settings-tab == 2 && overlay.shortcut-focused;
 
     callback refresh();
     callback install-update();
     callback check-updates();
-    callback language-chosen(string);
-    callback overlay-enabled-changed(bool);
-    callback overlay-mode-chosen(int);
-    callback overlay-corner-chosen(int);
-    callback overlay-names-changed(bool);
+    callback language-chosen(language: string);
+    callback test-alert();
+    callback open-folder();
+    callback suggest-improvement();
+    callback autostart-changed(on: bool);
+    callback dismiss-autostart-banner();
+    callback auto-update-changed(on: bool);
+    callback low-changed(value: int);
+    callback critical-changed(value: int);
+    callback repeat-changed(value: int);
+    callback sound-changed(on: bool);
+    callback notify-charged-changed(on: bool);
+    callback overlay-enabled-changed(on: bool);
+    callback overlay-mode-chosen(mode: int);
+    callback overlay-corner-chosen(corner: int);
+    callback overlay-names-changed(on: bool);
     callback overlay-reset();
     callback overlay-preview();
-    callback low-changed(int);
-    callback critical-changed(int);
-    callback repeat-changed(int);
-    callback sound-changed(bool);
-    callback notify-charged-changed(bool);
-    callback test-alert();
-    callback auto-update-changed(bool);
-    callback autostart-changed(bool);
-    callback open-folder();
-    callback device-name-edited(string, string);
-    callback device-visible-changed(string, bool);
-    callback device-alerts-changed(string, bool);
-    callback device-thresholds-changed(string, bool);
-    callback device-low-changed(string, int);
-    callback device-critical-changed(string, int);
+    callback device-renamed(id: string, text: string);
+    callback device-pinned-changed(id: string, pinned: bool);
+    callback device-hidden-changed(id: string, hidden: bool);
+    callback device-moved(id: string, onto: string);
+    callback device-alerts-changed(id: string, on: bool);
+    callback device-low-changed(id: string, value: int);
+    callback device-critical-changed(id: string, value: int);
+    callback device-levels-reset(id: string);
 
-    VerticalLayout {
-        padding-left: 20px;
-        padding-right: 14px;
-        padding-top: 14px;
-        padding-bottom: 12px;
+    // The functions Rust calls. None of the first six raises a callback, also not through a change handler, so Rust
+    // may call them while it holds the app's state: typed text is dropped, never applied.
 
-        HorizontalLayout {
-            padding-right: 6px;
-            Text {
-                text: T.t("app.title");
-                font-size: 22px;
-                font-weight: 600;
-                color: Palette.text;
-                vertical-alignment: center;
-                horizontal-stretch: 1;
-            }
-            IconButton {
-                glyph: "\u{E72C}";
-                tip: T.t("refresh");
-                clicked => { root.refresh(); }
-            }
+    // Closes or cancels the topmost thing, one per press: tooltip, dropdown list, device menu, rename, drag, shortcut
+    // recording, a settings field being typed into, the settings screen. Returns whether there was something.
+    public function escape() -> bool {
+        if (tips.showing) {
+            Tip.cancel();
+            return true;
         }
-
-        // Shifted left by the tab's own padding, so its label starts where the title does
-        Rectangle {
-            height: tabs.preferred-height;
-            tabs := HorizontalLayout {
-                x: -14px;
-                width: parent.width + 14px;
-                padding-top: 10px;
-                padding-bottom: 14px;
-                spacing: 2px;
-                alignment: start;
-                TabButton {
-                    text: T.t("tab.devices");
-                    checked: root.tab == 0;
-                    clicked => { root.tab = 0; }
-                }
-                TabButton {
-                    text: T.t("tab.settings");
-                    checked: root.tab == 1;
-                    clicked => { root.tab = 1; }
-                }
-            }
+        if (DropdownList.open) {
+            DropdownList.close();
+            return true;
         }
-
-        if root.tab == 0: ScrollView {
-            vertical-stretch: 1;
-            VerticalLayout {
-                alignment: start;
-                padding-right: 6px;
-                spacing: 8px;
-                if root.banner-visible: Card {
-                    border-color: Palette.accent;
-                    HorizontalLayout {
-                        padding-left: 16px;
-                        padding-right: 16px;
-                        padding-top: 10px;
-                        padding-bottom: 10px;
-                        spacing: 10px;
-                        Glyph {
-                            text: "\u{E896}";
-                            font-size: 16px;
-                            color: Palette.accent;
-                        }
-                        Text {
-                            text: root.banner-text;
-                            color: Palette.text;
-                            vertical-alignment: center;
-                            wrap: word-wrap;
-                            horizontal-stretch: 1;
-                        }
-                        if root.banner-button-visible: Btn {
-                            accent: true;
-                            text: T.t("upd.banner.button");
-                            clicked => { root.install-update(); }
-                        }
-                    }
-                }
-                for card in root.online: DeviceCardView {
-                    card: card;
-                }
-                if root.online.length == 0: Card {
-                    VerticalLayout {
-                        padding: 14px;
-                        Text {
-                            text: T.t("none.online");
-                            color: Palette.secondary;
-                            horizontal-alignment: center;
-                            wrap: word-wrap;
-                        }
-                    }
-                }
-                if root.offline.length > 0: VerticalLayout {
-                    padding-top: 6px;
-                    padding-left: 2px;
-                    SectionHeader {
-                        text: T.t("offline.header");
-                    }
-                }
-                for card in root.offline: OfflineRowView {
-                    card: card;
-                }
-            }
+        if (DeviceUi.menu-id != "") {
+            root.shut-menu(false);
+            keys.focus();
+            return true;
         }
-
-        if root.tab == 1: ScrollView {
-            vertical-stretch: 1;
-            VerticalLayout {
-                alignment: start;
-                padding-right: 6px;
-                spacing: 8px;
-
-                // Always also says "Language", for someone who can't read the current one
-                SectionHeader {
-                    text: T.t("lang.header");
-                }
-                Card {
-                    HorizontalLayout {
-                        padding: 2px;
-                        padding-left: 4px;
-                        alignment: start;
-                        TabButton {
-                            text: T.t("lang.auto");
-                            checked: root.language != "ru" && root.language != "en" && root.language != "zh";
-                            clicked => { root.language-chosen("auto"); }
-                        }
-                        TabButton {
-                            text: "Русский";
-                            checked: root.language == "ru";
-                            clicked => { root.language-chosen("ru"); }
-                        }
-                        TabButton {
-                            text: "English";
-                            checked: root.language == "en";
-                            clicked => { root.language-chosen("en"); }
-                        }
-                        TabButton {
-                            text: "中文";
-                            checked: root.language == "zh";
-                            clicked => { root.language-chosen("zh"); }
-                        }
-                    }
-                }
-
-                Header {
-                    text: T.t("overlay.header");
-                    top: 14px;
-                }
-                Card {
-                    VerticalLayout {
-                        padding-left: 16px;
-                        padding-right: 16px;
-                        padding-top: 14px;
-                        padding-bottom: 14px;
-                        spacing: 6px;
-                        Toggle {
-                            text: T.t("overlay.enabled");
-                            checked: root.overlay-enabled;
-                            toggled(on) => { root.overlay-enabled-changed(on); }
-                        }
-                        Caption {
-                            text: T.t("overlay.shortcut");
-                        }
-                        HorizontalLayout {
-                            spacing: 8px;
-                            ShortcutField {
-                                horizontal-stretch: 1;
-                                changed recording => { root.shortcut-focused = self.recording; }
-                                text: root.shortcut-text;
-                                label: T.t("overlay.shortcut");
-                            }
-                            Btn {
-                                text: T.t("overlay.reset");
-                                clicked => { root.overlay-reset(); }
-                            }
-                        }
-                        Hint {
-                            text: T.t("overlay.record.hint");
-                        }
-                        Text {
-                            text: root.overlay-status;
-                            font-size: 12px;
-                            wrap: word-wrap;
-                            color: root.overlay-status-error ? Palette.bad : Palette.offline;
-                        }
-                        Caption {
-                            text: T.t("overlay.mode");
-                        }
-                        OptionButton {
-                            text: T.t("overlay.timed");
-                            checked: root.overlay-mode == 0;
-                            clicked => { root.overlay-mode-chosen(0); }
-                        }
-                        OptionButton {
-                            text: T.t("overlay.toggle");
-                            checked: root.overlay-mode == 1;
-                            clicked => { root.overlay-mode-chosen(1); }
-                        }
-                        Caption {
-                            text: T.t("overlay.corner");
-                        }
-                        HorizontalLayout {
-                            spacing: 12px;
-                            OptionButton {
-                                text: T.t("overlay.top.left");
-                                checked: root.overlay-corner == 0;
-                                clicked => { root.overlay-corner-chosen(0); }
-                            }
-                            OptionButton {
-                                text: T.t("overlay.top.right");
-                                checked: root.overlay-corner == 1;
-                                clicked => { root.overlay-corner-chosen(1); }
-                            }
-                        }
-                        HorizontalLayout {
-                            spacing: 12px;
-                            OptionButton {
-                                text: T.t("overlay.bottom.left");
-                                checked: root.overlay-corner == 2;
-                                clicked => { root.overlay-corner-chosen(2); }
-                            }
-                            OptionButton {
-                                text: T.t("overlay.bottom.right");
-                                checked: root.overlay-corner == 3;
-                                clicked => { root.overlay-corner-chosen(3); }
-                            }
-                        }
-                        Toggle {
-                            text: T.t("overlay.names");
-                            checked: root.overlay-names;
-                            toggled(on) => { root.overlay-names-changed(on); }
-                        }
-                        HorizontalLayout {
-                            padding-top: 8px;
-                            alignment: start;
-                            Btn {
-                                text: T.t("overlay.preview");
-                                clicked => { root.overlay-preview(); }
-                            }
-                        }
-                        Hint {
-                            text: T.t("overlay.compatibility");
-                        }
-                    }
-                }
-
-                Header {
-                    text: T.t("alerts.header");
-                    top: 14px;
-                }
-                Card {
-                    VerticalLayout {
-                        padding-left: 16px;
-                        padding-right: 16px;
-                        padding-top: 14px;
-                        padding-bottom: 14px;
-                        spacing: 6px;
-                        HorizontalLayout {
-                            Text {
-                                text: T.t("alerts.low");
-                                color: Palette.text;
-                                horizontal-stretch: 1;
-                                wrap: word-wrap;
-                            }
-                            Text {
-                                text: root.low + "%";
-                                font-weight: 600;
-                                color: Palette.accent;
-                            }
-                        }
-                        StepSlider {
-                            minimum: 10;
-                            maximum: 50;
-                            label: T.t("alerts.low");
-                            value: root.low;
-                            changed(v) => { root.low-changed(v); }
-                        }
-                        HorizontalLayout {
-                            padding-top: 8px;
-                            Text {
-                                text: T.t("alerts.critical");
-                                color: Palette.text;
-                                horizontal-stretch: 1;
-                            }
-                            Text {
-                                text: root.critical + "%";
-                                font-weight: 600;
-                                color: Palette.accent;
-                            }
-                        }
-                        StepSlider {
-                            minimum: 5;
-                            maximum: 45;
-                            label: T.t("alerts.critical");
-                            value: root.critical;
-                            changed(v) => { root.critical-changed(v); }
-                        }
-                        Hint {
-                            text: T.t("alerts.critical.hint");
-                        }
-                        HorizontalLayout {
-                            padding-top: 8px;
-                            Text {
-                                text: T.t("alerts.repeat");
-                                color: Palette.text;
-                                horizontal-stretch: 1;
-                            }
-                            Text {
-                                text: root.repeat-text;
-                                font-weight: 600;
-                                color: Palette.accent;
-                            }
-                        }
-                        StepSlider {
-                            minimum: 5;
-                            maximum: 60;
-                            label: T.t("alerts.repeat");
-                            value: root.repeat;
-                            changed(v) => { root.repeat-changed(v); }
-                        }
-                        Toggle {
-                            text: T.t("alerts.sound");
-                            checked: root.sound;
-                            toggled(on) => { root.sound-changed(on); }
-                        }
-                        Toggle {
-                            text: T.t("charged.toggle");
-                            checked: root.notify-charged;
-                            toggled(on) => { root.notify-charged-changed(on); }
-                        }
-                        Hint {
-                            text: T.t("charged.hint");
-                        }
-                    }
-                }
-                HorizontalLayout {
-                    alignment: start;
-                    Btn {
-                        text: T.t("alerts.test");
-                        clicked => { root.test-alert(); }
-                    }
-                }
-
-                Header {
-                    text: T.t("devices.header");
-                    top: 14px;
-                }
-                for row in root.device-settings: DeviceSettingsView {
-                    device: row;
-                    name-edited(id, text) => { root.device-name-edited(id, text); }
-                    visible-changed(id, on) => { root.device-visible-changed(id, on); }
-                    alerts-changed(id, on) => { root.device-alerts-changed(id, on); }
-                    thresholds-changed(id, on) => { root.device-thresholds-changed(id, on); }
-                    low-changed(id, v) => { root.device-low-changed(id, v); }
-                    critical-changed(id, v) => { root.device-critical-changed(id, v); }
-                }
-
-                Header {
-                    text: T.t("updates.header");
-                    top: 6px;
-                }
-                Card {
-                    VerticalLayout {
-                        padding-left: 16px;
-                        padding-right: 16px;
-                        padding-top: 14px;
-                        padding-bottom: 14px;
-                        spacing: 8px;
-                        Text {
-                            text: root.update-status;
-                            color: Palette.text;
-                            wrap: word-wrap;
-                        }
-                        if root.update-notes != "": Hint {
-                            text: root.update-notes;
-                        }
-                        HorizontalLayout {
-                            padding-top: 4px;
-                            padding-bottom: 6px;
-                            spacing: 8px;
-                            alignment: start;
-                            if root.install-visible: Btn {
-                                accent: true;
-                                text: root.install-text;
-                                clicked => { root.install-update(); }
-                            }
-                            Btn {
-                                text: T.t("updates.check");
-                                enabled: root.check-enabled;
-                                clicked => { root.check-updates(); }
-                            }
-                        }
-                        Toggle {
-                            text: T.t("updates.auto");
-                            checked: root.auto-update;
-                            toggled(on) => { root.auto-update-changed(on); }
-                        }
-                        Hint {
-                            text: T.t("updates.auto.hint");
-                        }
-                    }
-                }
-
-                Header {
-                    text: T.t("system.header");
-                    top: 6px;
-                }
-                Card {
-                    VerticalLayout {
-                        padding-left: 16px;
-                        padding-right: 16px;
-                        padding-top: 14px;
-                        padding-bottom: 14px;
-                        spacing: 10px;
-                        Toggle {
-                            text: T.t("autostart");
-                            checked: root.autostart;
-                            toggled(on) => { root.autostart-changed(on); }
-                        }
-                        Hint {
-                            text: root.elevation-text;
-                        }
-                    }
-                }
-                HorizontalLayout {
-                    alignment: start;
-                    padding-bottom: 8px;
-                    Btn {
-                        text: T.t("open.folder");
-                        clicked => { root.open-folder(); }
-                    }
-                }
-            }
+        if (DeviceUi.renaming-id != "") {
+            root.end-rename(false);
+            return true;
         }
+        if (Drag.active) {
+            Drag.cancel();
+            return true;
+        }
+        if (overlay.shortcut-focused) {
+            keys.focus();
+            return true;
+        }
+        if (reminders.field-focused) {
+            reminders.reset-fields();
+            keys.focus();
+            return true;
+        }
+        if (root.screen == 1) {
+            // A tooltip about to show would come up over the other screen: the pointer has not left its anchor
+            Tip.cancel();
+            root.screen = 0;
+            keys.focus();
+            return true;
+        }
+        false
+    }
+    // As the window is when it opens: everything closed, typed text dropped, on the devices or on the settings
+    public function reset-screen(settings: bool) {
+        Tip.cancel();
+        DropdownList.close();
+        root.shut-menu(false);
+        root.end-rename(false);
+        Drag.cancel();
+        reminders.reset-fields();
+        root.hidden-open = false;
+        root.screen = settings ? 1 : 0;
+        root.settings-tab = 0;
+        keys.focus();
+    }
+    // The device menu closes, what its fields hold is dropped (its device is gone)
+    public function close-menu() {
+        let had-focus = menu.field-focused;
+        root.shut-menu(false);
+        if (had-focus) {
+            keys.focus();
+        }
+    }
+    public function cancel-rename() {
+        root.end-rename(false);
+    }
+    public function cancel-drag() {
+        Drag.cancel();
+    }
+    // A shortcut was taken: the field gives up the focus, so its key caps show
+    public function shortcut-recorded() {
+        keys.focus();
+    }
 
-        HorizontalLayout {
-            padding-top: 10px;
-            padding-right: 6px;
-            Text {
-                text: root.updated-text;
-                font-size: 12px;
-                color: Palette.secondary;
-                horizontal-stretch: 1;
+    // These may raise callbacks. Rust calls `deactivated` only from a timer, never while it holds the app's state;
+    // the other two are what clicks do, public for the snapshot example and the tests.
+
+    // The window lost the focus: whatever is open closes, what was typed is applied, a drag ends without a move
+    public function deactivated() {
+        // Both give the focus back to the window itself when they close the menu or end a rename, and only then: a
+        // shortcut being recorded goes on when the window comes back
+        root.close-popups();
+        Drag.cancel();
+        root.end-rename(true);
+    }
+    public function open-menu(id: string) {
+        Tip.cancel();
+        DropdownList.close();
+        root.end-rename(true);
+        root.shut-menu(true);
+        menu.reset();
+        // The menu is one layer for every device: it opens with the values of this one, without animating to them
+        DeviceUi.menu-instant = true;
+        DeviceUi.menu-id = id;
+    }
+    // The device's name becomes a field; the field fills itself in and takes the focus when it appears
+    public function start-rename(id: string) {
+        Tip.cancel();
+        root.end-rename(true);
+        root.shut-menu(true);
+        DeviceUi.renaming-id = id;
+    }
+
+    // Closes the device menu, applying what its fields hold or dropping it
+    function shut-menu(save: bool) {
+        if (DeviceUi.menu-id == "") {
+            return;
+        }
+        if (save) {
+            menu.flush();
+        } else {
+            menu.reset();
+        }
+        DeviceUi.menu-id = "";
+    }
+    // Menu, list and tooltip: gone, a level typed into the menu applied
+    function close-popups() {
+        Tip.cancel();
+        DropdownList.close();
+        if (DeviceUi.menu-id != "") {
+            root.shut-menu(true);
+            keys.focus();
+        }
+    }
+    // The name typed so far is the window's, not the field's, so this works whatever became of the field. It is
+    // over before the focus moves: the field's own loss of focus then finds no rename to save.
+    function end-rename(save: bool) {
+        if (DeviceUi.renaming-id == "") {
+            return;
+        }
+        let id = DeviceUi.renaming-id;
+        DeviceUi.renaming-id = "";
+        keys.focus();
+        if (save) {
+            root.device-renamed(id, DeviceUi.rename-text);
+        }
+    }
+    // A drag that starts ends a rename too, but the name is saved only once the drag is over: saved at once, the
+    // list's refresh could change the block under the drag (a new name moves its device in the automatic order,
+    // a device held back for its field goes to its block) and so end the drag as it starts
+    property <string> drag-renamed-id;
+    property <string> drag-renamed-text;
+    function end-rename-for-drag() {
+        if (DeviceUi.renaming-id == "") {
+            return;
+        }
+        root.drag-renamed-id = DeviceUi.renaming-id;
+        root.drag-renamed-text = DeviceUi.rename-text;
+        root.end-rename(false);
+    }
+    // From the event loop: also a drag that cancel-drag() or reset-screen() ended, while Rust holds the app's state,
+    // gets its name saved after Rust is done
+    Timer {
+        interval: 0ms;
+        running: root.drag-renamed-id != "" && !Drag.active;
+        triggered => {
+            let id = root.drag-renamed-id;
+            root.drag-renamed-id = "";
+            root.device-renamed(id, root.drag-renamed-text);
+        }
+    }
+    function open-settings() {
+        root.end-rename(true);
+        root.close-popups();
+        root.screen = 1;
+        root.settings-tab = 0;
+        keys.focus();
+    }
+
+    // The anchors of what is open move with the window's size
+    changed width => {
+        root.close-popups();
+    }
+    changed height => {
+        root.close-popups();
+    }
+
+    // Around everything: tells the tooltips where the pointer is
+    pointer := TouchArea {
+        // Escape is the window's, before whatever has the focus sees it
+        keys := FocusScope {
+            capture-key-pressed(e) => {
+                e.text == Key.Escape && root.escape() ? accept : reject
             }
-            Text {
-                text: root.version-text;
-                font-size: 12px;
-                color: Palette.secondary;
+
+            devices := DevicesScreen {
+                visible: root.screen == 0;
+                pinned: root.pinned-devices;
+                connected: root.connected-devices;
+                offline: root.offline-devices;
+                hidden: root.hidden-devices;
+                none-online: root.none-online;
+                updated-text: root.updated-text;
+                version-text: root.version-text;
+                banner-visible: root.banner-visible;
+                banner-text: root.banner-text;
+                banner-button-visible: root.banner-button-visible;
+                autostart-banner: !root.autostart && !root.autostart-banner-dismissed;
+                hidden-open <=> root.hidden-open;
+                refresh => { root.refresh(); }
+                open-settings => { root.open-settings(); }
+                install-update => { root.install-update(); }
+                enable-autostart => { root.autostart-changed(true); }
+                dismiss-autostart-banner => { root.dismiss-autostart-banner(); }
+                open-menu(id) => { root.open-menu(id); }
+                rename-done => { root.end-rename(true); }
+                drag-started => {
+                    Tip.cancel();
+                    root.end-rename-for-drag();
+                }
+                device-moved(id, onto) => { root.device-moved(id, onto); }
+                device-shown(id) => { root.device-hidden-changed(id, false); }
+            }
+            SettingsScreen {
+                visible: root.screen == 1;
+                tab: root.settings-tab;
+                back => {
+                    Tip.cancel();
+                    root.screen = 0;
+                    keys.focus();
+                }
+                // A field of the page that goes loses the focus because it is hidden, and commits; then the window
+                // holds the focus, or no key would reach anyone
+                tab-clicked(i) => {
+                    Tip.cancel();
+                    root.settings-tab = i;
+                    keys.focus();
+                }
+                GeneralPage {
+                    visible: root.settings-tab == 0;
+                    autostart: root.autostart;
+                    elevation-text: root.elevation-text;
+                    language: root.language;
+                    update-status: root.update-status;
+                    update-checked-text: root.update-checked-text;
+                    update-notes: root.update-notes;
+                    install-visible: root.install-visible;
+                    install-text: root.install-text;
+                    check-enabled: root.check-enabled;
+                    auto-update: root.auto-update;
+                    autostart-changed(on) => { root.autostart-changed(on); }
+                    language-chosen(language) => { root.language-chosen(language); }
+                    install-update => { root.install-update(); }
+                    check-updates => { root.check-updates(); }
+                    auto-update-changed(on) => { root.auto-update-changed(on); }
+                    open-folder => { root.open-folder(); }
+                    suggest-improvement => { root.suggest-improvement(); }
+                }
+                reminders := RemindersPage {
+                    visible: root.settings-tab == 1;
+                    low: root.low;
+                    critical: root.critical;
+                    repeat: root.repeat;
+                    sound: root.sound;
+                    notify-charged: root.notify-charged;
+                    low-changed(v) => { root.low-changed(v); }
+                    critical-changed(v) => { root.critical-changed(v); }
+                    repeat-changed(v) => { root.repeat-changed(v); }
+                    sound-changed(on) => { root.sound-changed(on); }
+                    notify-charged-changed(on) => { root.notify-charged-changed(on); }
+                    test-alert => { root.test-alert(); }
+                }
+                overlay := OverlayPage {
+                    visible: root.settings-tab == 2;
+                    overlay-enabled: root.overlay-enabled;
+                    shortcut-keys: root.shortcut-keys;
+                    shortcut-text: root.shortcut-text;
+                    shortcut-error: root.shortcut-error;
+                    overlay-mode: root.overlay-mode;
+                    overlay-corner: root.overlay-corner;
+                    overlay-names: root.overlay-names;
+                    overlay-enabled-changed(on) => { root.overlay-enabled-changed(on); }
+                    overlay-mode-chosen(mode) => { root.overlay-mode-chosen(mode); }
+                    overlay-corner-chosen(corner) => { root.overlay-corner-chosen(corner); }
+                    overlay-names-changed(on) => { root.overlay-names-changed(on); }
+                    overlay-reset => { root.overlay-reset(); }
+                    overlay-preview => { root.overlay-preview(); }
+                }
+            }
+
+            // The layers, last: above both screens, outside every scroll view, first to get pointer events.
+            // The device being dragged follows the pointer up and down inside the list's frame and, as in the
+            // mockup, stands 12px to the right of its place. Its data is read from its block by index: a block
+            // can't change under a drag (Rust cancels the drag first).
+            if Drag.active: DeviceView {
+                x: Drag.card-x + 12px;
+                y: max(devices.frame-y, min(devices.frame-y + devices.frame-height - self.height, Drag.top));
+                width: Drag.card-width;
+                height: Drag.card-height;
+                item: Drag.list == 0 ? root.pinned-devices[Drag.source]
+                    : Drag.list == 1 ? root.connected-devices[Drag.source]
+                    : root.offline-devices[Drag.source];
+                as-row: Drag.list == 2;
+                lifted: true;
+                drop-shadow-offset-y: 12px;
+                drop-shadow-blur: 28px;
+                drop-shadow-color: rgba(0, 0, 0, 0.55);
+            }
+            menu := DeviceMenu {
+                general-low: root.low;
+                general-critical: root.critical;
+                dismiss => {
+                    root.shut-menu(true);
+                    keys.focus();
+                }
+                rename => { root.start-rename(DeviceUi.menu-id); }
+                pin-toggled => {
+                    let id = DeviceUi.menu-id;
+                    let pinned = DeviceUi.menu-device.pinned;
+                    root.shut-menu(true);
+                    keys.focus();
+                    root.device-pinned-changed(id, !pinned);
+                }
+                hide => {
+                    let id = DeviceUi.menu-id;
+                    root.shut-menu(true);
+                    keys.focus();
+                    root.device-hidden-changed(id, true);
+                }
+                // Turned off, the levels block closes: a level field that has the focus gives it up first, and
+                // applies what it holds as it does
+                alerts-toggled => {
+                    let alerts = DeviceUi.menu-device.alerts;
+                    if (alerts && self.field-focused) {
+                        keys.focus();
+                    }
+                    DeviceUi.menu-instant = false;
+                    root.device-alerts-changed(DeviceUi.menu-id, !alerts);
+                }
+                low-changed(v) => {
+                    DeviceUi.menu-instant = false;
+                    root.device-low-changed(DeviceUi.menu-id, v);
+                }
+                critical-changed(v) => {
+                    DeviceUi.menu-instant = false;
+                    root.device-critical-changed(DeviceUi.menu-id, v);
+                }
+                // A level being typed is dropped: applied as its field loses the focus later, it would give the
+                // device its own levels again
+                levels-reset => {
+                    if (self.field-focused) {
+                        self.reset();
+                        keys.focus();
+                    }
+                    DeviceUi.menu-instant = false;
+                    root.device-levels-reset(DeviceUi.menu-id);
+                }
+            }
+            DropdownLayer { }
+            tips := TipLayer {
+                pointer-inside: pointer.has-hover;
+                pointer-x: pointer.mouse-x;
+                pointer-y: pointer.mouse-y;
             }
         }
     }
