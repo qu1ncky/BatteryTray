@@ -409,11 +409,9 @@ fn connect(ui: &MainWindow) {
         let _ = std::process::Command::new("explorer.exe").arg(crate::log::folder()).spawn();
     });
     ui.on_suggest_improvement(|| {
-        use std::os::windows::process::CommandExt;
         let url = feedback::issue_url(&Version::current().to_string(), win::windows_build(), loc::current());
-        // Explorer hands the address to the shell, so the browser runs with the user's own rights also when this app
-        // runs elevated. Quoted as one field: Explorer splits its command line at commas and equals signs
-        let _ = std::process::Command::new("explorer.exe").raw_arg(format!("\"{url}\"")).spawn();
+        // The shell is another process: the window doesn't wait for it
+        std::thread::spawn(move || feedback::open(&url));
     });
     ui.on_autostart_changed(|on| {
         with_app(|a| a.set_autostart(on));
