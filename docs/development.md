@@ -46,10 +46,10 @@ version and writes the crates' licenses with [cargo-about](https://github.com/Em
   every HID collection. It reads the app's `state.json` but never writes it, and logs to
   `%LOCALAPPDATA%\BatteryTray\rust-core`.
 - `cargo run --example snapshot -- <folder> [ru|en|zh] [scale]` - renders the windows with sample data to PNG files,
-  off screen, to check a layout without running the app: the device list (with the update banner; a device's menu, a
-  smaller one, a name being edited, the hidden devices shown, and the empty list with the autostart banner), each
-  settings tab (and the update card with a newer version), the reminder and the overlay. A drag, a tooltip and an open
-  dropdown need a real pointer and are not drawn.
+  off screen, to check a layout without running the app: the device list (with the update banner, and without it for
+  the README; a device's menu, a smaller one, a name being edited, the hidden devices shown, and the empty list with
+  the autostart banner), each settings tab (and the update card with a newer version), the reminder and the overlay. A
+  drag, a tooltip and an open dropdown need a real pointer and are not drawn.
 - `cargo run --example popup_probe` - opens the reminder and the overlay as the app does and prints where their windows
   are every 5 ms, with their extended styles: for catching a popup that jumps, can be clicked, takes focus or doesn't
   follow its contents' size.

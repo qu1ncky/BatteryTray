@@ -201,6 +201,11 @@ fn main() {
     let (_main, window) = open(&rows);
     render(&window, scale, size, &folder.join("main-devices.png"));
 
+    // The README's picture: the devices with no update banner
+    let (main, window) = open(&rows);
+    main.set_banner_visible(false);
+    render(&window, scale, size, &folder.join("readme.png"));
+
     // The menu of a pinned device with its own levels: the levels and "back to the general ones" are open
     let (main, window) = open(&rows);
     lay_out(&window, scale, size);
