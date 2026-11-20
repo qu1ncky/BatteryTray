@@ -14,13 +14,13 @@ See how much battery your wireless headset, mouse, keyboard and controller have 
 ## Features
 
 - **Battery level in the tray** — the icon shows the device that most needs charging: green, yellow below its reminder level, red below its critical level, blue while charging. Hover it to see every device.
-- **All devices in one window** — connected ones as cards with their percentage, the rest with the last known level and when it was seen.
-- **Battery overlay** — enable the shortcut in **Settings → Battery overlay**, then press **Ctrl+Alt+V** to see connected, visible devices for five seconds on the active app's monitor. Press again to restart the timer, or choose toggle mode to show and hide it with the same shortcut. You can change the shortcut, choose a corner, and preview the overlay before enabling it. Names appear automatically for devices of the same type, and you can always show them. Supports desktop apps and borderless games without taking focus or mouse input.
+- **All devices in one window** — connected ones as cards with their percentage, the rest with the last known level and when it was seen. Each device's **⋯** menu renames it, pins it to the top of the list or hides it under "Hidden"; drag a card by its grip to change the order (the overlay and the tray tooltip follow it).
+- **Battery overlay** — enable the shortcut in **Settings (gear) → Overlay**, then press **Ctrl+Alt+V** to see connected, visible devices for five seconds on the active app's monitor. Press again to restart the timer, or choose toggle mode to show and hide it with the same shortcut. You can change the shortcut, choose a corner, and preview the overlay before enabling it. Names appear automatically for devices of the same type, and you can always show them. Supports desktop apps and borderless games without taking focus or mouse input.
 - **Low battery reminder that can't be missed** — its own always-on-top window in the corner, not a toast: Do Not Disturb doesn't hide it, it doesn't time out and it doesn't steal focus from a game. "Remind me in N min" or "Don't remind me until it's charged"; at the critical level it comes back even if snoozed.
-- **A level for every device** — the headset that drains fastest can remind you at 40% while the mouse waits for 15%: each device can have its own reminder and critical levels, and follows the global ones until you set them.
+- **A level for every device** — the headset that drains fastest can remind you at 40% while the mouse waits for 15%: each device can have its own reminder and critical levels (in its **⋯** menu), and follows the global ones until you set them.
 - **Charging complete notification** — when a device that can tell finishes charging with the cable still in.
 - **No made-up percentages** — when a device can't report its level while charging, you see a charging sign instead of a stale number; estimates are marked with "≈".
-- **English, Russian and Chinese** — follows the Windows language, switch any time in Settings.
+- **English, Russian and Chinese** — follows the Windows language, switch any time in Settings → General.
 - **Updates itself** from GitHub releases (SHA-256 checked), quietly, while its windows are closed.
 - **Light** — one ~10 MB exe that needs about 8 MB of memory in the tray; nothing else to install.
 - Starts with Windows, lives in the tray, never changes anything on your devices.
@@ -80,7 +80,7 @@ It installs to `C:\Program Files\BatteryTray` and starts at sign-in through a Ta
 
 **Windows may warn about an unknown app** because the exe isn't code-signed: click "More info" → "Run anyway".
 
-**Portable use:** you can also just run `BatteryTray.exe` from anywhere; start with Windows can be turned on in Settings → System (with normal rights).
+**Portable use:** you can also just run `BatteryTray.exe` from anywhere; start with Windows can be turned on in Settings → General (with normal rights), or with "Enable" on the "BatteryTray doesn't start with Windows" banner at the top of the device list (shown until you dismiss it or turn autostart off in Settings).
 
 ## FAQ
 
@@ -110,7 +110,7 @@ A diagnostic poll helps too: `"C:\Program Files\BatteryTray\BatteryTray.exe" --d
 
 ## Languages
 
-English, Russian and Chinese. The app follows the Windows display language (Russian on a Russian Windows, Chinese on a Chinese one, English otherwise); pick another one any time in Settings → Language — it switches at once, no restart. Translations live in [`src/loc.rs`](src/loc.rs); corrections and new languages are welcome.
+English, Russian and Chinese. The app follows the Windows display language (Russian on a Russian Windows, Chinese on a Chinese one, English otherwise); pick another one any time in Settings → General → Language — it switches at once, no restart. Translations live in [`src/loc.rs`](src/loc.rs); corrections and new languages are welcome.
 
 ## Updates
 
@@ -119,7 +119,7 @@ Half a minute after start and then every 6 hours the app looks at the latest rel
 - **with automatic updates** (the default) it downloads `BatteryTray.exe` from the release, checks its SHA-256 against the digest GitHub publishes and the version inside the file, swaps its own exe and restarts — only while its windows are closed;
 - **without them**, or when writing to Program Files needs admin rights, it tells you once, and the "Update" button installs it (with a UAC prompt in the second case).
 
-Everything is in Settings → Updates: status, what's new, "Check now" and the automatic updates switch.
+Everything is in Settings → General → Updates: status, what's new, "Check now" and the automatic updates switch.
 
 ## How it works
 
@@ -141,7 +141,7 @@ Everything is in Settings → Updates: status, what's new, "Check now" and the a
 | `providers/xinput.rs` | `XInputGetBatteryInformation`: 4 levels → approximate percentage. Skips Bluetooth controllers, whose exact level comes from Windows. |
 | `providers/bluetooth.rs` | The `DEVPKEY_Bluetooth_Battery` device property (what Settings → Bluetooth shows), only while `ConnectionStatus = Connected`. |
 
-Files in `%LOCALAPPDATA%\BatteryTray`: `settings.json` (reminder levels, names, hidden devices, language), `state.json` (last known levels), `log.txt` (connections, level changes, reminders). If a hand edit leaves a mistake in `settings.json`, the app keeps the file as it was in `settings.json.bak`: a value of the wrong type just goes back to its default, while a file that is no longer valid JSON (a missing comma, a stray quote) starts over from the defaults.
+Files in `%LOCALAPPDATA%\BatteryTray`: `settings.json` (reminder levels, names, pinned and hidden devices, their order, language), `state.json` (last known levels), `log.txt` (connections, level changes, reminders). If a hand edit leaves a mistake in `settings.json`, the app keeps the file as it was in `settings.json.bak`: a value of the wrong type just goes back to its default, while a file that is no longer valid JSON (a missing comma, a stray quote) starts over from the defaults.
 
 A new device family is one module in [`src/providers/`](src/providers) implementing the `Provider` trait: poll the hardware, say when to poll again. More on the code in [docs/development.md](docs/development.md).
 
