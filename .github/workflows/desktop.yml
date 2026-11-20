@@ -2,7 +2,8 @@ name: Desktop
 
 # The release exe on a Windows with a desktop, through what happens on a user's PC: the last C# release updates itself
 # to it, it updates itself, install, the window, uninstall (.github/scripts/desktop-test.ps1). On Windows Server 2022,
-# which has Windows 10's shell and fonts, and on Server 2025, which has Windows 11's.
+# which has Windows 10's shell and fonts, and on Server 2025, which has Windows 11's. The exe is handed out too, for
+# trying a build before it is released.
 on:
   workflow_dispatch:
   push:
@@ -79,3 +80,8 @@ jobs:
         with:
           name: desktop-${{ matrix.os }}
           path: ${{ runner.temp }}/bt/out
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: BatteryTray-${{ matrix.os }}
+          path: ${{ runner.temp }}/bt/this/BatteryTray.exe
