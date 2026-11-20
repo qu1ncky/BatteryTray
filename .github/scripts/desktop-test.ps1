@@ -342,6 +342,11 @@ while ($true) {
             New-Item -ItemType Directory -Force -Path $folder | Out-Null
             & (Join-Path $Examples 'snapshot.exe') $folder $language 1
             Assert-That ($LASTEXITCODE -eq 0) "drawn in $language"
+            # At 150%, as the README's pictures are
+            $folder = Join-Path $Out "windows-$language-150"
+            New-Item -ItemType Directory -Force -Path $folder | Out-Null
+            & (Join-Path $Examples 'snapshot.exe') $folder $language 1.5
+            Assert-That ($LASTEXITCODE -eq 0) "drawn in $language at 150%"
         }
         $probe = Join-Path $Out 'popups.txt'
         $p = Start-Process (Join-Path $Examples 'popup_probe.exe') -PassThru -RedirectStandardOutput $probe -NoNewWindow

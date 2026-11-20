@@ -1,0 +1,1120 @@
+// The devices screen: a card for each pinned or connected device, a row for each one without connection, the
+// hidden ones behind "Hidden", the banners above them; and the device menu. Devices are reordered within their
+// block by dragging the grip. Rust updates the four lists row by row, so a row that stays keeps its element: an
+// open menu, a name being typed, a drag in progress survive a refresh.
+
+import { ScrollView } from "std-widgets.slint";
+import { Palette, T, Glyph, Card, SectionHeader, Btn } from "theme.slint";
+import { SwitchMark, TipButton, NumberField, Divider, Collapsible, Grip, DashedFrame, ConnectedDot, PinMark, HideGlyph } from "controls.slint";
+
+// One device as the window shows it, in any of the lists and in the device menu
+export struct DeviceItem {
+    // The device's key in the settings
+    id: string,
+    // The user's name for it, else its own
+    name: string,
+    glyph: string,
+    subtitle: string,
+    connected: bool,
+    pinned: bool,
+    level-text: string,
+    color: color,
+    charging: bool,
+    // Charging, but the level can't be read right now: no number, a dimmed full bar instead
+    indeterminate: bool,
+    fill: float,
+    // What the name field starts with ("" when the user never named it), and its placeholder
+    custom-name: string,
+    own-name: string,
+    // "<via> · <own name>": the subtitle while the name is being edited
+    source: string,
+    // The device menu's switch and levels: the levels in effect, and whether they are the device's own
+    alerts: bool,
+    low: int,
+    critical: int,
+    own-levels: bool,
+}
+
+// What is going on in the device list, by device id and not in a row: after a reorder a row shows another
+// device. One for the window.
+export global DeviceUi {
+    // The device whose menu is open ("" when none), its "⋯" button in window coordinates, and its data
+    in-out property <string> menu-id;
+    in-out property <length> anchor-x;
+    in-out property <length> anchor-y;
+    in-out property <length> anchor-width;
+    in-out property <length> anchor-height;
+    in-out property <DeviceItem> menu-device;
+    // The menu shows the values of the device it opens for at once: it is one layer for every device, so without
+    // this its switch and blocks would slide from the previous device's values to these
+    in-out property <bool> menu-instant;
+    // The device whose name is being edited ("" when none), and the text typed so far: the window's, so that it
+    // survives anything that happens to the row
+    in-out property <string> renaming-id;
+    in-out property <string> rename-text;
+}
+
+// The drag in progress. One for the window: the cells of every block read it, and so does the lifted copy.
+export global Drag {
+    // The block a device is dragged in (0 pinned, 1 connected, 2 without connection; -1 nothing is dragged), the
+    // dragged row, and the position it would take
+    in-out property <int> list: -1;
+    in-out property <int> source: -1;
+    in-out property <int> target: -1;
+    // In window coordinates: the pointer; the dragged device's left edge and its size when it was picked up
+    in-out property <length> pointer-y;
+    in-out property <length> card-x;
+    in-out property <length> card-width;
+    in-out property <length> card-height;
+    // From the device's top edge to the pointer, at the press
+    in-out property <length> grab-offset;
+    out property <bool> active: self.list >= 0;
+    // The lifted copy's top edge, in window coordinates
+    out property <length> top: self.pointer-y - self.grab-offset;
+
+    public function begin(
+        list: int, index: int, x: length, width: length, height: length, pointer: length, grab: length) {
+        self.source = index;
+        self.target = index;
+        self.card-x = x;
+        self.card-width = width;
+        self.card-height = height;
+        self.pointer-y = pointer;
+        self.grab-offset = grab;
+        self.list = list;
+    }
+    // Ends the drag and moves nothing: Escape, the window losing the focus, the block changing under the drag
+    public function cancel() {
+        self.list = -1;
+        self.source = -1;
+        self.target = -1;
+    }
+}
+
+// One device: a card (pinned and connected devices) or a "Not connected" row, also the lifted copy that follows the
+// pointer during a drag. The card of a device without connection is compact: no level, no bar.
+export component DeviceView inherits Rectangle {
+    in property <DeviceItem> item;
+    // A row of the "Not connected" block rather than a card
+    in property <bool> as-row;
+    // The copy that follows the pointer while the device is dragged
+    in property <bool> lifted;
+    // The pointer is over the grip
+    in property <bool> grip-lit;
+    callback menu-clicked();
+    // Enter in the name field, or the field lost the focus
+    callback rename-done();
+    background: root.lifted ? Palette.control : root.as-row ? transparent : Palette.card;
+    border-width: root.lifted || !root.as-row ? 1px : 0px;
+    border-color: root.lifted ? Palette.accent
+        : root.renaming || root.menu-open ? Palette.popup-stroke : Palette.stroke;
+    border-radius: 8px;
+
+    property <bool> renaming: !root.lifted && DeviceUi.renaming-id != "" && DeviceUi.renaming-id == root.item.id;
+    property <bool> menu-open: !root.lifted && DeviceUi.menu-id != "" && DeviceUi.menu-id == root.item.id;
+    property <bool> card-level: !root.as-row && root.item.connected;
+    // The menu hangs under the "⋯" button and shows this device's data: both are told to it while it is open, as
+    // they change (the list scrolls, a banner comes, a refresh changes the row)
+    property <Point> menu-anchor: root.menu-open ? more.absolute-position : { x: 0px, y: 0px };
+    changed menu-open => {
+        root.report-menu();
+    }
+    changed menu-anchor => {
+        root.report-menu();
+    }
+    changed item => {
+        root.report-menu();
+    }
+    init => {
+        root.report-menu();
+    }
+    function report-menu() {
+        if (root.menu-open) {
+            DeviceUi.anchor-x = more.absolute-position.x;
+            DeviceUi.anchor-y = more.absolute-position.y;
+            DeviceUi.anchor-width = more.width;
+            DeviceUi.anchor-height = more.height;
+            DeviceUi.menu-device = root.item;
+        }
+    }
+
+    HorizontalLayout {
+        padding-top: root.as-row ? 6px : 15px;
+        padding-right: root.as-row ? 10px : 17px;
+        padding-bottom: root.as-row ? 6px : 15px;
+        padding-left: 11px;
+        spacing: 12px;
+        VerticalLayout {
+            alignment: center;
+            Grip {
+                ink: root.lifted || root.grip-lit ? Palette.text : Palette.offline;
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            spacing: 12px;
+            horizontal-stretch: 1;
+            // The "⋯" button stands out 6px to the right on a card, as in the mockup; the bar keeps the full width
+            HorizontalLayout {
+                padding-right: root.as-row ? 0px : -6px;
+                VerticalLayout {
+                    alignment: center;
+                    Rectangle {
+                        width: 38px;
+                        height: root.as-row ? 20px : 24px;
+                        Glyph {
+                            x: 1px;
+                            y: 1px;
+                            width: self.font-size;
+                            height: self.font-size;
+                            text: root.item.glyph;
+                            font-size: root.as-row ? 18px : 22px;
+                            color: root.item.connected ? Palette.text : Palette.offline;
+                        }
+                        if root.item.connected: ConnectedDot {
+                            x: 16px;
+                            y: 15px;
+                            ring: root.lifted ? Palette.control : Palette.card;
+                        }
+                    }
+                }
+                VerticalLayout {
+                    alignment: center;
+                    spacing: root.renaming ? 6px : root.as-row ? 0px : 2px;
+                    horizontal-stretch: 1;
+                    if !root.renaming: HorizontalLayout {
+                        alignment: start;
+                        spacing: 6px;
+                        Text {
+                            text: root.item.name;
+                            font-size: root.as-row ? 13px : 15px;
+                            font-weight: root.as-row ? 400 : 600;
+                            color: root.item.connected ? Palette.text : Palette.dim-text;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+                        if root.item.pinned: VerticalLayout {
+                            alignment: center;
+                            PinMark {
+                                ink: root.item.connected ? Palette.text : Palette.offline;
+                            }
+                        }
+                    }
+                    // The field takes the name's place: its text starts where the name did, its frame reaches
+                    // past it on every side
+                    if root.renaming: Rectangle {
+                        height: 24px;
+                        Rectangle {
+                            x: -9px;
+                            y: -4px;
+                            width: parent.width;
+                            height: 28px;
+                            border-radius: 4px;
+                            border-width: 1px;
+                            border-color: Palette.accent;
+                            background: Palette.input;
+                            // A press on the frame around the text is the field's too (the window would take the
+                            // focus, and the rename would end): the caret goes to the nearer end
+                            TouchArea {
+                                mouse-cursor: text;
+                                pointer-event(e) => {
+                                    if (e.kind == PointerEventKind.down && e.button == PointerEventButton.left) {
+                                        input.focus();
+                                        if (self.mouse-x < self.width / 2) {
+                                            input.set-selection-offsets(0, 0);
+                                        } else {
+                                            input.select-all();
+                                            input.clear-selection();
+                                        }
+                                    }
+                                }
+                            }
+                            Text {
+                                x: 9px;
+                                width: parent.width - 18px;
+                                height: parent.height;
+                                text: root.item.own-name;
+                                font-size: input.font-size;
+                                font-weight: input.font-weight;
+                                color: Palette.secondary;
+                                vertical-alignment: center;
+                                overflow: elide;
+                                // An input method composing into the empty field counts as text
+                                visible: input.text == "" && input.preedit-text == "";
+                                accessible-role: none;
+                            }
+                            // A name longer than the field scrolls in it, as in the standard line edit: the caret
+                            // stays in sight
+                            Rectangle {
+                                x: 9px;
+                                width: parent.width - 18px;
+                                height: parent.height;
+                                clip: true;
+                                input := TextInput {
+                                    property <length> scroll;
+                                    x: min(0px, max(parent.width - self.width, self.scroll));
+                                    width: max(parent.width, self.preferred-width + self.text-cursor-width);
+                                    height: parent.height;
+                                    text <=> DeviceUi.rename-text;
+                                    font-size: root.as-row ? 13px : 15px;
+                                    font-weight: root.as-row ? 400 : 600;
+                                    color: Palette.text;
+                                    vertical-alignment: center;
+                                    selection-background-color: Palette.accent;
+                                    selection-foreground-color: #000000;
+                                    accessible-label: T.t("device.name");
+                                    accessible-placeholder-text: root.item.own-name;
+                                    init => {
+                                        DeviceUi.rename-text = root.item.custom-name;
+                                        self.focus();
+                                        self.select-all();
+                                    }
+                                    cursor-position-changed(pos) => {
+                                        if (pos.x + self.scroll < 0) {
+                                            self.scroll = -pos.x;
+                                        } else if (pos.x + self.scroll > parent.width - self.text-cursor-width) {
+                                            self.scroll = parent.width - self.text-cursor-width - pos.x;
+                                        }
+                                    }
+                                    accepted => { root.rename-done(); }
+                                    changed has-focus => {
+                                        if (!self.has-focus) {
+                                            root.rename-done();
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Text {
+                        text: root.renaming ? root.item.source : root.item.subtitle;
+                        font-size: 12px;
+                        color: Palette.secondary;
+                        wrap: word-wrap;
+                    }
+                }
+                if root.card-level: HorizontalLayout {
+                    padding-left: 12px;
+                    spacing: 4px;
+                    alignment: end;
+                    Glyph {
+                        visible: root.item.charging;
+                        width: root.item.charging ? self.preferred-width : 0;
+                        text: "\u{E945}";
+                        font-size: root.item.indeterminate ? 26px : 16px;
+                        color: root.item.color;
+                    }
+                    Text {
+                        text: root.item.level-text;
+                        font-size: 26px;
+                        font-weight: 600;
+                        color: root.item.color;
+                        vertical-alignment: center;
+                    }
+                }
+                VerticalLayout {
+                    alignment: center;
+                    padding-left: 6px;
+                    more := TipButton {
+                        width: 28px;
+                        height: 28px;
+                        glyph: "\u{E712}";
+                        glyph-size: 14px;
+                        secondary: true;
+                        active: root.menu-open;
+                        tip: T.t("device.menu");
+                        accessible-text: T.t("device.menu") + ": " + root.item.name;
+                        clicked => { root.menu-clicked(); }
+                    }
+                }
+            }
+            if root.card-level: Rectangle {
+                height: 4px;
+                border-radius: 2px;
+                background: Palette.track;
+                Rectangle {
+                    x: 0;
+                    width: parent.width * (root.item.indeterminate ? 1 : root.item.fill);
+                    border-radius: 2px;
+                    background: root.item.color;
+                    opacity: root.item.indeterminate ? 0.45 : 1;
+                }
+            }
+        }
+    }
+}
+
+// One device of a block that can be reordered: the device, the grip area that drags it, and the placeholder that
+// stands in its place while it is lifted. The cells of one block are alone in a layout, each with
+// `layout-order: self.position`: nothing is done to the model during a drag, every cell works out where it is for
+// the moment, and the layout itself opens the gap. On release the block says "row `from` goes to `to`" once.
+component DragCell inherits Rectangle {
+    in property <DeviceItem> item;
+    in property <bool> as-row;
+    // Which block this is, which row of it, and how many rows it has
+    in property <int> list: -1;
+    in property <int> index;
+    in property <int> count;
+    // Where this cell is for the moment: its own row, or one up or down to make room for the dragged one
+    out property <int> position: !root.in-drag ? root.index
+        : root.lifted ? Drag.target
+        : Drag.source < root.index && root.index <= Drag.target ? root.index - 1
+        : Drag.target <= root.index && root.index < Drag.source ? root.index + 1
+        : root.index;
+    // A device was picked up
+    callback picked();
+    callback dropped(from: int, to: int);
+    // The wheel was turned during the drag
+    callback wheel(delta: length);
+    callback menu-clicked();
+    callback rename-done();
+    // As high as the device, lifted or not, so nothing else moves when it is picked up
+    height: view.preferred-height;
+
+    property <bool> in-drag: Drag.active && Drag.list == root.list;
+    property <bool> lifted: root.in-drag && Drag.source == root.index;
+    // The lifted copy's leading edge has passed this cell's middle: the dragged row takes this cell's position.
+    // Edge against middle, and not middle against middle: after the two have changed places the edge is a spacing
+    // away from the middle it passed, so cards of different heights can't flip back and forth.
+    property <length> middle: self.absolute-position.y + self.height / 2;
+    property <bool> passed: root.in-drag && !root.lifted
+        && ((root.position > Drag.target && Drag.top + Drag.card-height > root.middle)
+            || (root.position < Drag.target && Drag.top < root.middle));
+    changed passed => {
+        if (self.passed) {
+            Drag.target = self.position;
+        }
+    }
+    // The dragged row's data may change in place during the drag (a refresh): the lifted copy keeps its size
+    changed height => {
+        if (self.lifted) {
+            Drag.card-height = self.height;
+        }
+    }
+    // A drag does not outlive a change of its block: rows added or removed, or all of them made anew
+    changed count => {
+        if (self.in-drag) {
+            Drag.cancel();
+        }
+    }
+    init => {
+        if (self.in-drag) {
+            Drag.cancel();
+        }
+    }
+    function finish(move: bool) {
+        if (!root.lifted) {
+            return;
+        }
+        if (move && Drag.target != Drag.source) {
+            root.dropped(Drag.source, Drag.target);
+        }
+        Drag.cancel();
+    }
+
+    if root.lifted: Rectangle {
+        border-radius: 8px;
+        background: rgba(96, 205, 255, 0.06);
+        DashedFrame { }
+    }
+    view := DeviceView {
+        item: root.item;
+        as-row: root.as-row;
+        opacity: root.lifted ? 0 : 1;
+        grip-lit: touch.has-hover && !Drag.active;
+        menu-clicked => { root.menu-clicked(); }
+        rename-done => { root.rename-done(); }
+    }
+    // The grip: the only place a drag starts from
+    touch := TouchArea {
+        x: 11px;
+        y: (parent.height - self.height) / 2;
+        width: 12px;
+        height: 28px;
+        mouse-cursor: Drag.active ? grabbing : grab;
+        accessible-role: button;
+        accessible-label: T.t("device.drag") + ": " + root.item.name;
+        pointer-event(e) => {
+            if (e.kind == PointerEventKind.down) {
+                // Inside the grip only: an area whose earlier press never ended still gets the next press,
+                // wherever it lands
+                if (e.button == PointerEventButton.left
+                    && self.mouse-x >= 0 && self.mouse-x <= self.width
+                    && self.mouse-y >= 0 && self.mouse-y <= self.height) {
+                    Drag.begin(root.list, root.index, root.absolute-position.x, root.width, root.height,
+                        self.absolute-position.y + self.mouse-y, self.y + self.mouse-y);
+                    root.picked();
+                }
+            } else if (e.kind == PointerEventKind.up) {
+                // Another button released during the drag ends this area's hold on the pointer without a word
+                // about the left one: give up then
+                root.finish(e.button == PointerEventButton.left);
+            } else if (e.kind == PointerEventKind.cancel) {
+                root.finish(false);
+            }
+        }
+        moved => {
+            // Only here are the area's position and the pointer's position in it of the same moment
+            if (root.lifted) {
+                Drag.pointer-y = self.absolute-position.y + self.mouse-y;
+            }
+        }
+        scroll-event(e) => {
+            // A pressed area gets the wheel instead of the scroll view
+            if (root.lifted) {
+                root.wheel(e.delta-y);
+                return accept;
+            }
+            reject
+        }
+        // However the press ended, the device is not left hanging
+        changed pressed => {
+            if (!self.pressed) {
+                root.finish(false);
+            }
+        }
+    }
+}
+
+// A hidden device under "Hidden": no grip and no menu, its icon in line with the icons above
+component HiddenRowView inherits Rectangle {
+    in property <DeviceItem> item;
+    callback shown();
+    HorizontalLayout {
+        padding-top: 2px;
+        padding-right: 16px;
+        padding-bottom: 6px;
+        padding-left: 35px;
+        VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: 38px;
+                height: 20px;
+                Glyph {
+                    x: 1px;
+                    y: 1px;
+                    width: self.font-size;
+                    height: self.font-size;
+                    text: root.item.glyph;
+                    font-size: 18px;
+                    color: Palette.offline;
+                }
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            horizontal-stretch: 1;
+            Text {
+                text: root.item.name;
+                color: Palette.dim-text;
+                overflow: elide;
+            }
+            Text {
+                text: root.item.subtitle;
+                font-size: 12px;
+                color: Palette.secondary;
+                wrap: word-wrap;
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            Btn {
+                height: 28px;
+                padding-x: 12px;
+                text: T.t("device.show");
+                accessible-text: T.t("device.show") + ": " + root.item.name;
+                clicked => { root.shown(); }
+            }
+        }
+    }
+}
+
+// "Hidden · N": opens and closes the list of hidden devices
+component HiddenToggle inherits Rectangle {
+    in property <int> count;
+    in-out property <bool> open;
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-expandable: true;
+    accessible-expanded: root.open;
+    accessible-action-default => { root.open = !root.open; }
+    accessible-action-expand => { root.open = !root.open; }
+    property <string> label: T.t("hidden.header") + " · " + root.count;
+    property <color> ink: root.open || touch.has-hover ? Palette.text : Palette.secondary;
+    HorizontalLayout {
+        padding-top: 6px;
+        padding-right: 8px;
+        padding-bottom: 6px;
+        padding-left: 2px;
+        spacing: 6px;
+        Text {
+            text: root.label;
+            font-size: 12px;
+            font-weight: 600;
+            color: root.ink;
+            vertical-alignment: center;
+            accessible-role: none;
+        }
+        Glyph {
+            width: 12px;
+            text: root.open ? "\u{E70E}" : "\u{E70D}";
+            font-size: 10px;
+            color: root.ink;
+            horizontal-alignment: center;
+        }
+    }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.open = !root.open; }
+    }
+}
+
+// A block of the list that steps back while a device of another block is dragged: the window's colour at half
+// strength laid over it looks like the whole block at half opacity, which `opacity` itself doesn't give
+component Dimmable inherits Rectangle {
+    in property <bool> dimmed;
+    @children
+    Rectangle {
+        visible: root.dimmed;
+        background: Palette.scrim;
+    }
+}
+
+export component DevicesScreen inherits Rectangle {
+    in property <[DeviceItem]> pinned;
+    in property <[DeviceItem]> connected;
+    in property <[DeviceItem]> offline;
+    in property <[DeviceItem]> hidden;
+    in property <bool> none-online;
+    in property <string> updated-text;
+    in property <string> version-text;
+    in property <bool> banner-visible;
+    in property <string> banner-text;
+    in property <bool> banner-button-visible;
+    in property <bool> autostart-banner;
+    in-out property <bool> hidden-open;
+    // The list's frame in window coordinates: the lifted copy stays inside it
+    out property <length> frame-y: scroll.absolute-position.y;
+    out property <length> frame-height: scroll.height;
+    callback refresh();
+    callback open-settings();
+    callback install-update();
+    callback enable-autostart();
+    callback dismiss-autostart-banner();
+    callback open-menu(id: string);
+    callback rename-done();
+    callback drag-started();
+    callback device-moved(id: string, onto: string);
+    callback device-shown(id: string);
+
+    function scroll-by(delta: length) {
+        scroll.content-y = max(
+            min(0px, scroll.visible-height - scroll.content-height),
+            min(0px, scroll.content-y + delta));
+    }
+    // Held within 24px of the frame's top or bottom edge, the lifted device makes the list scroll under it
+    property <length> edge: 24px;
+    property <length> overrun: !Drag.active ? 0px
+        : Drag.top < root.frame-y + root.edge ? Drag.top - root.frame-y - root.edge
+        : Drag.top + Drag.card-height > root.frame-y + root.frame-height - root.edge
+            ? Drag.top + Drag.card-height - root.frame-y - root.frame-height + root.edge
+        : 0px;
+
+    Timer {
+        interval: 16ms;
+        running: root.overrun != 0;
+        triggered => { root.scroll-by(-max(-12px, min(12px, root.overrun / 3))); }
+    }
+    VerticalLayout {
+        padding-top: 14px;
+        padding-right: 14px;
+        padding-bottom: 12px;
+        padding-left: 20px;
+        HorizontalLayout {
+            padding-right: 6px;
+            padding-bottom: 14px;
+            spacing: 2px;
+            Text {
+                text: T.t("app.title");
+                font-size: 22px;
+                font-weight: 600;
+                color: Palette.text;
+                vertical-alignment: center;
+                horizontal-stretch: 1;
+            }
+            TipButton {
+                width: 34px;
+                height: 34px;
+                glyph: "\u{E72C}";
+                tip: T.t("refresh");
+                clicked => { root.refresh(); }
+            }
+            TipButton {
+                width: 34px;
+                height: 34px;
+                glyph: "\u{E713}";
+                glyph-size: 16px;
+                tip: T.t("settings");
+                clicked => { root.open-settings(); }
+            }
+        }
+        scroll := ScrollView {
+            vertical-stretch: 1;
+            VerticalLayout {
+                alignment: start;
+                padding-right: 6px;
+                spacing: 8px;
+                if root.banner-visible: Dimmable {
+                    dimmed: Drag.active;
+                    Card {
+                        border-color: Palette.accent;
+                        HorizontalLayout {
+                            padding-left: 16px;
+                            padding-right: 16px;
+                            padding-top: 10px;
+                            padding-bottom: 10px;
+                            spacing: 10px;
+                            Glyph {
+                                text: "\u{E896}";
+                                font-size: 16px;
+                                color: Palette.accent;
+                            }
+                            Text {
+                                text: root.banner-text;
+                                color: Palette.text;
+                                vertical-alignment: center;
+                                wrap: word-wrap;
+                                horizontal-stretch: 1;
+                            }
+                            if root.banner-button-visible: Btn {
+                                accent: true;
+                                text: T.t("upd.banner.button");
+                                clicked => { root.install-update(); }
+                            }
+                        }
+                    }
+                }
+                if root.autostart-banner: Dimmable {
+                    dimmed: Drag.active;
+                    Card {
+                        border-color: Palette.warn;
+                        VerticalLayout {
+                            padding-top: 13px;
+                            padding-right: 17px;
+                            padding-bottom: 13px;
+                            padding-left: 17px;
+                            spacing: 10px;
+                            HorizontalLayout {
+                                spacing: 10px;
+                                Glyph {
+                                    width: 18px;
+                                    text: "\u{E7E8}";
+                                    font-size: 16px;
+                                    color: Palette.warn;
+                                    horizontal-alignment: center;
+                                }
+                                Text {
+                                    text: T.t("autostart.banner");
+                                    color: Palette.text;
+                                    vertical-alignment: center;
+                                    wrap: word-wrap;
+                                    horizontal-stretch: 1;
+                                }
+                            }
+                            // Equal halves: stretch alone shares out only what is left after each button's own
+                            // width
+                            HorizontalLayout {
+                                spacing: 8px;
+                                Btn {
+                                    min-width: 0px;
+                                    preferred-width: 0px;
+                                    horizontal-stretch: 1;
+                                    padding-x: 10px;
+                                    accent: true;
+                                    text: T.t("autostart.banner.enable");
+                                    clicked => { root.enable-autostart(); }
+                                }
+                                Btn {
+                                    min-width: 0px;
+                                    preferred-width: 0px;
+                                    horizontal-stretch: 1;
+                                    padding-x: 10px;
+                                    text: T.t("autostart.banner.dismiss");
+                                    clicked => { root.dismiss-autostart-banner(); }
+                                }
+                            }
+                        }
+                    }
+                }
+                if root.pinned.length > 0: Dimmable {
+                    dimmed: Drag.active && Drag.list != 0;
+                    VerticalLayout {
+                        spacing: 8px;
+                        for device[i] in root.pinned: DragCell {
+                            item: device;
+                            list: 0;
+                            index: i;
+                            count: root.pinned.length;
+                            layout-order: self.position;
+                            picked => { root.drag-started(); }
+                            dropped(from, to) => { root.device-moved(root.pinned[from].id, root.pinned[to].id); }
+                            wheel(delta) => { root.scroll-by(delta); }
+                            menu-clicked => { root.open-menu(device.id); }
+                            rename-done => { root.rename-done(); }
+                        }
+                    }
+                }
+                // 8 + 0 + 8: twice the usual gap between the pinned devices and whatever follows them
+                if root.pinned.length > 0 && (root.connected.length > 0 || root.none-online
+                    || root.offline.length > 0 || root.hidden.length > 0): Rectangle {
+                    height: 0px;
+                }
+                if root.connected.length > 0: Dimmable {
+                    dimmed: Drag.active && Drag.list != 1;
+                    VerticalLayout {
+                        spacing: 8px;
+                        for device[i] in root.connected: DragCell {
+                            item: device;
+                            list: 1;
+                            index: i;
+                            count: root.connected.length;
+                            layout-order: self.position;
+                            picked => { root.drag-started(); }
+                            dropped(from, to) => {
+                                root.device-moved(root.connected[from].id, root.connected[to].id);
+                            }
+                            wheel(delta) => { root.scroll-by(delta); }
+                            menu-clicked => { root.open-menu(device.id); }
+                            rename-done => { root.rename-done(); }
+                        }
+                    }
+                }
+                if root.none-online: Dimmable {
+                    dimmed: Drag.active;
+                    Card {
+                        VerticalLayout {
+                            padding: 14px;
+                            Text {
+                                text: T.t("none.online");
+                                color: Palette.secondary;
+                                horizontal-alignment: center;
+                                wrap: word-wrap;
+                            }
+                        }
+                    }
+                }
+                if root.offline.length > 0: Dimmable {
+                    dimmed: Drag.active && Drag.list != 2;
+                    VerticalLayout {
+                        padding-top: 6px;
+                        padding-left: 2px;
+                        SectionHeader {
+                            text: T.t("offline.header");
+                        }
+                    }
+                }
+                if root.offline.length > 0: Dimmable {
+                    dimmed: Drag.active && Drag.list != 2;
+                    VerticalLayout {
+                        spacing: 8px;
+                        for device[i] in root.offline: DragCell {
+                            item: device;
+                            as-row: true;
+                            list: 2;
+                            index: i;
+                            count: root.offline.length;
+                            layout-order: self.position;
+                            picked => { root.drag-started(); }
+                            dropped(from, to) => { root.device-moved(root.offline[from].id, root.offline[to].id); }
+                            wheel(delta) => { root.scroll-by(delta); }
+                            menu-clicked => { root.open-menu(device.id); }
+                            rename-done => { root.rename-done(); }
+                        }
+                    }
+                }
+                if root.hidden.length > 0: Dimmable {
+                    dimmed: Drag.active;
+                    HorizontalLayout {
+                        alignment: start;
+                        HiddenToggle {
+                            count: root.hidden.length;
+                            open <=> root.hidden-open;
+                        }
+                    }
+                }
+                if root.hidden-open && root.hidden.length > 0: Dimmable {
+                    dimmed: Drag.active;
+                    VerticalLayout {
+                        spacing: 8px;
+                        for device in root.hidden: HiddenRowView {
+                            item: device;
+                            shown => { root.device-shown(device.id); }
+                        }
+                    }
+                }
+            }
+        }
+        HorizontalLayout {
+            padding-top: 10px;
+            padding-right: 6px;
+            Text {
+                text: root.updated-text;
+                font-size: 12px;
+                color: Palette.secondary;
+                horizontal-stretch: 1;
+            }
+            Text {
+                text: root.version-text;
+                font-size: 12px;
+                color: Palette.secondary;
+            }
+        }
+    }
+}
+
+// One row of the device menu: [icon] label, and whatever follows (the switch); the whole row is the click target
+component MenuRow inherits Rectangle {
+    in property <string> text;
+    in property <string> glyph;
+    // The hide row's icon is drawn: no glyph of both icon fonts is a crossed eye
+    in property <bool> hide-glyph;
+    out property <bool> hovered: touch.has-hover;
+    callback clicked();
+    height: 34px;
+    border-radius: 4px;
+    background: touch.has-hover ? Palette.control-hover : transparent;
+    accessible-role: button;
+    accessible-label: root.text;
+    accessible-action-default => { root.clicked(); }
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        spacing: 10px;
+        Rectangle {
+            width: 18px;
+            if !root.hide-glyph: Glyph {
+                text: root.glyph;
+                font-size: 13px;
+                horizontal-alignment: center;
+            }
+            if root.hide-glyph: HideGlyph {
+                size: 13px;
+            }
+        }
+        Text {
+            text: root.text;
+            color: Palette.text;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+            overflow: elide;
+            accessible-role: none;
+        }
+        @children
+    }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+// A level field's row in the device menu
+component LevelRow inherits HorizontalLayout {
+    in property <string> text;
+    spacing: 8px;
+    Text {
+        text: root.text;
+        color: Palette.text;
+        vertical-alignment: center;
+        horizontal-stretch: 1;
+        overflow: elide;
+    }
+    @children
+}
+
+// The device menu, on a layer above the whole window: under the device's "⋯" button with the right edges in line
+// (above it when the menu would not fit below even fully grown), kept inside the window. A press outside closes it
+// and goes no further; the wheel does nothing while it is open. It only says what was chosen: the window does the
+// rest, closing included.
+export component DeviceMenu inherits Rectangle {
+    // The window's general levels, for "Use the global levels · 20% / 10%"
+    in property <int> general-low;
+    in property <int> general-critical;
+    // A level field has the keyboard focus
+    out property <bool> field-focused: low.has-focus || critical.has-focus;
+    // A press outside the menu
+    callback dismiss();
+    callback rename();
+    callback pin-toggled();
+    callback hide();
+    callback alerts-toggled();
+    callback low-changed(int);
+    callback critical-changed(int);
+    callback levels-reset();
+    visible: DeviceUi.menu-id != "";
+
+    // What the fields hold is applied: before the menu closes for any reason but Escape, Rust's close-menu() and
+    // reset-screen()
+    public function flush() {
+        low.flush();
+        critical.flush();
+    }
+    // What the fields hold is dropped
+    public function reset() {
+        low.reset();
+        critical.reset();
+    }
+    property <DeviceItem> device: DeviceUi.menu-device;
+
+    TouchArea {
+        pointer-event(e) => {
+            if (e.kind == PointerEventKind.down) {
+                root.dismiss();
+            }
+        }
+        scroll-event => {
+            accept
+        }
+    }
+    Rectangle {
+        // The side is decided from the height the menu can grow to, not the one it has: otherwise it would jump
+        // to the other side when a block opens
+        property <length> full-height: content.preferred-height - levels.height - reset.height + levels.full-height
+            + reset.full-height;
+        property <bool> above: DeviceUi.anchor-y + DeviceUi.anchor-height + 2px + self.full-height > root.height
+            && DeviceUi.anchor-y - 2px - self.full-height >= 0;
+        x: max(0px, min(root.width - self.width, DeviceUi.anchor-x + DeviceUi.anchor-width - self.width));
+        y: max(0px, min(root.height - self.height, self.above
+            ? DeviceUi.anchor-y - 2px - self.height
+            : DeviceUi.anchor-y + DeviceUi.anchor-height + 2px));
+        width: 264px;
+        // As tall as its rows, frame by frame while a block opens or closes
+        height: content.preferred-height;
+        background: Palette.popup;
+        border-width: 1px;
+        border-color: Palette.popup-stroke;
+        border-radius: 8px;
+        drop-shadow-offset-y: 8px;
+        drop-shadow-blur: 24px;
+        drop-shadow-color: rgba(0, 0, 0, 0.5);
+
+        // Presses between the rows stay in the menu
+        TouchArea { }
+        content := VerticalLayout {
+            padding: 5px;
+            MenuRow {
+                text: T.t("device.rename");
+                glyph: "\u{E70F}";
+                clicked => { root.rename(); }
+            }
+            MenuRow {
+                text: T.t(root.device.pinned ? "device.unpin" : "device.pin");
+                glyph: root.device.pinned ? "\u{E77A}" : "\u{E718}";
+                clicked => { root.pin-toggled(); }
+            }
+            MenuRow {
+                text: T.t("device.hide");
+                hide-glyph: true;
+                clicked => { root.hide(); }
+            }
+            VerticalLayout {
+                padding-top: 4px;
+                padding-bottom: 4px;
+                Divider {
+                    background: Palette.popup-stroke;
+                }
+            }
+            alerts := MenuRow {
+                text: T.t("device.alerts");
+                glyph: "\u{EA8F}";
+                accessible-role: switch;
+                accessible-checked: root.device.alerts;
+                clicked => { root.alerts-toggled(); }
+                VerticalLayout {
+                    alignment: center;
+                    SwitchMark {
+                        checked: root.device.alerts;
+                        hovered: alerts.hovered;
+                        instant: DeviceUi.menu-instant;
+                    }
+                }
+            }
+            levels := Collapsible {
+                open: root.device.alerts;
+                instant: DeviceUi.menu-instant;
+                VerticalLayout {
+                    padding-top: 2px;
+                    padding-right: 10px;
+                    padding-bottom: 6px;
+                    padding-left: 38px;
+                    spacing: 6px;
+                    LevelRow {
+                        text: T.t("device.low");
+                        low := NumberField {
+                            compact: true;
+                            label: T.t("device.low");
+                            value: root.device.low;
+                            minimum: 10;
+                            maximum: 50;
+                            unit: "%";
+                            changed(v) => { root.low-changed(v); }
+                        }
+                    }
+                    LevelRow {
+                        text: T.t("device.critical");
+                        critical := NumberField {
+                            compact: true;
+                            label: T.t("device.critical");
+                            value: root.device.critical;
+                            minimum: 5;
+                            maximum: max(5, root.device.low - 5);
+                            unit: "%";
+                            changed(v) => { root.critical-changed(v); }
+                        }
+                    }
+                }
+            }
+            reset := Collapsible {
+                open: root.device.alerts && root.device.own-levels;
+                grow: 160ms;
+                fade: 120ms;
+                instant: DeviceUi.menu-instant;
+                HorizontalLayout {
+                    padding-bottom: 4px;
+                    padding-left: 28px;
+                    alignment: start;
+                    Rectangle {
+                        height: 26px;
+                        border-radius: 4px;
+                        background: reset-touch.has-hover ? Palette.control-hover : transparent;
+                        accessible-role: button;
+                        accessible-label: reset-label.text;
+                        accessible-action-default => { root.levels-reset(); }
+                        HorizontalLayout {
+                            padding-left: 10px;
+                            padding-right: 10px;
+                            spacing: 6px;
+                            Glyph {
+                                width: 13px;
+                                text: "\u{E7A7}";
+                                font-size: 11px;
+                                horizontal-alignment: center;
+                            }
+                            reset-label := Text {
+                                text: T.t("device.levels.reset") + " · " + root.general-low + "% / "
+                                    + root.general-critical + "%";
+                                font-size: 12px;
+                                color: Palette.secondary;
+                                vertical-alignment: center;
+                                accessible-role: none;
+                            }
+                        }
+                        reset-touch := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { root.levels-reset(); }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

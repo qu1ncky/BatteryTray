@@ -16,7 +16,7 @@ use crate::reading::DeviceReading;
 use crate::rows::{self, AlertManager, ChargeDoneWatcher, DeviceRow};
 use crate::settings::AppSettings;
 use crate::state::StateStore;
-use crate::tray::{self, Tray, MENU_EXIT, MENU_OPEN, MENU_REFRESH};
+use crate::tray::{self, Tray, MENU_EXIT, MENU_OPEN, MENU_REFRESH, MENU_SETTINGS};
 use crate::update_service::{Event, Status, UpdateService};
 use crate::updater::{self, ReleaseInfo, Version};
 use crate::{diag, gui, log, providers, win};
@@ -337,8 +337,17 @@ impl App {
         })
     }
 
-    /// Opens (or brings to the front) the main window.
+    /// Opens (or brings to the front) the main window, on its devices.
     pub fn open(&mut self) {
+        self.show_main(false);
+    }
+
+    /// The tray menu's "Settings": the same, on the settings' first tab.
+    pub fn open_settings(&mut self) {
+        self.show_main(true);
+    }
+
+    fn show_main(&mut self, settings: bool) {
         if self.stopping {
             return;
         }
@@ -351,6 +360,13 @@ impl App {
                 }
             }
         }
+        // Every opening starts from the same place, with nothing left open from before (an open window may be
+        // behind others, on any screen)
+        if let Some(view) = &self.main {
+            view.ui.invoke_reset_screen(settings);
+        }
+        // A name that was being typed is dropped with the rest, and the list may have held its device back
+        self.refresh_main();
         if let Some(view) = &self.main {
             gui::show_and_activate(&view.ui);
         }
@@ -395,9 +411,7 @@ impl App {
     }
 
     fn settings_changed(&mut self) {
-        self.save_timer.start(slint::TimerMode::SingleShot, Duration::from_millis(500), || {
-            with_app(|app| app.settings.save());
-        });
+        self.save_later();
         if let Some(u) = &self.updates {
             u.set_auto_update(self.settings.auto_update);
         }
@@ -411,6 +425,44 @@ impl App {
             view.refresh(&rows, &self.settings);
         }
         self.evaluate_alerts();
+    }
+
+    /// Saves the settings half a second after the last change: a burst of changes is one write.
+    fn save_later(&self) {
+        self.save_timer.start(slint::TimerMode::SingleShot, Duration::from_millis(500), || {
+            with_app(|app| app.settings.save());
+        });
+    }
+
+    /// A name typed on a card or a row, as typed: kept without the spaces around it, empty for the device's own. The
+    /// list is refreshed also when nothing changed: while the name was typed, the device was held in the block it
+    /// was shown in.
+    pub fn rename_device(&mut self, id: &str, text: &str) {
+        if self.settings.set_name(id, text) {
+            self.settings_changed();
+        } else {
+            self.refresh_main();
+        }
+    }
+
+    pub fn pin_device(&mut self, id: &str, pinned: bool) {
+        let rows = self.rows();
+        if rows::set_pinned(&mut self.settings, &rows, id, pinned) {
+            self.settings_changed();
+        }
+    }
+
+    /// A device dropped onto another one's place in its block. Refused across blocks: the window then still shows the
+    /// order it had, as it never moved a row itself.
+    pub fn move_device(&mut self, id: &str, onto: &str) {
+        let rows = self.rows();
+        if rows::move_onto(&mut self.settings, &rows, id, onto) {
+            self.settings_changed();
+        }
+    }
+
+    pub fn dismiss_autostart_banner(&mut self) {
+        self.edit(|s| s.autostart_banner_dismissed = true);
     }
 
     /// A language picked in the settings ("auto" follows Windows): everything switches right away.
@@ -431,8 +483,14 @@ impl App {
 
     pub fn set_autostart(&mut self, on: bool) {
         autostart::set(on);
+        let registered = autostart::is_registered();
         if let Some(view) = &self.main {
-            view.ui.set_autostart(autostart::is_registered());
+            view.ui.set_autostart(registered);
+        }
+        // Switched off by hand: the user knows it is off, and the banner has nothing to tell them. A switch-off Windows
+        // refused leaves it on, where the banner doesn't show anyway
+        if !on && !registered && !self.settings.autostart_banner_dismissed {
+            self.dismiss_autostart_banner();
         }
     }
 
@@ -442,6 +500,10 @@ impl App {
         self.settings = settings;
         if taken {
             self.settings_changed();
+            // The field gives up the focus, so its key caps show what was just recorded
+            if let Some(view) = &self.main {
+                view.ui.invoke_shortcut_recorded();
+            }
         } else if let Some(view) = &self.main {
             view.shortcut_refused(gesture.is_valid());
         }
@@ -481,6 +543,11 @@ impl App {
     fn on_devices_changed(&mut self) {
         if self.stopping {
             return;
+        }
+        // Once the user has ordered the list, a device seen for the first time goes last in its block
+        let rows = self.rows();
+        if rows::adopt_new(&mut self.settings, &rows) {
+            self.save_later();
         }
         self.update_tray();
         self.refresh_main();
@@ -636,8 +703,11 @@ impl App {
 
     fn update_tray(&mut self) {
         let rows = self.rows();
-        let shown: Vec<&DeviceRow> =
-            rows.iter().filter(|r| r.online() && !self.settings.device(&r.id).hidden).collect();
+        // In the order of the window's list
+        let shown: Vec<&DeviceRow> = rows::list_order(&rows, &self.settings)
+            .into_iter()
+            .filter(|r| r.online() && !self.settings.device(&r.id).hidden)
+            .collect();
         // A device charging without a readable level is listed too, without a made-up number
         let lines: Vec<String> = shown
             .iter()
@@ -851,6 +921,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
                 let chosen = tray::show_menu(hwnd);
                 later(move |app| match chosen {
                     MENU_OPEN => app.open(),
+                    MENU_SETTINGS => app.open_settings(),
                     MENU_REFRESH => app.refresh_now(),
                     MENU_EXIT => app.exit(),
                     _ => {}

@@ -46,7 +46,10 @@ version and writes the crates' licenses with [cargo-about](https://github.com/Em
   every HID collection. It reads the app's `state.json` but never writes it, and logs to
   `%LOCALAPPDATA%\BatteryTray\rust-core`.
 - `cargo run --example snapshot -- <folder> [ru|en|zh] [scale]` - renders the windows with sample data to PNG files,
-  off screen, to check a layout without running the app.
+  off screen, to check a layout without running the app: the device list (with the update banner, and without it for
+  the README; a device's menu, a smaller one, a name being edited, the hidden devices shown, and the empty list with
+  the autostart banner), each settings tab (and the update card with a newer version), the reminder and the overlay. A
+  drag, a tooltip and an open dropdown need a real pointer and are not drawn.
 - `cargo run --example popup_probe` - opens the reminder and the overlay as the app does and prints where their windows
   are every 5 ms, with their extended styles: for catching a popup that jumps, can be clicked, takes focus or doesn't
   follow its contents' size.
@@ -58,7 +61,8 @@ on runners with a desktop - Windows Server 2022, which has Windows 10's shell an
 Windows 11's: the last C# release installs from its zip and updates itself to the build, the build updates itself to a
 newer one, then uninstall, a fresh install, the window, a portable copy, `--update`, and screenshots of the windows.
 The binaries are not changed for it: `api.github.com` is pointed at a server on the runner that answers with a release
-made of the exe under test.
+made of the exe under test. Each run keeps that exe as an artifact (`BatteryTray-windows-2022`, `-2025`), for trying a
+build before it is released.
 
 ## What installed copies rely on
 

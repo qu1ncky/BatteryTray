@@ -65,13 +65,13 @@ impl Session {
     }
 }
 
-/// The devices the overlay shows: on the air and not hidden, in a stable order (by kind, name, id - never by level).
-/// Names are shown for kinds that occur more than once, or for all when the settings say so.
+/// The devices the overlay shows: on the air and not hidden, in the order of the list (never by level). Names are
+/// shown for kinds that occur more than once, or for all when the settings say so.
 pub fn select<'a>(rows: &'a [DeviceRow], settings: &AppSettings) -> Vec<(&'a DeviceRow, bool)> {
-    let mut shown: Vec<&DeviceRow> = rows.iter().filter(|r| r.online() && !settings.device(&r.id).hidden).collect();
-    shown.sort_by(|a, b| {
-        (a.kind() as u8, a.name.to_lowercase(), &a.id).cmp(&(b.kind() as u8, b.name.to_lowercase(), &b.id))
-    });
+    let shown: Vec<&DeviceRow> = crate::rows::list_order(rows, settings)
+        .into_iter()
+        .filter(|r| r.online() && !settings.device(&r.id).hidden)
+        .collect();
     let kinds: Vec<DeviceKind> = shown.iter().map(|r| r.kind()).collect();
     let duplicate = |k: DeviceKind| kinds.iter().filter(|&&x| x == k).count() > 1;
     shown.into_iter().map(|r| (r, settings.overlay_show_names || duplicate(r.kind()))).collect()
@@ -614,6 +614,28 @@ mod tests {
         let after: Vec<String> = select(&changed, &settings).iter().map(|r| r.0.id.clone()).collect();
         assert_eq!(before, after);
         assert_eq!(before.len(), 20);
+    }
+
+    #[test]
+    fn the_order_is_the_lists() {
+        let rows = [
+            row("mouse", DeviceKind::Mouse, true),
+            row("off", DeviceKind::Headset, false),
+            row("headset", DeviceKind::Headset, true),
+            row("keys", DeviceKind::Keyboard, true),
+            row("pad", DeviceKind::Gamepad, true),
+        ];
+        let shown = |settings: &AppSettings| -> Vec<String> {
+            select(&rows, settings).iter().map(|r| r.0.id.clone()).collect()
+        };
+        let mut settings = AppSettings::default();
+        assert_eq!(shown(&settings), ["headset", "mouse", "keys", "pad"], "by kind and name until the user orders it");
+        // The pinned one first, then the others as the user put them; what is off or hidden is left out as before
+        settings.device_order = ["pad", "off", "keys", "headset", "mouse"].map(String::from).to_vec();
+        settings.device_mut("mouse").pinned = true;
+        assert_eq!(shown(&settings), ["mouse", "pad", "keys", "headset"]);
+        settings.device_mut("keys").hidden = true;
+        assert_eq!(shown(&settings), ["mouse", "pad", "headset"]);
     }
 
     #[test]

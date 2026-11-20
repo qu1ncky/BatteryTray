@@ -1,0 +1,952 @@
+// The main window's controls. Like the slider of theme.slint, each only asks for a change (a callback) and shows
+// what the app has. Tooltips and dropdown lists are drawn on layers above the whole window (see main.slint), so no
+// scroll view clips them; the small shapes that have no glyph are drawn here too.
+
+import { Palette, T, Glyph } from "theme.slint";
+
+// 40x20 switch that only shows a state: the row it sits in is what gets clicked. The knob slides and the colours
+// cross-fade in 120ms, except for a first value (a switch that appears switched on is on) and while `instant`.
+export component SwitchMark inherits Rectangle {
+    in property <bool> checked;
+    // The knob grows while the pointer is over the row
+    in property <bool> hovered;
+    in property <bool> instant;
+    width: 40px;
+    height: 20px;
+    border-radius: 10px;
+    border-width: 1px;
+    border-color: root.checked ? Palette.accent : #9A9A9A;
+    background: root.checked ? Palette.accent : transparent;
+    animate border-color, background { duration: root.instant ? 0ms : 120ms; easing: ease-out; }
+    // The middle of the knob. Animating this instead of the knob's x keeps the hover growth where it is: x depends
+    // on the knob's width, and would slide for 120ms every time the width changes.
+    property <length> knob-center: root.checked ? self.width - 10px : 10px;
+    animate knob-center { duration: root.instant ? 0ms : 120ms; easing: ease-out; }
+    Rectangle {
+        x: root.knob-center - self.width / 2;
+        y: (parent.height - self.height) / 2;
+        width: root.hovered ? 14px : 12px;
+        height: self.width;
+        border-radius: self.width / 2;
+        background: root.checked ? #1A1A1A : #CFCFCF;
+        animate background { duration: root.instant ? 0ms : 120ms; easing: ease-out; }
+    }
+}
+
+// The tooltip that can be shown: the anchor the pointer rests on fills this in, TipLayer waits and draws it
+export global Tip {
+    in-out property <string> text;
+    // The anchor, in window coordinates
+    in-out property <length> x;
+    in-out property <length> y;
+    in-out property <length> width;
+    in-out property <length> height;
+    // The delay has passed
+    in-out property <bool> shown;
+    // Counts the armings, so that each one gets the whole delay
+    in-out property <int> armed;
+
+    // The pointer entered an anchor
+    public function arm(text: string, x: length, y: length, width: length, height: length) {
+        self.armed += 1;
+        self.shown = false;
+        self.text = text;
+        self.x = x;
+        self.y = y;
+        self.width = width;
+        self.height = height;
+    }
+    // Nothing is wanted: the anchor was pressed, something opened, Escape
+    public function cancel() {
+        self.shown = false;
+        self.text = "";
+    }
+    // The pointer left the anchor at (x, y); one that another anchor armed meanwhile stays
+    public function leave(x: length, y: length) {
+        if (self.x == x && self.y == y) {
+            self.cancel();
+        }
+    }
+}
+
+// The window's layer for the tooltip: 500ms after the pointer entered an anchor, under it (above when there is no
+// room below), centred on it and kept 8px inside the window. It has no TouchArea: the pointer goes through.
+export component TipLayer inherits Rectangle {
+    // Where the pointer is in the window: from a TouchArea around the window's content, which as an ancestor is
+    // told about every pointer event, whatever handles it
+    in property <bool> pointer-inside;
+    in property <length> pointer-x;
+    in property <length> pointer-y;
+    out property <bool> showing: Tip.shown && Tip.text != "" && root.on-anchor;
+
+    // The pointer is still where the anchor was. An anchor that went away under the pointer (its row was rebuilt,
+    // its screen was left) never says that the pointer left it.
+    property <bool> on-anchor: root.pointer-inside
+        && root.pointer-x >= Tip.x && root.pointer-x < Tip.x + Tip.width
+        && root.pointer-y >= Tip.y && root.pointer-y < Tip.y + Tip.height;
+    // Going straight from one anchor to the next leaves `running` true all along: the delay starts anew here
+    property <int> armed: Tip.armed;
+    changed armed => {
+        delay.restart();
+    }
+
+    delay := Timer {
+        interval: 500ms;
+        running: Tip.text != "" && !Tip.shown && root.on-anchor;
+        triggered => {
+            Tip.shown = true;
+        }
+    }
+    if root.showing: Rectangle {
+        property <length> gap: 4px;
+        property <length> margin: 8px;
+        property <bool> above: Tip.y + Tip.height + self.gap + self.height + self.margin > root.height
+            && Tip.y - self.gap - self.height >= self.margin;
+        // As wide as the text, up to 256px; then the text wraps and the bubble grows down
+        x: max(self.margin, min(root.width - self.width - self.margin, Tip.x + (Tip.width - self.width) / 2));
+        y: self.above ? Tip.y - self.gap - self.height : Tip.y + Tip.height + self.gap;
+        width: min(256px, label.preferred-width + 22px);
+        height: label.preferred-height + 16px;
+        background: Palette.input;
+        border-width: 1px;
+        border-color: Palette.popup-stroke;
+        border-radius: 4px;
+        drop-shadow-offset-y: 6px;
+        drop-shadow-blur: 16px;
+        drop-shadow-color: rgba(0, 0, 0, 0.45);
+        label := Text {
+            x: 11px;
+            y: 8px;
+            width: parent.width - 22px;
+            text: Tip.text;
+            font-size: 12px;
+            color: Palette.text;
+            wrap: word-wrap;
+            // The anchor says it itself (accessible-label or accessible-description)
+            accessible-role: none;
+        }
+    }
+}
+
+// The TouchArea of a tooltip's anchor. It arms the tooltip when the pointer comes in and takes it back when the
+// pointer leaves, presses or turns the wheel, and when the anchor moves away under a resting pointer (the list
+// scrolls, the layout changes): the pointer is told about the element under it only when it moves itself.
+component TipArea inherits TouchArea {
+    in property <string> tip;
+    property <Point> place: self.absolute-position;
+    changed place => {
+        if (self.has-hover) {
+            Tip.cancel();
+        }
+    }
+    changed has-hover => {
+        if (self.has-hover) {
+            Tip.arm(root.tip, self.absolute-position.x, self.absolute-position.y, self.width, self.height);
+        } else {
+            Tip.leave(self.absolute-position.x, self.absolute-position.y);
+        }
+    }
+    pointer-event(e) => {
+        if (e.kind == PointerEventKind.down) {
+            Tip.cancel();
+        }
+    }
+    // The list under the pointer is about to move: the wheel itself is left to the list
+    scroll-event => {
+        Tip.cancel();
+        reject
+    }
+}
+
+// An icon button with a tooltip: refresh, settings, back, a device's "⋯", the shortcut's reset. Its size is set
+// where it is used.
+export component TipButton inherits Rectangle {
+    in property <string> glyph;
+    in property <length> glyph-size: 15px;
+    in property <string> tip;
+    in property <string> accessible-text: root.tip;
+    // The glyph in the secondary colour, in the text colour while the pointer is over it
+    in property <bool> secondary;
+    // Looks open: its menu is
+    in property <bool> active;
+    callback clicked();
+    border-radius: 4px;
+    background: touch.pressed ? Palette.control-pressed
+        : touch.has-hover || root.active ? Palette.control-hover : transparent;
+    accessible-role: button;
+    accessible-label: root.accessible-text;
+    accessible-action-default => { root.clicked(); }
+    Glyph {
+        text: root.glyph;
+        font-size: root.glyph-size;
+        color: root.secondary && !touch.has-hover && !root.active ? Palette.secondary : Palette.text;
+        horizontal-alignment: center;
+    }
+    touch := TipArea {
+        tip: root.tip;
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+// The ⓘ after a label: its hint shows as a tooltip, and a screen reader reads it as the description
+export component InfoTip inherits Rectangle {
+    in property <string> hint;
+    in property <string> label;
+    width: 20px;
+    height: 20px;
+    border-radius: 10px;
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-description: root.hint;
+    Glyph {
+        text: "\u{E946}";
+        font-size: 15px;
+        color: touch.has-hover ? Palette.accent : Palette.secondary;
+        horizontal-alignment: center;
+    }
+    touch := TipArea {
+        tip: root.hint;
+        mouse-cursor: help;
+    }
+}
+
+// A row of a settings card: [glyph] label [ⓘ] ... switch. A click anywhere on it flips the switch, except on the ⓘ.
+export component SwitchRow inherits Rectangle {
+    in property <string> text;
+    in property <bool> checked;
+    // The ⓘ's tooltip ("" = no ⓘ), and what a screen reader calls the ⓘ
+    in property <string> hint;
+    in property <string> hint-label;
+    // The row a card of its own is made of: a bigger label, a taller row
+    in property <bool> strong;
+    in property <string> leading-glyph;
+    in property <color> leading-color: Palette.secondary;
+    callback toggled(bool);
+    min-height: root.strong ? 56px : 48px;
+    accessible-role: switch;
+    accessible-label: root.text;
+    accessible-checked: root.checked;
+    accessible-action-default => { root.toggled(!root.checked); }
+    // Beneath the ⓘ: of two TouchAreas the one declared later is on top, and the ⓘ needs its own hover
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.toggled(!root.checked); }
+    }
+    HorizontalLayout {
+        padding-left: 16px;
+        padding-right: 16px;
+        spacing: 12px;
+        if root.leading-glyph != "": Glyph {
+            width: 20px;
+            text: root.leading-glyph;
+            font-size: 18px;
+            color: root.leading-color;
+            horizontal-alignment: center;
+        }
+        HorizontalLayout {
+            alignment: start;
+            spacing: 6px;
+            horizontal-stretch: 1;
+            Text {
+                text: root.text;
+                font-size: root.strong ? 14px : 13px;
+                font-weight: root.strong ? 600 : 400;
+                color: Palette.text;
+                vertical-alignment: center;
+                wrap: word-wrap;
+            }
+            if root.hint != "": VerticalLayout {
+                alignment: center;
+                InfoTip {
+                    hint: root.hint;
+                    label: root.hint-label;
+                }
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            SwitchMark {
+                checked: root.checked;
+                hovered: touch.has-hover;
+            }
+        }
+    }
+}
+
+// A number field: digits only, a unit after the number, commits on Enter and when the focus leaves, snaps to the
+// allowed range, goes back to the old value when left empty or not a number
+export component NumberField inherits Rectangle {
+    in property <int> value;
+    in property <int> minimum;
+    in property <int> maximum: 100;
+    in property <string> unit;
+    in property <length> unit-gap: 3px;
+    in property <string> label;
+    // The number's colour while nobody types into it
+    in property <color> value-color: Palette.text;
+    // The device menu's smaller field
+    in property <bool> compact;
+    out property <bool> has-focus: input.has-focus;
+    callback changed(int);
+    height: root.compact ? 30px : 32px;
+    // focus() on the field goes to its text
+    forward-focus: input;
+    border-radius: 4px;
+    border-width: 1px;
+    border-color: input.has-focus ? Palette.accent : root.compact ? Palette.popup-stroke : Palette.stroke;
+    background: Palette.input;
+    accessible-role: spinbox;
+    accessible-label: root.label;
+    accessible-value: root.value;
+    accessible-value-minimum: root.minimum;
+    accessible-value-maximum: root.maximum;
+    accessible-value-step: 1;
+    accessible-action-increment => { root.ask(root.value + 1); }
+    accessible-action-decrement => { root.ask(root.value - 1); }
+    accessible-action-set-value(v) => {
+        if (v.is-float()) {
+            root.ask(Math.round(v.to-float()));
+        }
+    }
+
+    // Applies what was typed. For whoever is about to hide or destroy the field while it may have the focus:
+    // hiding reports the loss of focus only afterwards, destroying does not report it at all.
+    public function flush() {
+        if (input.has-focus) {
+            root.commit();
+        }
+    }
+    // Drops what was typed (Escape). The loss of focus that follows then finds nothing to apply.
+    public function reset() {
+        input.text = root.value;
+    }
+    function commit() {
+        // `input-type: number` filters typing only: pasted text arrives unfiltered, so the text is checked here
+        if (input.text.is-float()) {
+            root.ask(Math.round(input.text.to-float()));
+        }
+        // An empty, wrong or out-of-range text gives way to the value (the new one when the app took it at once)
+        input.text = root.value;
+    }
+    function ask(v: int) {
+        if (clamp(v, root.minimum, root.maximum) != root.value) {
+            root.changed(clamp(v, root.minimum, root.maximum));
+        }
+    }
+    // Typing replaces the binding of `text`, so the field is told about every later change of the value by hand.
+    // A change from elsewhere (the slider under the field) also ends an edit in progress.
+    changed value => {
+        input.text = root.value;
+    }
+
+    // The padding and the unit are part of the field: a click there selects the number
+    TouchArea {
+        mouse-cursor: text;
+        clicked => {
+            input.focus();
+            input.select-all();
+        }
+    }
+    HorizontalLayout {
+        padding-left: 9px;
+        padding-right: 9px;
+        spacing: root.unit-gap;
+        input := TextInput {
+            min-width: 20px;
+            text: root.value;
+            color: self.has-focus ? Palette.text : root.value-color;
+            font-weight: 600;
+            horizontal-alignment: right;
+            vertical-alignment: center;
+            input-type: number;
+            selection-background-color: Palette.accent;
+            selection-foreground-color: #000000;
+            // The field around it is the spin box a screen reader sees
+            accessible-role: none;
+            accepted => { root.commit(); }
+            changed has-focus => {
+                if (!self.has-focus) {
+                    root.commit();
+                }
+            }
+        }
+        Text {
+            text: root.unit;
+            color: Palette.secondary;
+            vertical-alignment: center;
+            accessible-role: none;
+        }
+    }
+}
+
+// The one dropdown list that can be open: the button that opens it fills this in, DropdownLayer draws it
+export global DropdownList {
+    in-out property <bool> open;
+    // Counts the openings; the button that opened the list keeps the number as its ticket
+    in-out property <int> opening;
+    // The button, in window coordinates
+    in-out property <length> x;
+    in-out property <length> y;
+    in-out property <length> width;
+    in-out property <length> height;
+    in-out property <[string]> options;
+    // The option the button shows, and the one the keys are on
+    in-out property <int> current;
+    in-out property <int> highlight;
+    // What was chosen, for the button that opened the list; -1 when it closed without a choice
+    in-out property <int> picked: -1;
+
+    public function show(options: [string], current: int, x: length, y: length, width: length, height: length) -> int {
+        self.options = options;
+        self.current = current;
+        self.highlight = current;
+        self.picked = -1;
+        self.x = x;
+        self.y = y;
+        self.width = width;
+        self.height = height;
+        self.opening += 1;
+        self.open = true;
+        self.opening
+    }
+    public function pick(index: int) {
+        self.picked = index;
+        self.open = false;
+    }
+    // Closes without a choice: a press outside, Escape, the window losing the focus or changing its size
+    public function close() {
+        self.open = false;
+    }
+    public function move(by: int) {
+        self.highlight = clamp(self.highlight + by, 0, self.options.length - 1);
+    }
+}
+
+// A dropdown's button: click opens the list, which DropdownLayer draws above the whole window. Up, Down, Enter and
+// Space work while the button has the keyboard focus, which it shows like an open list, with the accent border.
+export component Dropdown inherits Rectangle {
+    in property <[string]> options;
+    in property <int> current;
+    in property <string> label;
+    out property <bool> has-focus: scope.has-focus;
+    callback selected(int);
+    // As wide as its value (at least what the use site sets as `min-width`), never stretched
+    horizontal-stretch: 0;
+    height: 32px;
+    border-radius: 4px;
+    border-width: 1px;
+    border-color: root.mine || scope.has-focus ? Palette.accent : Palette.stroke;
+    background: touch.pressed ? Palette.control-pressed : touch.has-hover ? Palette.control-hover : Palette.control;
+    accessible-role: combobox;
+    accessible-label: root.label;
+    accessible-value: root.options[root.current];
+    accessible-expandable: true;
+    accessible-expanded: root.mine;
+    accessible-action-expand => { root.toggle(); }
+
+    // The opening this button made, and whether its list is the open one
+    property <int> ticket: -1;
+    property <bool> mine: DropdownList.open && DropdownList.opening == self.ticket;
+    // The choice comes back through the list: it closes with `picked` set, or with -1 when nothing was chosen
+    property <bool> list-open: DropdownList.open;
+    changed list-open => {
+        if (!self.list-open && DropdownList.opening == self.ticket) {
+            self.ticket = -1;
+            if (DropdownList.picked >= 0 && DropdownList.picked != root.current) {
+                root.selected(DropdownList.picked);
+            }
+        }
+    }
+    // The list follows its button: taking the focus can scroll the page to bring the button into view, and a
+    // scroll started by the wheel may still be running
+    property <Point> place: self.mine ? self.absolute-position : { x: 0px, y: 0px };
+    changed place => {
+        if (self.mine) {
+            DropdownList.x = self.absolute-position.x;
+            DropdownList.y = self.absolute-position.y;
+        }
+    }
+    // Opens this button's list, or closes it when it is open
+    function toggle() {
+        if (root.mine) {
+            DropdownList.close();
+        } else {
+            root.ticket = DropdownList.show(root.options, root.current, root.absolute-position.x,
+                root.absolute-position.y, root.width, root.height);
+        }
+    }
+
+    scope := FocusScope {
+        key-pressed(e) => {
+            if (root.mine) {
+                if (e.text == Key.UpArrow) {
+                    DropdownList.move(-1);
+                    return accept;
+                }
+                if (e.text == Key.DownArrow) {
+                    DropdownList.move(1);
+                    return accept;
+                }
+                if (e.text == Key.Return || e.text == " ") {
+                    DropdownList.pick(DropdownList.highlight);
+                    return accept;
+                }
+            } else if (e.text == Key.Return || e.text == " " || e.text == Key.UpArrow || e.text == Key.DownArrow) {
+                root.toggle();
+                return accept;
+            }
+            reject
+        }
+        // Tab away with the list open: it closes
+        changed has-focus => {
+            if (!self.has-focus && root.mine) {
+                DropdownList.close();
+            }
+        }
+    }
+    HorizontalLayout {
+        padding-left: 11px;
+        padding-right: 11px;
+        spacing: 8px;
+        Text {
+            text: root.options[root.current];
+            color: Palette.text;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+            overflow: elide;
+            accessible-role: none;
+        }
+        // The software renderer doesn't rotate: the open list has a glyph of its own
+        Glyph {
+            width: 12px;
+            text: root.mine ? "\u{E70E}" : "\u{E70D}";
+            font-size: 10px;
+            color: Palette.text;
+            horizontal-alignment: center;
+        }
+    }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            // A TouchArea does not move the keyboard focus by itself
+            scope.focus();
+            root.toggle();
+        }
+    }
+}
+
+// The window's layer for the open dropdown list: under its button (above when there is no room below), as wide as
+// the button. A press outside closes it and goes no further; the wheel does nothing while it is open.
+export component DropdownLayer inherits Rectangle {
+    visible: DropdownList.open;
+
+    TouchArea {
+        pointer-event(e) => {
+            if (e.kind == PointerEventKind.down) {
+                DropdownList.close();
+            }
+        }
+        scroll-event => {
+            accept
+        }
+    }
+    Rectangle {
+        property <length> gap: 4px;
+        property <bool> above: DropdownList.y + DropdownList.height + self.gap + self.height > root.height
+            && DropdownList.y - self.gap - self.height >= 0;
+        x: max(0px, min(root.width - self.width, DropdownList.x));
+        y: self.above ? DropdownList.y - self.gap - self.height : DropdownList.y + DropdownList.height + self.gap;
+        width: DropdownList.width;
+        height: DropdownList.options.length * 32px + 10px;
+        background: Palette.popup;
+        border-width: 1px;
+        border-color: Palette.popup-stroke;
+        border-radius: 8px;
+        drop-shadow-offset-y: 8px;
+        drop-shadow-blur: 24px;
+        drop-shadow-color: rgba(0, 0, 0, 0.5);
+        accessible-role: list;
+        accessible-label: DropdownList.options[DropdownList.current];
+
+        // Presses between the options stay in the list
+        TouchArea { }
+        for option[i] in DropdownList.options: Rectangle {
+            x: 5px;
+            y: 5px + i * 32px;
+            width: parent.width - 10px;
+            height: 32px;
+            border-radius: 4px;
+            background: option-touch.has-hover || i == DropdownList.highlight ? Palette.control-hover : transparent;
+            accessible-role: list-item;
+            accessible-label: option;
+            accessible-item-selected: i == DropdownList.current;
+            accessible-item-index: i;
+            accessible-item-count: DropdownList.options.length;
+            accessible-action-default => { DropdownList.pick(i); }
+            Rectangle {
+                x: 0;
+                width: 3px;
+                height: 14px;
+                border-radius: 1.5px;
+                background: Palette.accent;
+                visible: i == DropdownList.current;
+            }
+            Text {
+                x: 10px;
+                width: parent.width - 20px;
+                text: option;
+                color: Palette.text;
+                vertical-alignment: center;
+                overflow: elide;
+                accessible-role: none;
+            }
+            option-touch := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { DropdownList.pick(i); }
+            }
+        }
+    }
+}
+
+// A button across the whole width of a settings page: [glyph] label [a small mark after it], centred
+export component WideButton inherits Rectangle {
+    in property <string> glyph;
+    in property <string> text;
+    in property <string> trailing-glyph;
+    // What the mark after the label says, for a screen reader
+    in property <string> trailing-label;
+    callback clicked();
+    min-height: 40px;
+    border-radius: 4px;
+    border-width: 1px;
+    border-color: Palette.stroke;
+    background: touch.pressed ? Palette.control-pressed : touch.has-hover ? Palette.control-hover : Palette.control;
+    accessible-role: button;
+    accessible-label: root.text;
+    accessible-description: root.trailing-label;
+    accessible-action-default => { root.clicked(); }
+    HorizontalLayout {
+        padding-left: 15px;
+        padding-right: 15px;
+        padding-top: 9px;
+        padding-bottom: 9px;
+        spacing: 8px;
+        alignment: center;
+        Glyph {
+            width: 16px;
+            text: root.glyph;
+            font-size: 14px;
+            color: Palette.text;
+            horizontal-alignment: center;
+        }
+        Text {
+            text: root.text;
+            font-size: 14px;
+            color: Palette.text;
+            vertical-alignment: center;
+            wrap: word-wrap;
+        }
+        if root.trailing-glyph != "": Glyph {
+            width: 13px;
+            text: root.trailing-glyph;
+            font-size: 11px;
+            horizontal-alignment: center;
+        }
+    }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+// One key of a shortcut, drawn as a key cap
+component KeyCap inherits Rectangle {
+    in property <string> text;
+    border-radius: 3px;
+    border-width: 1px;
+    border-color: Palette.popup-stroke;
+    background: Palette.control;
+    HorizontalLayout {
+        padding-left: 7px;
+        padding-right: 7px;
+        padding-top: 2px;
+        padding-bottom: 2px;
+        Text {
+            text: root.text;
+            font-size: 12px;
+            color: Palette.text;
+            accessible-role: none;
+        }
+    }
+}
+
+// The field that records the overlay shortcut: focused, it takes the next key combination (read in Rust from the
+// raw key event, so it works the same on every keyboard layout); otherwise it shows the shortcut as key caps. The
+// keys come as a list: a key's own name may contain "+", so the label cannot be split again here.
+export component ShortcutField inherits Rectangle {
+    in property <[string]> keys;
+    in property <string> text;
+    in property <string> label;
+    out property <bool> recording: focus.has-focus;
+    height: 32px;
+    border-radius: 4px;
+    border-width: 1px;
+    border-color: root.recording ? Palette.accent : Palette.stroke;
+    background: Palette.input;
+    accessible-role: text-input;
+    accessible-label: root.label;
+    accessible-value: root.text;
+    focus := FocusScope {
+        key-pressed(e) => {
+            // Tab leaves the field; every other key is the shortcut, handled before it gets here
+            if (e.text == Key.Tab || e.text == Key.Backtab) {
+                return reject;
+            }
+            accept
+        }
+    }
+    HorizontalLayout {
+        padding-left: root.recording ? 11px : 9px;
+        padding-right: root.recording ? 11px : 9px;
+        spacing: 4px;
+        if !root.recording: HorizontalLayout {
+            spacing: 4px;
+            for key in root.keys: VerticalLayout {
+                alignment: center;
+                KeyCap {
+                    text: key;
+                }
+            }
+        }
+        if root.recording: Text {
+            text: T.t("overlay.recording");
+            color: Palette.secondary;
+            vertical-alignment: center;
+            accessible-role: none;
+        }
+    }
+    TouchArea {
+        mouse-cursor: pointer;
+        clicked => { focus.focus(); }
+    }
+}
+
+// A line as thick as a 1px border is drawn: one physical pixel up to 175%. A Rectangle with `height: 1px` is 1 or 2
+// pixels thick at 125-175%, depending on where it lands.
+export component Divider inherits Rectangle {
+    height: max(1, floor(1px / 1phx)) * 1phx;
+    background: Palette.stroke;
+}
+
+// A block that opens by growing and closes by shrinking. Its content is laid out at its natural height all the
+// time and only clipped, so nothing in it is squeezed while the block moves, and the layout around it follows its
+// height frame by frame. Closed, it is 0 high, and what is in it can't be clicked, reached with Tab or read by a
+// screen reader.
+export component Collapsible inherits Rectangle {
+    in property <bool> open;
+    in property <duration> grow: 180ms;
+    in property <duration> fade: 140ms;
+    // Opens and closes at once: the block shows another device's values
+    in property <bool> instant;
+    // Its height when open
+    out property <length> full-height: content.preferred-height;
+    height: root.open ? content.preferred-height : 0px;
+    opacity: root.open ? 1 : 0;
+    clip: true;
+    animate height { duration: root.instant ? 0ms : root.grow; easing: cubic-bezier(0.2, 0, 0, 1); }
+    animate opacity { duration: root.instant ? 0ms : root.fade; easing: ease-out; }
+    Rectangle {
+        y: 0;
+        height: content.preferred-height;
+        visible: root.height > 0px;
+        content := VerticalLayout {
+            @children
+        }
+    }
+}
+
+// The drag handle: six dots, 2 columns x 3 rows, in a 12x28 area. The mockup's dots are 2.6px wide, 5px apart; they
+// are made whole physical pixels, or the renderer would round each one its own way.
+export component Grip inherits Rectangle {
+    in property <color> ink: Palette.offline;
+    width: 12px;
+    height: 28px;
+    property <length> dot: max(2, round(2.6px / 1phx)) * 1phx;
+    property <length> pitch: round(5px / 1phx) * 1phx;
+    property <length> box-width: self.pitch + self.dot;
+    property <length> box-height: 2 * self.pitch + self.dot;
+    // The dots' box starts on a pixel edge of the window: centred by hand, it may start half a pixel off, and the
+    // renderer then rounds each dot on its own, one up and the next down
+    Rectangle {
+        x: round((root.absolute-position.x + (root.width - root.box-width) / 2) / 1phx) * 1phx
+            - root.absolute-position.x;
+        y: round((root.absolute-position.y + (root.height - root.box-height) / 2) / 1phx) * 1phx
+            - root.absolute-position.y;
+        width: root.box-width;
+        height: root.box-height;
+        for i in 6: Rectangle {
+            x: mod(i, 2) * root.pitch;
+            y: floor(i / 2) * root.pitch;
+            width: root.dot;
+            height: root.dot;
+            border-radius: root.dot / 2;
+            background: root.ink;
+        }
+    }
+}
+
+// A dashed rounded outline, as the drop placeholder has. The dashes are 1-physical-pixel rectangles and the corners
+// quarters of a rounded border: a dashed Path that moves leaves its anti-aliased pixels brighter where the renderer
+// redraws only part of the window, as the app's window does. Dashes and gaps are whole physical pixels, centred on
+// each straight side.
+export component DashedFrame inherits Rectangle {
+    in property <color> ink: Palette.accent;
+    in property <length> radius: 8px;
+    property <length> line: max(1, floor(1px / 1phx)) * 1phx;
+    property <length> dash: round(4px / 1phx) * 1phx;
+    property <length> gap: round(3px / 1phx) * 1phx;
+    property <length> r: round(self.radius / 1phx) * 1phx;
+    // This element's edges, each moved to the nearest pixel edge of the window, in its own coordinates
+    property <length> left: round(self.absolute-position.x / 1phx) * 1phx - self.absolute-position.x;
+    property <length> top: round(self.absolute-position.y / 1phx) * 1phx - self.absolute-position.y;
+    property <length> right: round((self.absolute-position.x + self.width) / 1phx) * 1phx - self.absolute-position.x;
+    property <length> bottom: round((self.absolute-position.y + self.height) / 1phx) * 1phx - self.absolute-position.y;
+    // The straight parts of the sides, how many dashes fit in them, and where the first one starts
+    property <length> run-x: self.right - self.left - 2 * self.r;
+    property <length> run-y: self.bottom - self.top - 2 * self.r;
+    property <int> count-x: max(0, floor((self.run-x + self.gap) / (self.dash + self.gap)));
+    property <int> count-y: max(0, floor((self.run-y + self.gap) / (self.dash + self.gap)));
+    property <length> start-x: self.left + self.r
+        + floor((self.run-x - self.count-x * (self.dash + self.gap) + self.gap) / 2 / 1phx) * 1phx;
+    property <length> start-y: self.top + self.r
+        + floor((self.run-y - self.count-y * (self.dash + self.gap) + self.gap) / 2 / 1phx) * 1phx;
+    for i in root.count-x: Rectangle {
+        x: root.start-x + i * (root.dash + root.gap);
+        y: root.top;
+        width: root.dash;
+        height: root.line;
+        background: root.ink;
+    }
+    for i in root.count-x: Rectangle {
+        x: root.start-x + i * (root.dash + root.gap);
+        y: root.bottom - root.line;
+        width: root.dash;
+        height: root.line;
+        background: root.ink;
+    }
+    for i in root.count-y: Rectangle {
+        x: root.left;
+        y: root.start-y + i * (root.dash + root.gap);
+        width: root.line;
+        height: root.dash;
+        background: root.ink;
+    }
+    for i in root.count-y: Rectangle {
+        x: root.right - root.line;
+        y: root.start-y + i * (root.dash + root.gap);
+        width: root.line;
+        height: root.dash;
+        background: root.ink;
+    }
+    // Corner c: 0 top left, 1 top right, 2 bottom left, 3 bottom right
+    for c in 4: Rectangle {
+        x: mod(c, 2) == 0 ? root.left : root.right - root.r;
+        y: c < 2 ? root.top : root.bottom - root.r;
+        width: root.r;
+        height: root.r;
+        clip: true;
+        Rectangle {
+            x: mod(c, 2) == 0 ? 0 : -root.r;
+            y: c < 2 ? 0 : -root.r;
+            width: 2 * root.r;
+            height: 2 * root.r;
+            border-radius: root.r;
+            border-width: root.line;
+            border-color: root.ink;
+        }
+    }
+}
+
+// The "connected" dot over a device's icon: an 11px circle, good green, with a 2px ring in the colour of what is
+// behind it (the card, or the lifted card). One rectangle: the ring is its border, so it can't sit off centre.
+export component ConnectedDot inherits Rectangle {
+    in property <color> ring: Palette.card;
+    property <length> size: round(11px / 1phx) * 1phx;
+    width: self.size;
+    height: self.size;
+    border-radius: self.size / 2;
+    border-width: round(2px / 1phx) * 1phx;
+    border-color: root.ring;
+    background: Palette.good;
+    accessible-role: image;
+    accessible-label: T.t("state.online");
+}
+
+// The mark after a pinned device's name. No glyph is a whole filled pin in both icon fonts: the filling and the
+// outline are two glyphs drawn on top of each other.
+export component PinMark inherits Rectangle {
+    in property <color> ink: Palette.text;
+    in property <length> size: 13px;
+    width: root.size;
+    height: root.size;
+    accessible-role: image;
+    accessible-label: T.t("device.pinned");
+    Glyph {
+        text: "\u{E842}";
+        font-size: root.size;
+        color: root.ink;
+        horizontal-alignment: center;
+    }
+    Glyph {
+        text: "\u{E840}";
+        font-size: root.size;
+        color: root.ink;
+        horizontal-alignment: center;
+    }
+}
+
+// "Hide": an eye with a stroke across it. The crossed eye of Segoe Fluent Icons is missing from Segoe MDL2 Assets.
+export component HideGlyph inherits Rectangle {
+    in property <color> ink: Palette.secondary;
+    in property <length> size: 15px;
+    width: root.size;
+    height: root.size;
+    Glyph {
+        text: "\u{E890}";
+        font-size: root.size;
+        color: root.ink;
+        horizontal-alignment: center;
+    }
+    Path {
+        viewbox-width: 16;
+        viewbox-height: 16;
+        commands: "M 2.5 2 L 13.5 14";
+        stroke: root.ink;
+        stroke-width: root.size / 16 * 1.1;
+    }
+}
+
+// The overlay tab's glyph in a 15px box: a screen with a small filled box in its upper right corner, in whole
+// physical pixels
+export component OverlayTabGlyph inherits Rectangle {
+    in property <color> ink: Palette.secondary;
+    width: 15px;
+    height: 15px;
+    property <float> scale: 1px / 1phx;
+    property <length> stroke: max(1, round(1.06 * self.scale)) * 1phx;
+    Rectangle {
+        width: round(13 * root.scale) * 1phx;
+        height: round(11 * root.scale) * 1phx;
+        border-radius: round(2 * root.scale) * 1phx;
+        border-width: root.stroke;
+        border-color: root.ink;
+        Rectangle {
+            x: parent.width - 2 * root.stroke - self.width;
+            y: 2 * root.stroke;
+            width: round(4 * root.scale) * 1phx;
+            height: round(2.6 * root.scale) * 1phx;
+            background: root.ink;
+        }
+    }
+}

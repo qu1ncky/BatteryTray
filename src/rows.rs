@@ -1,5 +1,5 @@
-//! Devices as the app shows them, and the two decisions made from them: a finished charge to announce
-//! and low battery reminders due.
+//! Devices as the app shows them and the order the list has them in, and the two decisions made from them: a
+//! finished charge to announce and low battery reminders due.
 
 use crate::reading::{DeviceKind, DeviceReading};
 use crate::settings::AppSettings;
@@ -58,13 +58,103 @@ pub fn rows(
     rows
 }
 
-/// The rows in the order of the settings tab: by kind, then by the name the device gives itself, not the one the user
-/// gave it. The device list goes by the user's name, and there a row may move; here the name is being typed, and a
-/// row that moved at a keystroke took the box out from under the cursor.
-pub fn settings_order(rows: &[DeviceRow]) -> Vec<&DeviceRow> {
+/// The rows in the order of the list, which the overlay and the tray's tooltip follow: the pinned devices first, and
+/// each of the two groups in the order the user put its devices in. A device without a place there comes after those
+/// that have one, by kind, then name - which is every device until the first pin or drag.
+pub fn list_order<'a>(rows: &'a [DeviceRow], settings: &AppSettings) -> Vec<&'a DeviceRow> {
     let mut ordered: Vec<&DeviceRow> = rows.iter().collect();
-    ordered.sort_by_key(|r| (r.kind() as u8, r.any().name.to_lowercase(), r.id.clone()));
+    ordered.sort_by_cached_key(|r| {
+        let place = settings.device_order.iter().position(|id| *id == r.id).unwrap_or(usize::MAX);
+        // The id last: two devices of one kind and name keep their order from one poll to the next
+        (!settings.is_pinned(&r.id), place, r.kind() as u8, r.name.to_lowercase(), r.id.clone())
+    });
     ordered
+}
+
+/// The part of the list a device is shown in. A drag stays within one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Block {
+    /// A card at the top, connected or not.
+    Pinned,
+    /// A card: on the air.
+    Connected,
+    /// A row under "Not connected".
+    Offline,
+    /// A row under "Hidden", whatever else is true of the device.
+    Hidden,
+}
+
+/// Where the list shows a device.
+pub fn block(row: &DeviceRow, settings: &AppSettings) -> Block {
+    let device = settings.device(&row.id);
+    if device.hidden {
+        Block::Hidden
+    } else if device.pinned {
+        Block::Pinned
+    } else if row.online() {
+        Block::Connected
+    } else {
+        Block::Offline
+    }
+}
+
+/// Gives every device a place in the user's order, if it has none yet: after the last one, which is where the list
+/// has it already. So the first pin or drag keeps the order it finds. True when a device was added.
+fn adopt(settings: &mut AppSettings, rows: &[DeviceRow]) -> bool {
+    let new: Vec<String> = list_order(rows, settings)
+        .into_iter()
+        .filter(|r| !settings.device_order.contains(&r.id))
+        .map(|r| r.id.clone())
+        .collect();
+    settings.device_order.extend_from_slice(&new);
+    !new.is_empty()
+}
+
+/// Once the user has put the list in order, a device seen for the first time gets its place for good: the end of its
+/// block. True when there was such a device, and the settings are worth saving.
+pub fn adopt_new(settings: &mut AppSettings, rows: &[DeviceRow]) -> bool {
+    !settings.device_order.is_empty() && adopt(settings, rows)
+}
+
+/// Pins a device, which makes it the last of the pinned ones, or unpins it, which makes it the first of the others.
+/// True when that changed anything.
+pub fn set_pinned(settings: &mut AppSettings, rows: &[DeviceRow], id: &str, pinned: bool) -> bool {
+    if settings.is_pinned(id) == pinned {
+        return false;
+    }
+    adopt(settings, rows);
+    settings.device_order.retain(|other| other != id);
+    // The pinned devices are shown in the order they are named in, wherever the others stand between them, and so are
+    // the others: the end of the whole order is the end of the pinned ones, and its start the start of the rest
+    if pinned {
+        settings.device_order.push(id.to_string());
+    } else {
+        settings.device_order.insert(0, id.to_string());
+    }
+    settings.device_mut(id).pinned = pinned;
+    true
+}
+
+/// Moves a device to the place of another one in its block, which makes room: dragged down it lands right below that
+/// one, dragged up right above it. No other device changes its place among the rest, in this block or in any other.
+/// Refused (false) unless the list shows the two in the same block, and for hidden ones: a drag never leaves its
+/// block.
+pub fn move_onto(settings: &mut AppSettings, rows: &[DeviceRow], id: &str, onto: &str) -> bool {
+    let block_of = |id: &str| rows.iter().find(|r| r.id == id).map(|r| block(r, settings));
+    let (Some(own), Some(other)) = (block_of(id), block_of(onto)) else { return false };
+    if id == onto || own != other || own == Block::Hidden {
+        return false;
+    }
+    adopt(settings, rows);
+    let order = &mut settings.device_order;
+    let place = |order: &[String], id: &str| order.iter().position(|other| other == id);
+    if let (Some(from), Some(to)) = (place(order, id), place(order, onto)) {
+        // Taken out first, the device goes in at the index the other one had. If the other one stood further down,
+        // it has moved up by one meanwhile and the device lands right below it; if further up, right above it
+        let moved = order.remove(from);
+        order.insert(to, moved);
+    }
+    true
 }
 
 /// Spots the moment a charge finishes: a device that was charging reports itself full with the charger still in.
@@ -185,54 +275,270 @@ mod tests {
         DeviceRow { id: "m".into(), current: Some(r), last: None, name: "Mouse".into() }
     }
 
-    /// `own`: the name the device gives itself; `shown`: the one the user gave it, if any.
-    fn named(id: &str, kind: DeviceKind, own: &str, shown: Option<&str>) -> DeviceRow {
-        let r = DeviceReading::new(id, own, kind, "test");
-        DeviceRow { id: id.into(), current: Some(r), last: None, name: shown.unwrap_or(own).into() }
+    fn device(id: &str, kind: DeviceKind, name: &str, online: bool) -> DeviceReading {
+        DeviceReading { online, ..DeviceReading::new(id, name, kind, "test") }
     }
 
-    fn ids(rows: &[DeviceRow]) -> Vec<&str> {
-        settings_order(rows).into_iter().map(|r| r.id.as_str()).collect()
+    /// A headset, a mouse and a keyboard on the air, a second keyboard and a gamepad that are off: by kind and name
+    /// that is headset, mouse, old, keys, pad.
+    fn devices() -> Vec<DeviceReading> {
+        vec![
+            device("pad", DeviceKind::Gamepad, "Xbox", false),
+            device("keys", DeviceKind::Keyboard, "Rainy 75", true),
+            device("old", DeviceKind::Keyboard, "MX Keys", false),
+            device("mouse", DeviceKind::Mouse, "Attack Shark R3", true),
+            device("headset", DeviceKind::Headset, "Barracuda X", true),
+        ]
+    }
+
+    /// The whole list, top to bottom.
+    fn list(devices: &[DeviceReading], settings: &AppSettings) -> Vec<String> {
+        list_order(&rows(devices.to_vec(), &[], settings), settings).iter().map(|r| r.id.clone()).collect()
+    }
+
+    /// What the list shows in one block, top to bottom.
+    fn shown(devices: &[DeviceReading], settings: &AppSettings, in_block: Block) -> Vec<String> {
+        let rows = rows(devices.to_vec(), &[], settings);
+        list_order(&rows, settings).iter().filter(|r| block(r, settings) == in_block).map(|r| r.id.clone()).collect()
+    }
+
+    fn pin(settings: &mut AppSettings, devices: &[DeviceReading], id: &str, pinned: bool) -> bool {
+        set_pinned(settings, &rows(devices.to_vec(), &[], settings), id, pinned)
+    }
+
+    fn drag(settings: &mut AppSettings, devices: &[DeviceReading], id: &str, onto: &str) -> bool {
+        move_onto(settings, &rows(devices.to_vec(), &[], settings), id, onto)
+    }
+
+    /// What the app does after every poll.
+    fn poll(settings: &mut AppSettings, devices: &[DeviceReading]) -> bool {
+        adopt_new(settings, &rows(devices.to_vec(), &[], settings))
     }
 
     #[test]
-    fn settings_go_by_kind_then_by_the_device_own_name() {
-        let rows = [
-            named("mouse-b", DeviceKind::Mouse, "R3 Mouse", None),
-            named("headset", DeviceKind::Headset, "Razer Barracuda X", None),
-            named("mouse-a", DeviceKind::Mouse, "attack shark r3", None),
-        ];
-        assert_eq!(ids(&rows), ["headset", "mouse-a", "mouse-b"]);
+    fn the_list_goes_by_kind_then_name_until_the_user_orders_it() {
+        let mut settings = AppSettings::default();
+        assert_eq!(list(&devices(), &settings), ["headset", "mouse", "old", "keys", "pad"]);
+        // By the name the user gave, whatever its case
+        settings.set_name("old", "Sofa keyboard");
+        assert_eq!(list(&devices(), &settings), ["headset", "mouse", "keys", "old", "pad"]);
+        assert!(settings.device_order.is_empty(), "nothing is kept for it");
     }
 
     #[test]
-    fn a_name_being_typed_does_not_move_the_settings_row() {
-        // Typing "1" as the name of "Razer Barracuda X (BT)" put it above "Razer Barracuda X": the list was rebuilt
-        // and the name box lost its focus
-        let dongle = named("razer:barracuda-x", DeviceKind::Headset, "Razer Barracuda X", None);
-        for typed in [None, Some("1"), Some("1 "), Some("A"), Some("zzz"), Some("razer")] {
-            let rows = [dongle.clone(), named("bt:445ECD546C71", DeviceKind::Headset, "Razer Barracuda X (BT)", typed)];
-            assert_eq!(ids(&rows), ["razer:barracuda-x", "bt:445ECD546C71"]);
+    fn two_devices_of_one_kind_and_name_go_by_id() {
+        let twins =
+            [device("ry:b", DeviceKind::Mouse, "Mouse", true), device("ry:a", DeviceKind::Mouse, "mouse", true)];
+        let mut settings = AppSettings::default();
+        assert_eq!(list(&twins, &settings), ["ry:a", "ry:b"]);
+        let swapped = [twins[1].clone(), twins[0].clone()];
+        assert_eq!(list(&swapped, &settings), ["ry:a", "ry:b"], "whichever the providers report first");
+        // And that is the order the first pin keeps, not the one the readings came in
+        let all = [twins[0].clone(), twins[1].clone(), device("pad", DeviceKind::Gamepad, "Xbox", true)];
+        pin(&mut settings, &all, "pad", true);
+        assert_eq!(list(&all, &settings), ["pad", "ry:a", "ry:b"]);
+    }
+
+    #[test]
+    fn a_device_is_shown_in_one_block() {
+        let devices = devices();
+        let mut settings = AppSettings::default();
+        pin(&mut settings, &devices, "pad", true);
+        settings.device_mut("old").hidden = true;
+        assert_eq!(shown(&devices, &settings, Block::Pinned), ["pad"], "pinned while off: still at the top");
+        assert_eq!(shown(&devices, &settings, Block::Connected), ["headset", "mouse", "keys"]);
+        assert!(shown(&devices, &settings, Block::Offline).is_empty());
+        assert_eq!(shown(&devices, &settings, Block::Hidden), ["old"]);
+        // A hidden device is under "Hidden" and nowhere else, pinned or not
+        settings.device_mut("pad").hidden = true;
+        assert!(shown(&devices, &settings, Block::Pinned).is_empty());
+        assert_eq!(shown(&devices, &settings, Block::Hidden), ["pad", "old"]);
+    }
+
+    #[test]
+    fn the_first_pin_keeps_the_order_it_finds() {
+        let devices = devices();
+        let mut settings = AppSettings::default();
+        assert!(pin(&mut settings, &devices, "pad", true));
+        assert_eq!(list(&devices, &settings), ["pad", "headset", "mouse", "old", "keys"]);
+        // From here on a name moves nothing: by name this keyboard would now come after the other one
+        settings.set_name("old", "Sofa keyboard");
+        assert_eq!(list(&devices, &settings), ["pad", "headset", "mouse", "old", "keys"]);
+        let pinned = settings.clone();
+        assert!(!pin(&mut settings, &devices, "pad", true), "pinned already");
+        assert!(!pin(&mut settings, &devices, "keys", false), "not pinned anyway");
+        assert_eq!(settings, pinned);
+    }
+
+    #[test]
+    fn a_pinned_device_goes_last_of_the_pinned_and_an_unpinned_one_first_of_the_rest() {
+        let devices = devices();
+        let mut settings = AppSettings::default();
+        pin(&mut settings, &devices, "pad", true);
+        pin(&mut settings, &devices, "headset", true);
+        assert_eq!(shown(&devices, &settings, Block::Pinned), ["pad", "headset"]);
+        assert_eq!(shown(&devices, &settings, Block::Connected), ["mouse", "keys"]);
+        assert_eq!(shown(&devices, &settings, Block::Offline), ["old"]);
+        // Unpinned: the first of its block, on the air or not
+        pin(&mut settings, &devices, "pad", false);
+        assert_eq!(shown(&devices, &settings, Block::Offline), ["pad", "old"]);
+        pin(&mut settings, &devices, "headset", false);
+        assert_eq!(shown(&devices, &settings, Block::Connected), ["headset", "mouse", "keys"]);
+        assert!(shown(&devices, &settings, Block::Pinned).is_empty());
+    }
+
+    #[test]
+    fn a_drag_moves_one_device_within_its_block() {
+        let devices = devices();
+        let mut settings = AppSettings::default();
+        // Dragged up: above the one it is dropped on
+        assert!(drag(&mut settings, &devices, "keys", "headset"));
+        assert_eq!(shown(&devices, &settings, Block::Connected), ["keys", "headset", "mouse"]);
+        assert_eq!(shown(&devices, &settings, Block::Offline), ["old", "pad"], "the other block is as it was");
+        // Dragged down: below it
+        assert!(drag(&mut settings, &devices, "keys", "mouse"));
+        assert_eq!(shown(&devices, &settings, Block::Connected), ["headset", "mouse", "keys"]);
+        assert!(drag(&mut settings, &devices, "old", "pad"));
+        assert_eq!(shown(&devices, &settings, Block::Offline), ["pad", "old"]);
+        assert_eq!(shown(&devices, &settings, Block::Connected), ["headset", "mouse", "keys"]);
+        // The pinned ones among themselves, connected or not
+        pin(&mut settings, &devices, "pad", true);
+        pin(&mut settings, &devices, "mouse", true);
+        assert!(drag(&mut settings, &devices, "mouse", "pad"));
+        assert_eq!(shown(&devices, &settings, Block::Pinned), ["mouse", "pad"]);
+        assert_eq!(shown(&devices, &settings, Block::Connected), ["headset", "keys"]);
+    }
+
+    #[test]
+    fn a_drag_passes_no_more_devices_than_it_has_to() {
+        // a, c and e are on the air, b and d between them are off
+        let mut devices: Vec<DeviceReading> = ["a", "b", "c", "d", "e"]
+            .iter()
+            .map(|id| device(id, DeviceKind::Mouse, id, *id != "b" && *id != "d"))
+            .collect();
+        let mut settings = AppSettings::default();
+        assert!(drag(&mut settings, &devices, "e", "c"));
+        // e went over d only because d stood between it and c; b, further up, is still above it
+        assert_eq!(settings.device_order, ["a", "b", "e", "c", "d"]);
+        assert!(drag(&mut settings, &devices, "a", "e"));
+        assert_eq!(settings.device_order, ["b", "e", "a", "c", "d"]);
+        // Which shows once they are all on the air
+        for d in &mut devices {
+            d.online = true;
         }
+        assert_eq!(shown(&devices, &settings, Block::Connected), ["b", "e", "a", "c", "d"]);
     }
 
     #[test]
-    fn settings_rows_with_the_same_own_name_go_by_id() {
-        let rows = [
-            named("ry:b", DeviceKind::Mouse, "Mouse", Some("First")),
-            named("ry:a", DeviceKind::Mouse, "Mouse", Some("Second")),
-        ];
-        assert_eq!(ids(&rows), ["ry:a", "ry:b"]);
+    fn a_drag_never_leaves_its_block() {
+        let devices = devices();
+        let mut settings = AppSettings::default();
+        pin(&mut settings, &devices, "mouse", true);
+        settings.device_mut("keys").hidden = true;
+        settings.device_mut("pad").hidden = true;
+        let before = settings.clone();
+        for (id, onto) in [
+            ("headset", "old"),     // on the air onto one that is off
+            ("old", "headset"),     // and the other way round
+            ("headset", "mouse"),   // onto a pinned one
+            ("mouse", "headset"),   // a pinned one out of its block
+            ("keys", "headset"),    // a hidden one
+            ("headset", "keys"),    // onto a hidden one
+            ("keys", "pad"),        // under "Hidden" nothing is dragged at all
+            ("headset", "headset"), // onto itself
+            ("headset", "gone"),    // onto a device the list doesn't have
+            ("gone", "headset"),
+        ] {
+            assert!(!drag(&mut settings, &devices, id, onto), "{id} onto {onto}");
+        }
+        assert_eq!(settings, before);
+        // A drag that is refused is no reason to stop going by kind and name
+        let mut untouched = AppSettings::default();
+        assert!(!drag(&mut untouched, &devices, "headset", "old"));
+        assert_eq!(untouched, AppSettings::default());
     }
 
     #[test]
-    fn a_remembered_device_goes_by_its_last_reading_in_the_settings() {
-        let last = DeviceReading::new("old", "Aerox 3", DeviceKind::Mouse, "test");
-        let rows = [
-            named("new", DeviceKind::Mouse, "R3 Mouse", None),
-            DeviceRow { id: "old".into(), current: None, last: Some(last), name: "Zzz".into() },
-        ];
-        assert_eq!(ids(&rows), ["old", "new"]);
+    fn a_device_seen_for_the_first_time_goes_last_in_its_block() {
+        let mut devices = devices();
+        let mut settings = AppSettings::default();
+        // Nothing ordered yet: it goes where its kind and name put it, and nothing is kept
+        devices.push(device("new", DeviceKind::Headset, "Aaa", true));
+        assert_eq!(shown(&devices, &settings, Block::Connected), ["new", "headset", "mouse", "keys"]);
+        assert!(!poll(&mut settings, &devices));
+        assert!(settings.device_order.is_empty());
+
+        // Ordered by the user before it turns up: last, also before it is given its place for good
+        devices.pop();
+        drag(&mut settings, &devices, "keys", "headset");
+        devices.push(device("new", DeviceKind::Headset, "Aaa", true));
+        assert_eq!(shown(&devices, &settings, Block::Connected), ["keys", "headset", "mouse", "new"]);
+        assert!(poll(&mut settings, &devices));
+        assert!(!poll(&mut settings, &devices), "once");
+        assert_eq!(settings.device_order.last().map(String::as_str), Some("new"));
+        // The next one comes after it, though its name would put it first
+        devices.push(device("newer", DeviceKind::Headset, "Aa", true));
+        devices.push(device("off", DeviceKind::Headset, "A", false));
+        assert!(poll(&mut settings, &devices));
+        assert_eq!(shown(&devices, &settings, Block::Connected), ["keys", "headset", "mouse", "new", "newer"]);
+        assert_eq!(shown(&devices, &settings, Block::Offline), ["old", "pad", "off"]);
+    }
+
+    #[test]
+    fn a_device_keeps_its_place_while_it_is_hidden_off_or_gone() {
+        let mut devices = devices();
+        let mut settings = AppSettings::default();
+        drag(&mut settings, &devices, "mouse", "headset");
+        assert_eq!(shown(&devices, &settings, Block::Connected), ["mouse", "headset", "keys"]);
+
+        settings.device_mut("headset").hidden = true;
+        assert_eq!(shown(&devices, &settings, Block::Connected), ["mouse", "keys"]);
+        settings.device_mut("headset").hidden = false;
+        assert_eq!(shown(&devices, &settings, Block::Connected), ["mouse", "headset", "keys"]);
+
+        // Off: among the rows under "Not connected" by the same order; back on the air, where it was
+        devices.iter_mut().find(|d| d.id == "headset").unwrap().online = false;
+        assert_eq!(shown(&devices, &settings, Block::Connected), ["mouse", "keys"]);
+        assert_eq!(shown(&devices, &settings, Block::Offline), ["headset", "old", "pad"]);
+        devices.iter_mut().find(|d| d.id == "headset").unwrap().online = true;
+
+        // Gone (its dongle unplugged) while the others are moved, and back
+        let without: Vec<DeviceReading> = devices.iter().filter(|d| d.id != "mouse").cloned().collect();
+        assert!(drag(&mut settings, &without, "keys", "headset"));
+        assert_eq!(shown(&without, &settings, Block::Connected), ["keys", "headset"]);
+        assert!(!poll(&mut settings, &devices), "it is no new device");
+        assert_eq!(shown(&devices, &settings, Block::Connected), ["mouse", "keys", "headset"]);
+    }
+
+    #[test]
+    fn pins_set_in_the_file_by_hand_work_without_an_order() {
+        let devices = devices();
+        let mut settings = AppSettings::default();
+        settings.device_mut("pad").pinned = true;
+        settings.device_mut("keys").pinned = true;
+        // Both halves by kind and name, and still no order to add a new device to
+        assert_eq!(list(&devices, &settings), ["keys", "pad", "headset", "mouse", "old"]);
+        assert!(!poll(&mut settings, &devices));
+        // The first drag or pin keeps that picture
+        assert!(drag(&mut settings, &devices, "pad", "keys"));
+        assert_eq!(list(&devices, &settings), ["pad", "keys", "headset", "mouse", "old"]);
+        assert!(pin(&mut settings, &devices, "headset", true));
+        assert!(pin(&mut settings, &devices, "keys", false));
+        assert_eq!(list(&devices, &settings), ["pad", "headset", "keys", "mouse", "old"]);
+    }
+
+    #[test]
+    fn the_users_order_is_the_lists_alone() {
+        // The reminder, which goes by the rows as they come, lists its devices as it always did
+        let devices = devices();
+        let mut settings = AppSettings::default();
+        let by_kind_and_name: Vec<String> = rows(devices.clone(), &[], &settings).into_iter().map(|r| r.id).collect();
+        pin(&mut settings, &devices, "pad", true);
+        drag(&mut settings, &devices, "keys", "headset");
+        assert_eq!(list(&devices, &settings), ["pad", "keys", "headset", "mouse", "old"]);
+        let rows: Vec<String> = rows(devices, &[], &settings).into_iter().map(|r| r.id).collect();
+        assert_eq!(rows, by_kind_and_name);
+        assert_eq!(rows, ["headset", "mouse", "old", "keys", "pad"]);
     }
 
     #[test]

@@ -1,0 +1,623 @@
+// The settings screen: the back button and the title, three tabs, and a page for each. Every value comes from
+// Rust; changes go back through the callbacks.
+
+import { ScrollView } from "std-widgets.slint";
+import { Palette, T, Glyph, Card, SectionHeader, Hint, Btn, StepSlider } from "theme.slint";
+import { SwitchRow, TipButton, InfoTip, NumberField, Dropdown, WideButton, ShortcutField, Divider, OverlayTabGlyph } from "controls.slint";
+
+// One of the three tabs: a glyph and a label, centred, and a bar along the bottom, in the accent colour under the
+// current one
+component SettingsTab inherits Rectangle {
+    in property <string> text;
+    // "" for the overlay tab, whose glyph is drawn
+    in property <string> glyph;
+    in property <bool> checked;
+    callback clicked();
+    // Thirds of the strip whatever the labels: stretch alone shares out only what is left after each tab's own
+    // width
+    min-width: 0px;
+    preferred-width: 0px;
+    horizontal-stretch: 1;
+    border-radius: 4px;
+    background: touch.has-hover ? Palette.card : transparent;
+    accessible-role: tab;
+    accessible-label: root.text;
+    accessible-checked: root.checked;
+    accessible-action-default => { root.clicked(); }
+    property <color> ink: root.checked ? Palette.text : Palette.secondary;
+    HorizontalLayout {
+        padding-top: 7px;
+        padding-bottom: 7px;
+        spacing: 6px;
+        alignment: center;
+        if root.glyph != "": Glyph {
+            width: 15px;
+            text: root.glyph;
+            font-size: 15px;
+            color: root.ink;
+            horizontal-alignment: center;
+        }
+        if root.glyph == "": VerticalLayout {
+            alignment: center;
+            OverlayTabGlyph {
+                ink: root.ink;
+            }
+        }
+        Text {
+            text: root.text;
+            font-size: 14px;
+            color: root.ink;
+            vertical-alignment: center;
+            overflow: elide;
+            accessible-role: none;
+        }
+    }
+    Rectangle {
+        y: parent.height - self.height;
+        height: 3px;
+        border-radius: 1.5px;
+        background: root.checked ? Palette.accent : Palette.track;
+    }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+// The frame of the settings screen. The pages are its children, stacked and hidden rather than destroyed: a field
+// that has the focus when its page goes then loses it and commits, and the window can still reach them by name.
+export component SettingsScreen inherits Rectangle {
+    in property <int> tab;
+    callback back();
+    callback tab-clicked(int);
+    VerticalLayout {
+        padding-top: 14px;
+        padding-right: 14px;
+        padding-bottom: 12px;
+        padding-left: 20px;
+        // The back arrow's left edge is in line with the content: the button's own padding stands out to the left
+        HorizontalLayout {
+            padding-right: 6px;
+            padding-left: -8px;
+            spacing: 4px;
+            TipButton {
+                width: 34px;
+                height: 34px;
+                glyph: "\u{E72B}";
+                glyph-size: 16px;
+                tip: T.t("back");
+                clicked => { root.back(); }
+            }
+            Text {
+                text: T.t("settings");
+                font-size: 22px;
+                font-weight: 600;
+                color: Palette.text;
+                vertical-alignment: center;
+                horizontal-stretch: 1;
+            }
+        }
+        HorizontalLayout {
+            padding-top: 10px;
+            padding-right: 6px;
+            padding-bottom: 14px;
+            spacing: 4px;
+            accessible-role: tab-list;
+            SettingsTab {
+                text: T.t("general.header");
+                glyph: "\u{E713}";
+                checked: root.tab == 0;
+                clicked => { root.tab-clicked(0); }
+            }
+            SettingsTab {
+                text: T.t("alerts.header");
+                glyph: "\u{EA8F}";
+                checked: root.tab == 1;
+                clicked => { root.tab-clicked(1); }
+            }
+            SettingsTab {
+                text: T.t("overlay.header");
+                checked: root.tab == 2;
+                clicked => { root.tab-clicked(2); }
+            }
+        }
+        Rectangle {
+            vertical-stretch: 1;
+            @children
+        }
+    }
+}
+
+// A page of its own scroll view: the cards, 8px apart
+component Page inherits Rectangle {
+    ScrollView {
+        VerticalLayout {
+            alignment: start;
+            padding-right: 6px;
+            spacing: 8px;
+            @children
+        }
+    }
+}
+
+// A row of a settings card with a control on its right: the label wraps, the control keeps its size
+component ControlRow inherits HorizontalLayout {
+    in property <string> text;
+    min-height: 48px;
+    padding-left: 16px;
+    padding-right: 16px;
+    spacing: 12px;
+    Text {
+        text: root.text;
+        color: Palette.text;
+        vertical-alignment: center;
+        horizontal-stretch: 1;
+        wrap: word-wrap;
+    }
+    VerticalLayout {
+        alignment: center;
+        @children
+    }
+}
+
+// "General": autostart, the missing administrator rights, language, updates, the log folder, ideas
+export component GeneralPage inherits Page {
+    in property <bool> autostart;
+    in property <string> elevation-text;
+    in property <string> language;
+    in property <string> update-status;
+    in property <string> update-checked-text;
+    in property <string> update-notes;
+    in property <bool> install-visible;
+    in property <string> install-text;
+    in property <bool> check-enabled;
+    in property <bool> auto-update;
+    callback autostart-changed(bool);
+    callback language-chosen(string);
+    callback install-update();
+    callback check-updates();
+    callback auto-update-changed(bool);
+    callback open-folder();
+    callback suggest-improvement();
+
+    // A newer version is known: release notes and the install button get room of their own. This includes a
+    // failed install with empty release notes, where the button is the only way to try again.
+    property <bool> newer: root.install-visible || root.update-notes != "";
+
+    Card {
+        VerticalLayout {
+            padding: 1px;
+            SwitchRow {
+                strong: true;
+                leading-glyph: "\u{E7E8}";
+                leading-color: Palette.accent;
+                text: T.t("autostart");
+                checked: root.autostart;
+                toggled(on) => { root.autostart-changed(on); }
+            }
+        }
+    }
+    if root.elevation-text != "": Card {
+        HorizontalLayout {
+            padding-top: 13px;
+            padding-right: 17px;
+            padding-bottom: 13px;
+            padding-left: 17px;
+            spacing: 12px;
+            VerticalLayout {
+                alignment: start;
+                Glyph {
+                    width: 20px;
+                    height: 20px;
+                    text: "\u{E7BA}";
+                    font-size: 18px;
+                    color: Palette.warn;
+                    horizontal-alignment: center;
+                }
+            }
+            Text {
+                text: root.elevation-text;
+                color: Palette.text;
+                wrap: word-wrap;
+                horizontal-stretch: 1;
+            }
+        }
+    }
+    Card {
+        VerticalLayout {
+            padding: 1px;
+            HorizontalLayout {
+                min-height: 48px;
+                padding-left: 16px;
+                padding-right: 16px;
+                spacing: 12px;
+                Glyph {
+                    width: 20px;
+                    text: "\u{E774}";
+                    font-size: 18px;
+                    horizontal-alignment: center;
+                }
+                // Always also says "Language", for someone who can't read the current one
+                Text {
+                    text: T.t("lang.header");
+                    color: Palette.text;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                    wrap: word-wrap;
+                }
+                VerticalLayout {
+                    alignment: center;
+                    Dropdown {
+                        min-width: 150px;
+                        label: T.t("lang.header");
+                        options: [T.t("lang.auto"), "Русский", "English", "中文"];
+                        current: root.language == "ru" ? 1 : root.language == "en" ? 2 : root.language == "zh" ? 3 : 0;
+                        selected(i) => { root.language-chosen(["auto", "ru", "en", "zh"][i]); }
+                    }
+                }
+            }
+        }
+    }
+    VerticalLayout {
+        padding-top: 14px;
+        padding-left: 2px;
+        SectionHeader {
+            text: T.t("updates.header");
+        }
+    }
+    Card {
+        VerticalLayout {
+            padding: 1px;
+            if root.newer: VerticalLayout {
+                padding-top: 12px;
+                padding-right: 16px;
+                padding-bottom: 12px;
+                padding-left: 16px;
+                spacing: 8px;
+                Text {
+                    text: root.update-status;
+                    color: Palette.text;
+                    wrap: word-wrap;
+                }
+                if root.update-notes != "": Hint {
+                    text: root.update-notes;
+                }
+                HorizontalLayout {
+                    padding-top: 4px;
+                    spacing: 8px;
+                    alignment: start;
+                    if root.install-visible: Btn {
+                        accent: true;
+                        text: root.install-text;
+                        clicked => { root.install-update(); }
+                    }
+                    Btn {
+                        text: T.t("updates.check");
+                        enabled: root.check-enabled;
+                        clicked => { root.check-updates(); }
+                    }
+                }
+            }
+            if !root.newer: HorizontalLayout {
+                padding-top: 10px;
+                padding-right: 16px;
+                padding-bottom: 10px;
+                padding-left: 16px;
+                spacing: 12px;
+                VerticalLayout {
+                    alignment: center;
+                    spacing: 2px;
+                    horizontal-stretch: 1;
+                    Text {
+                        text: root.update-status;
+                        color: Palette.text;
+                        wrap: word-wrap;
+                    }
+                    if root.update-checked-text != "": Hint {
+                        text: root.update-checked-text;
+                    }
+                }
+                VerticalLayout {
+                    alignment: center;
+                    Btn {
+                        text: T.t("updates.check");
+                        enabled: root.check-enabled;
+                        clicked => { root.check-updates(); }
+                    }
+                }
+            }
+            Divider { }
+            SwitchRow {
+                text: T.t("updates.auto");
+                hint: T.t("updates.auto.hint");
+                hint-label: T.t("updates.auto.info");
+                checked: root.auto-update;
+                toggled(on) => { root.auto-update-changed(on); }
+            }
+        }
+    }
+    VerticalLayout {
+        padding-top: 6px;
+        WideButton {
+            glyph: "\u{ED25}";
+            text: T.t("open.folder");
+            clicked => { root.open-folder(); }
+        }
+    }
+    WideButton {
+        glyph: "\u{EA80}";
+        text: T.t("feedback");
+        trailing-glyph: "\u{E8A7}";
+        trailing-label: T.t("feedback.browser");
+        clicked => { root.suggest-improvement(); }
+    }
+}
+
+// "Reminders": the levels and the repeat interval, each a field and a slider; sound; the finished charge
+export component RemindersPage inherits Page {
+    in property <int> low;
+    in property <int> critical;
+    in property <int> repeat;
+    in property <bool> sound;
+    in property <bool> notify-charged;
+    // One of the number fields has the keyboard focus
+    out property <bool> field-focused: low-field.has-focus || critical-field.has-focus || repeat-field.has-focus;
+    callback low-changed(int);
+    callback critical-changed(int);
+    callback repeat-changed(int);
+    callback sound-changed(bool);
+    callback notify-charged-changed(bool);
+    callback test-alert();
+
+    // Drops what was typed into the fields: they lose the focus afterwards with nothing to apply
+    public function reset-fields() {
+        low-field.reset();
+        critical-field.reset();
+        repeat-field.reset();
+    }
+
+    Card {
+        VerticalLayout {
+            padding: 1px;
+            VerticalLayout {
+                padding-top: 12px;
+                padding-right: 16px;
+                padding-bottom: 6px;
+                padding-left: 16px;
+                spacing: 6px;
+                HorizontalLayout {
+                    spacing: 12px;
+                    Text {
+                        text: T.t("alerts.low");
+                        color: Palette.text;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                        wrap: word-wrap;
+                    }
+                    low-field := NumberField {
+                        label: T.t("alerts.low");
+                        value: root.low;
+                        minimum: 10;
+                        maximum: 50;
+                        unit: "%";
+                        value-color: Palette.accent;
+                        changed(v) => { root.low-changed(v); }
+                    }
+                }
+                StepSlider {
+                    minimum: 10;
+                    maximum: 50;
+                    label: T.t("alerts.low");
+                    value: root.low;
+                    changed(v) => { root.low-changed(v); }
+                }
+            }
+            VerticalLayout {
+                padding-top: 6px;
+                padding-right: 16px;
+                padding-bottom: 6px;
+                padding-left: 16px;
+                spacing: 6px;
+                HorizontalLayout {
+                    spacing: 12px;
+                    HorizontalLayout {
+                        alignment: start;
+                        spacing: 6px;
+                        horizontal-stretch: 1;
+                        Text {
+                            text: T.t("alerts.critical");
+                            color: Palette.text;
+                            vertical-alignment: center;
+                            wrap: word-wrap;
+                        }
+                        VerticalLayout {
+                            alignment: center;
+                            InfoTip {
+                                hint: T.t("alerts.critical.hint");
+                                label: T.t("alerts.critical.info");
+                            }
+                        }
+                    }
+                    critical-field := NumberField {
+                        label: T.t("alerts.critical");
+                        value: root.critical;
+                        minimum: 5;
+                        maximum: 45;
+                        unit: "%";
+                        value-color: Palette.accent;
+                        changed(v) => { root.critical-changed(v); }
+                    }
+                }
+                StepSlider {
+                    minimum: 5;
+                    maximum: 45;
+                    label: T.t("alerts.critical");
+                    value: root.critical;
+                    changed(v) => { root.critical-changed(v); }
+                }
+            }
+            VerticalLayout {
+                padding-top: 6px;
+                padding-right: 16px;
+                padding-bottom: 12px;
+                padding-left: 16px;
+                spacing: 6px;
+                HorizontalLayout {
+                    spacing: 12px;
+                    Text {
+                        text: T.t("alerts.repeat");
+                        color: Palette.text;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                        wrap: word-wrap;
+                    }
+                    repeat-field := NumberField {
+                        label: T.t("alerts.repeat");
+                        value: root.repeat;
+                        minimum: 1;
+                        maximum: 120;
+                        unit: T.t("alerts.repeat.unit");
+                        unit-gap: 4px;
+                        value-color: Palette.accent;
+                        changed(v) => { root.repeat-changed(v); }
+                    }
+                }
+                StepSlider {
+                    minimum: 5;
+                    maximum: 60;
+                    label: T.t("alerts.repeat");
+                    value: root.repeat;
+                    changed(v) => { root.repeat-changed(v); }
+                }
+            }
+            Divider { }
+            SwitchRow {
+                text: T.t("alerts.sound");
+                checked: root.sound;
+                toggled(on) => { root.sound-changed(on); }
+            }
+            Divider { }
+            SwitchRow {
+                text: T.t("charged.toggle");
+                hint: T.t("charged.hint");
+                hint-label: T.t("charged.info");
+                checked: root.notify-charged;
+                toggled(on) => { root.notify-charged-changed(on); }
+            }
+        }
+    }
+    VerticalLayout {
+        padding-top: 4px;
+        WideButton {
+            glyph: "\u{EA8F}";
+            text: T.t("alerts.test");
+            clicked => { root.test-alert(); }
+        }
+    }
+}
+
+// "Overlay": the shortcut that shows the overlay, how long it stays, where, and with names or not
+export component OverlayPage inherits Page {
+    in property <bool> overlay-enabled;
+    in property <[string]> shortcut-keys;
+    in property <string> shortcut-text;
+    in property <string> shortcut-error;
+    in property <int> overlay-mode;
+    in property <int> overlay-corner;
+    in property <bool> overlay-names;
+    // The shortcut field has the keyboard focus: it records
+    out property <bool> shortcut-focused: shortcut.recording;
+    callback overlay-enabled-changed(bool);
+    callback overlay-mode-chosen(int);
+    callback overlay-corner-chosen(int);
+    callback overlay-names-changed(bool);
+    callback overlay-reset();
+    callback overlay-preview();
+
+    Card {
+        VerticalLayout {
+            padding: 1px;
+            SwitchRow {
+                text: T.t("overlay.enabled");
+                hint: T.t("overlay.compatibility");
+                hint-label: T.t("overlay.info");
+                checked: root.overlay-enabled;
+                toggled(on) => { root.overlay-enabled-changed(on); }
+            }
+            Divider { }
+            ControlRow {
+                text: T.t("overlay.shortcut");
+                HorizontalLayout {
+                    spacing: 4px;
+                    shortcut := ShortcutField {
+                        keys: root.shortcut-keys;
+                        text: root.shortcut-text;
+                        label: T.t("overlay.shortcut");
+                    }
+                    TipButton {
+                        width: 32px;
+                        height: 32px;
+                        glyph: "\u{E7A7}";
+                        glyph-size: 13px;
+                        secondary: true;
+                        tip: T.t("overlay.reset");
+                        clicked => { root.overlay-reset(); }
+                    }
+                }
+            }
+            // Why the shortcut wasn't taken: under its row, inside the card
+            if root.shortcut-error != "": VerticalLayout {
+                padding-right: 16px;
+                padding-bottom: 12px;
+                padding-left: 16px;
+                Text {
+                    text: root.shortcut-error;
+                    font-size: 12px;
+                    color: Palette.bad;
+                    wrap: word-wrap;
+                }
+            }
+            Divider { }
+            ControlRow {
+                text: T.t("overlay.mode");
+                Dropdown {
+                    min-width: 190px;
+                    label: T.t("overlay.mode");
+                    options: [T.t("overlay.timed"), T.t("overlay.toggle")];
+                    current: root.overlay-mode;
+                    selected(i) => { root.overlay-mode-chosen(i); }
+                }
+            }
+            Divider { }
+            ControlRow {
+                text: T.t("overlay.corner");
+                Dropdown {
+                    min-width: 190px;
+                    label: T.t("overlay.corner");
+                    options: [
+                        T.t("overlay.top.left"),
+                        T.t("overlay.top.right"),
+                        T.t("overlay.bottom.left"),
+                        T.t("overlay.bottom.right"),
+                    ];
+                    current: root.overlay-corner;
+                    selected(i) => { root.overlay-corner-chosen(i); }
+                }
+            }
+            Divider { }
+            SwitchRow {
+                text: T.t("overlay.names");
+                checked: root.overlay-names;
+                toggled(on) => { root.overlay-names-changed(on); }
+            }
+        }
+    }
+    VerticalLayout {
+        padding-top: 4px;
+        WideButton {
+            glyph: "\u{E890}";
+            text: T.t("overlay.preview");
+            clicked => { root.overlay-preview(); }
+        }
+    }
+}
