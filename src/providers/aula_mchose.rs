@@ -122,7 +122,7 @@ impl Provider for AulaMchoseProvider {
         let found = hid::enumerate(|v, p| receiver(v, p).is_some());
         for ((vid, pid), collections) in group_by(found, |i| (i.vendor_id, i.product_id)) {
             let Some(receiver) = receiver(vid, pid) else { continue };
-            let vendor = vendor_collection(&collections);
+            let vendor = vendor_collection(receiver, &collections);
             if vendor.is_none() && receiver.shared {
                 continue;
             }
@@ -212,13 +212,12 @@ impl AulaMchoseProvider {
 }
 
 /// The collection that takes the requests. A collection that Windows won't open has no usage page to go by, so it is
-/// never the one.
-fn vendor_collection(collections: &[HidInfo]) -> Option<&HidInfo> {
+/// never the one. Under IDs that unrelated devices carry, its reports have to be the frame's 20 bytes exactly: FF02
+/// is a page other firmware has too, with reports of 17 or 64 bytes, and a request must not go there.
+fn vendor_collection<'a>(receiver: &Receiver, collections: &'a [HidInfo]) -> Option<&'a HidInfo> {
+    let fits = |length: usize| if receiver.shared { length == FRAME_LENGTH } else { length >= FRAME_LENGTH };
     collections.iter().find(|i| {
-        i.usage_page == VENDOR_PAGE
-            && i.usage == VENDOR_USAGE
-            && i.output_length >= FRAME_LENGTH
-            && i.input_length >= FRAME_LENGTH
+        i.usage_page == VENDOR_PAGE && i.usage == VENDOR_USAGE && fits(i.output_length) && fits(i.input_length)
     })
 }
 
@@ -312,10 +311,11 @@ mod tests {
 
     #[test]
     fn vendor_collection_is_the_one_long_enough() {
+        let fa09 = receiver(0x3554, 0xFA09).unwrap();
         let all =
             [collection(0x0001, 0x0006, 9, false), collection(0xFF02, 2, 8, false), collection(0xFF02, 2, 20, false)];
-        assert_eq!(vendor_collection(&all).map(|i| i.path.as_str()), Some(all[2].path.as_str()));
-        assert!(vendor_collection(&all[..2]).is_none());
+        assert_eq!(vendor_collection(fa09, &all).map(|i| i.path.as_str()), Some(all[2].path.as_str()));
+        assert!(vendor_collection(fa09, &all[..2]).is_none());
         assert_eq!(no_link_reason(&all[..2]), "d.noLink");
     }
 
@@ -324,9 +324,24 @@ mod tests {
         // A SONiX keyboard and a CompX mouse receiver with IDs this table has too
         let sonix = [collection(0xFF60, 0x0061, 33, false)];
         let mouse = [collection(0xFF02, 2, 17, false)];
-        assert!(receiver(0x05AC, 0x024F).unwrap().shared && vendor_collection(&sonix).is_none());
-        assert!(receiver(0x3554, 0xFB40).unwrap().shared && vendor_collection(&mouse).is_none());
+        let apple = receiver(0x05AC, 0x024F).unwrap();
+        let fb40 = receiver(0x3554, 0xFB40).unwrap();
+        assert!(apple.shared && vendor_collection(apple, &sonix).is_none());
+        assert!(fb40.shared && vendor_collection(fb40, &mouse).is_none());
         assert!(!receiver(0x3554, 0xFA09).unwrap().shared);
+    }
+
+    #[test]
+    fn under_a_shared_id_longer_reports_on_the_same_page_are_someone_elses() {
+        // 258A is a chip maker's vendor ID: another device of its with a 64-byte FF02:0002 collection gets nothing
+        let other = [collection(0xFF02, 2, 64, false)];
+        let by = [collection(0xFF02, 2, 20, false)];
+        for r in RECEIVERS.iter().filter(|r| r.shared) {
+            assert!(vendor_collection(r, &other).is_none(), "{:04X}:{:04X}", r.vid, r.pid);
+            assert!(vendor_collection(r, &by).is_some(), "{:04X}:{:04X}", r.vid, r.pid);
+        }
+        // FA09 is this receiver's alone and keeps the rule it had
+        assert!(vendor_collection(receiver(0x3554, 0xFA09).unwrap(), &other).is_some());
     }
 
     #[test]
@@ -348,7 +363,7 @@ mod tests {
     #[test]
     fn a_locked_collection_is_never_the_vendor_one() {
         let all = [collection(0x0001, 0x0006, 9, false), collection(0, 0, 0, true)];
-        assert!(vendor_collection(&all).is_none());
+        assert!(vendor_collection(receiver(0x3554, 0xFA09).unwrap(), &all).is_none());
         assert_eq!(no_link_reason(&all), "d.needsAdmin");
     }
 

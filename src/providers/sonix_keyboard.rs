@@ -11,10 +11,12 @@
 //! with 0 or not at all, and give their level in the device information their own driver reads:
 //!   request  AA 10 18 00 ..         the first 24 bytes of the information
 //!   reply    55 10 .. [25] the mode, 2 = 2.4 GHz, [26] the level in percent (counting the report ID)
-//! So the second form is tried when the first gives no level, and the one that worked goes first the next time.
+//! So the second form is tried when the first gives no level, until one of them has: from then on the keyboard is
+//! asked in that form alone, so that a board of the first kind doesn't get a request it doesn't know every time it
+//! is asleep.
 //! The byte after the level is a charging state in the vendors' drivers, but it didn't change with the cable on the
 //! boards it was watched on, so it isn't shown. 05AC:024F is an ID that keyboards with unrelated firmware carry too
-//! (see `aula_mchose`), so that dongle is listed only when it has the 33-byte collection.
+//! (see `aula_mchose`), so that dongle is listed only when it has the 33-byte collection on interface 3.
 //! Protocol facts from vigil-watt (docs/hardware/eweadn.md: the EWEADN X87's vendor tool read statically and the
 //! exchange measured on its 0C45:FEFE dongle; the X87 has the X85's USB IDs and the same vendor tool),
 //! sonix-keyboard-studio, Wireless-Device-Battery-Monitor (src/drivers/sonix.cpp, and an AK820 Max Plus owner's
@@ -46,7 +48,8 @@ const TIMEOUT_MS: u64 = 500;
 const REQUEST_FORMS: usize = 2;
 
 /// `page`, `usage`: the collection that takes the request. `shared`: keyboards with unrelated firmware carry these
-/// IDs too, so the dongle is listed only when that collection is there.
+/// IDs too, so the dongle is listed only when that collection is there, on the interface the SONiX dongles have it
+/// on.
 struct Dongle {
     vid: u16,
     pid: u16,
@@ -54,6 +57,10 @@ struct Dongle {
     usage: u16,
     shared: bool,
 }
+
+/// Where a SONiX dongle has the collection. FF60:0061 with 32-byte reports is also what every QMK / VIA keyboard
+/// has for its configuration tool, on another interface, and such keyboards are given Apple's 05AC:024F too.
+const SONIX_INTERFACE: i32 = 3;
 
 static DONGLES: &[Dongle] = &[
     Dongle { vid: 0x0C45, pid: 0xFEFE, page: 0xFF60, usage: 0x0061, shared: false },
@@ -73,6 +80,7 @@ fn vendor_collection<'a>(dongle: &Dongle, collections: &'a [HidInfo]) -> Option<
             && i.usage == dongle.usage
             && i.output_length == REPORT_LENGTH
             && i.input_length == REPORT_LENGTH
+            && (!dongle.shared || i.interface_number() == SONIX_INTERFACE)
     })
 }
 
@@ -172,9 +180,7 @@ impl SonixKeyboardProvider {
     /// Asks for the level; None when the keyboard didn't answer or no reply has one.
     fn query(&mut self, vendor: &HidInfo, trace: &mut Vec<String>) -> win::Result<Option<i32>> {
         let dev = HidDevice::open(vendor)?;
-        let first = self.answered.get(&vendor.path).copied().unwrap_or(0);
-        for i in 0..REQUEST_FORMS {
-            let form = (first + i) % REQUEST_FORMS;
+        for (i, form) in forms_to_try(self.answered.get(&vendor.path).copied()).into_iter().enumerate() {
             let mut reply = ask(&dev, form, trace)?;
             // The first request can go unanswered while the link wakes up
             if reply.is_none() && i == 0 {
@@ -186,6 +192,16 @@ impl SonixKeyboardProvider {
             }
         }
         Ok(None)
+    }
+}
+
+/// The forms of the request to send, in order. A keyboard that has given its level in one form this session is asked
+/// in that form alone from then on: the other one is a request its firmware doesn't know, and a keyboard that is
+/// asleep would get it once a minute.
+fn forms_to_try(answered: Option<usize>) -> Vec<usize> {
+    match answered {
+        Some(form) => vec![form],
+        None => (0..REQUEST_FORMS).collect(),
     }
 }
 
@@ -372,21 +388,45 @@ mod tests {
 
     #[test]
     fn the_collection_with_33_byte_reports_takes_the_request() {
-        let collection = |page: u16, usage: u16, length: usize| HidInfo {
-            path: format!("{page:04x}:{usage:04x}:{length}"),
+        let on = |mi: u8, page: u16, usage: u16, length: usize| HidInfo {
+            path: format!(r"\\?\hid#vid_05ac&pid_024f&mi_{mi:02x}#{page:04x}:{usage:04x}:{length}"),
             usage_page: page,
             usage,
             input_length: length,
             output_length: length,
             ..HidInfo::default()
         };
+        let collection = |page: u16, usage: u16, length: usize| on(3, page, usage, length);
         let all = [collection(0xFF60, 0x0061, 65), collection(0xFF60, 0x0061, 33), collection(0xFF02, 0x0002, 20)];
         let sonix = dongle(0x05AC, 0x024F).unwrap();
-        assert_eq!(vendor_collection(sonix, &all).map(|i| i.path.as_str()), Some("ff60:0061:33"));
+        assert_eq!(vendor_collection(sonix, &all).map(|i| i.path.as_str()), Some(all[1].path.as_str()));
         // A keyboard of another kind with the same IDs has no such collection, and isn't listed
         assert!(sonix.shared && vendor_collection(sonix, &all[2..]).is_none());
         assert!(vendor_collection(dongle(0x0C45, 0xFEFC).unwrap(), &all).is_none());
         assert!(!dongle(0x0C45, 0xFEFE).unwrap().shared);
+    }
+
+    #[test]
+    fn a_qmk_keyboard_with_apples_ids_is_not_a_sonix_dongle() {
+        // The configuration collection of QMK / VIA firmware: the same usage and lengths, on interface 1
+        let raw_hid = HidInfo {
+            path: r"\\?\hid#vid_05ac&pid_024f&mi_01#8&1&0&0000#{4d1e55b2}".into(),
+            usage_page: 0xFF60,
+            usage: 0x0061,
+            input_length: 33,
+            output_length: 33,
+            ..HidInfo::default()
+        };
+        assert!(vendor_collection(dongle(0x05AC, 0x024F).unwrap(), std::slice::from_ref(&raw_hid)).is_none());
+        // The IDs that are SONiX's own are taken wherever the collection is, as before
+        assert!(vendor_collection(dongle(0x0C45, 0xFEFE).unwrap(), std::slice::from_ref(&raw_hid)).is_some());
+    }
+
+    #[test]
+    fn a_keyboard_that_answered_one_form_is_asked_in_it_alone() {
+        assert_eq!(forms_to_try(None), [0, 1]);
+        assert_eq!(forms_to_try(Some(0)), [0]);
+        assert_eq!(forms_to_try(Some(1)), [1]);
     }
 
     #[test]

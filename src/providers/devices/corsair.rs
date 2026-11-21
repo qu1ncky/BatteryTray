@@ -226,12 +226,12 @@ pub fn percent(tenths: u32) -> Option<i32> {
 }
 
 /// `tenths`: a confirmed level, `power`: the charge state if the device has one. On the cable a level of exactly
-/// 100% while still charging is not shown: the Ironclaw RGB Wireless reads a flat 100% there whatever its charge
-/// (OpenLinkHub issue 569).
+/// 100% is shown only when the device also says it is charged: the Ironclaw RGB Wireless reads a flat 100% there
+/// whatever its charge (OpenLinkHub issue 569, which doesn't say what charge state came with it).
 pub fn battery(tenths: Option<u32>, power: Option<u32>, cable: bool) -> Battery {
-    let charging = power == Some(CHARGING);
-    let level = tenths.filter(|&v| !(cable && charging && v >= 1000)).and_then(percent);
-    Battery { level, charging, full: power == Some(CHARGED) }
+    let full = power == Some(CHARGED);
+    let level = tenths.filter(|&v| !(cable && !full && v >= 1000)).and_then(percent);
+    Battery { level, charging: power == Some(CHARGING), full }
 }
 
 /// The slots to ask: the ones the receiver says are linked and the ones that answered at the last poll, so a
@@ -341,6 +341,11 @@ fn read_receiver(link: &mut impl Link, known: impl Fn(u8) -> Option<u16>) -> win
     for slot in slots_to_ask(linked, |slot| known(slot).is_some()) {
         let target = SELF | slot;
         let Some(battery) = read_battery(link, target, false)? else { continue };
+        // A zero is what a device says while it wakes up. From a slot the receiver doesn't call linked it is nobody:
+        // the device would be listed as on for as long as it is off
+        if battery.level.is_none() && linked.is_some_and(|bits| (bits >> slot) & 1 == 0) {
+            continue;
+        }
         let pid = match known(slot) {
             Some(pid) => Some(pid),
             None => read_product(link, target)?,
@@ -742,10 +747,15 @@ mod tests {
     }
 
     #[test]
-    fn full_while_still_charging_on_the_cable_is_not_a_level() {
+    fn full_on_the_cable_is_a_level_only_when_the_device_says_it_is_charged() {
         assert_eq!(battery(Some(1000), Some(1), true), b(None, true, false));
+        assert_eq!(battery(Some(1000), Some(2), true), b(None, false, false));
+        assert_eq!(battery(Some(1000), None, true), b(None, false, false));
+        assert_eq!(battery(Some(1000), Some(3), true), b(Some(100), false, true));
+        assert_eq!(battery(Some(990), Some(2), true), b(Some(99), false, false));
         // Behind the receiver the level is the one read before the cable went in
         assert_eq!(battery(Some(1000), Some(1), false), b(Some(100), true, false));
+        assert_eq!(battery(Some(1000), None, false), b(Some(100), false, false));
     }
 
     fn nobody_before(_: u8) -> bool {
@@ -893,6 +903,26 @@ mod tests {
         let mut link = Script::new(&[(0x08, LINKED, "00 02 00 00 00")]);
         assert_eq!(read_receiver(&mut link, nobody).unwrap(), []);
         assert_eq!(link.asked, [(0x08, LINKED), (0x09, LEVEL)]);
+    }
+
+    #[test]
+    fn a_zero_from_a_slot_that_is_not_linked_is_nobody() {
+        // Made up: no source has a receiver answer for a device that sleeps, and this is what it would look like
+        let asleep = [(0x08, LINKED, "00 02 00 00 00"), (0x09, LEVEL, "01 02 00 00 00"), (0x09, POWER, "01 02 00 02")];
+        assert_eq!(read_receiver(&mut Script::new(&asleep), nobody).unwrap(), []);
+        // Linked, it is a device that doesn't know its level yet
+        let waking = [(0x08, LINKED, "00 02 00 02 00"), (0x09, LEVEL, "01 02 00 00 00"), (0x09, POWER, "01 02 00 02")];
+        let children = read_receiver(&mut Script::new(&waking), |slot| (slot == 1).then_some(0x1B7E)).unwrap();
+        assert_eq!(children, [Child { slot: 1, pid: Some(0x1B7E), battery: b(None, false, false) }]);
+        // And so it is behind a receiver that doesn't say who is linked
+        let silent = [(0x08, LINKED, "00 02 05"), (0x09, LEVEL, "01 02 00 00 00"), (0x09, POWER, "01 02 00 02")];
+        let children = read_receiver(&mut Script::new(&silent), |slot| (slot == 1).then_some(0x1B7E)).unwrap();
+        assert_eq!(children, [Child { slot: 1, pid: Some(0x1B7E), battery: b(None, false, false) }]);
+        // A level that reads is a device that is there, whatever the receiver says about its link
+        let unlisted =
+            [(0x08, LINKED, "00 02 00 00 00"), (0x09, LEVEL, "01 02 00 ac 03"), (0x09, POWER, "01 02 00 02")];
+        let children = read_receiver(&mut Script::new(&unlisted), |slot| (slot == 1).then_some(0x1B7E)).unwrap();
+        assert_eq!(children, [Child { slot: 1, pid: Some(0x1B7E), battery: b(Some(94), false, false) }]);
     }
 
     #[test]
@@ -1092,6 +1122,15 @@ mod tests {
             if let Some(key) = r.own {
                 assert!(model_by_key(key).is_some(), "{:04X}: no model with the key {key}", r.pid);
             }
+        }
+    }
+
+    #[test]
+    fn the_headsets_and_their_receivers_are_left_to_the_headset_table() {
+        // They answer the same reads on numbered reports of another interface, and have their own rows
+        let headsets = crate::providers::headset::SPECS.iter().filter(|s| s.vid == VID).flat_map(|s| s.pids);
+        for pid in headsets {
+            assert!(receiver(*pid).is_none() && model_of(*pid).is_none(), "{pid:04X} is a headset's");
         }
     }
 

@@ -14,8 +14,9 @@
 //!     of CC sends the request on to the mouse. 01 .. 01 is answered by the receiver itself, 41 .. 01 by the mouse:
 //!     [5] 1 or 3 charging, 2 full, [6] percent. 40 .. 00 -> [4..5] the model.
 //!   Nape Pro, FF60:0061 (32 bytes, no ID): B2 -> slots from [2] (big-endian, 4004 = Nape Pro); A7 31 -> A7 31 PP SS.
-//!   The Link and Link-KM receivers also come with keyboards, so they are not table rows: `KeychronLinkProvider`
-//!   lists a mouse behind one only when the receiver says one is paired.
+//!   A receiver has three slots and the Link ones come with keyboards, so the receivers of the "8k" and "1k"
+//!   protocols are not table rows: `KeychronLinkProvider` lists a mouse behind one only when the receiver says one
+//!   is paired, under the mouse's own ID, which is also the ID it has on its cable - one entry for both.
 //! Pulsar X2 V3 generation (Sonix), FFFF:0001: feature report 00 + 64 bytes: 00 08 81 01 .. and the 16-bit sum of
 //!   the first 62 in the last two. Read back: 01 08 81 01 xx xx PP once answered (02 / 05 while pending).
 //! MCHOSE, FF01:0001. M HUB's older generation: feature report 11 (20 bytes) or 12 (64), every byte inverted:
@@ -27,10 +28,16 @@
 //!   behind a receiver, CC 07 level, 0F charging) -> input 08 72 SS xx xx CC 01 VV.
 //! MSI, interface 1: output 0F 20 -> input 0F 20 .. [14] bit 7 charging, the rest percent.
 //! AJAZZ AJ179, AULA SC580: 32 bytes without an ID, CC SS NN LL data(27) sum-of-data. CC 10 / 30 = device info: SS
-//!   0 ok, 2 mouse away; [4..7] model, [12] 1 charging, 2 full, [13] percent, [14] mouse linked.
-//! Delux M800 Pro, FF00:0001: feature 0C 01 20 00 NN -> 0C xx 20 .. [6] linked, [18] percent, [19] 1 charging, 2 full.
+//!   0 ok, 2 mouse away; [4..7] model, [12] 1 charging, 2 full, [13] percent, [14] mouse linked. The AJ179's IDs
+//!   are its platform's: Inphic's web driver lists the IN9 (model M910) under the same ones, so the model in the
+//!   reply names the mouse, not the IDs.
+//! Delux M800 Pro, FF00:0001: feature 0C 01 20 00 NN -> 0C xx 20 .. [6] linked, [8..11] model ("M802"), [18]
+//!   percent, [19] 1 charging, 2 full. The receiver's IDs are shared the same way (the first Ninjutso Sora, whose
+//!   receiver says so in its product string; owners of a Ninjutso Katana Superlight and of another Delux M800
+//!   report them too).
 //! Niceboy MW400: output 05 24 FA 48 -> input 05 xx FA 48 LO HI CC, the battery voltage in 990/240 mV.
-//! Redragon M602-KS (Sinowealth receiver): feature 05 80 -> 05 80 01 linked; 05 90 -> 05 90 11 PP.
+//! Sinowealth's stock receiver 258A:002F (Redragon M602-KS, M690 Pro and others): feature 05 80 -> 05 80 01 linked;
+//!   05 90 -> 05 90 11 PP.
 //! DAREU A980 Pro: feature 0A SL LL CL CM on the consumer collection, read back once [1] & 0F is 2: slot 0, 00 A0 ->
 //!   [7] count, then present flag and product per mouse; slot n, 07 80 -> [7] 1 charging, [8] level, [9] its maximum.
 //! Royal Kludge MG6 Pro: output 01 01 02 01 -> input 01 01 02 FF mV(2) percent(2) .. [10] on USB power; bit 4 of FF
@@ -38,7 +45,8 @@
 //!
 //! Only reads are sent; nothing here changes a setting or a mode. Protocol facts from Wireless-Device-Battery-Monitor
 //! (src/drivers: keychron, machenike, darmoshark, pulsar, mchose, mchose_modern, atk_bitmouse, msi, misc_mice, aula,
-//! niceboy, sinowealth_receiver, dareu, royal_kludge .cpp, docs/machenike.md and its issues 12, 54, 153, 154),
+//! niceboy, sinowealth_receiver, dareu, royal_kludge .cpp, docs/machenike.md and its issues 12, 54, 153, 154, 1012,
+//! 1070, 2112, 3510 and pull requests 156, 3979), myfinder-device-battery (docs/inphic-in9-xichen.md),
 //! OpenMouse (mouse-protocol: src/keychron, src/drivers/keychron, src/mchose, src/bitmouse, docs/mchose-protocol.md,
 //! docs/redragon-m690-pro-testing.md), keychron-battery-dkms (keychron_battery.c), kolbasky/keychron-battery,
 //! darmoshark-m3-configurator (PROTOCOL.md), PulsarBattery (Sonix64Protocol.cs), mchose-linux (PROTOCOL.md),
@@ -49,11 +57,11 @@ use super::{off, off_because, on, Io, Spec, State};
 use crate::hid::{self, HidDevice, HidInfo};
 use crate::loc::{t, tf};
 use crate::log;
-use crate::providers::{group_by, one_per_id, receiver_name, secs, sleep_ms, Provider};
+use crate::providers::{contains_ignore_case, group_by, one_per_id, receiver_name, secs, sleep_ms, Provider};
 use crate::reading::{DeviceKind, DeviceReading};
 use crate::win;
 use std::collections::HashSet;
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU8, Ordering};
 use std::time::Duration;
 
 const KEYCHRON: u16 = 0x3434;
@@ -61,6 +69,10 @@ const ULTRA_LINK_8K: u16 = 0xD028;
 const LINK_KM_TYPE_C: u16 = 0xD029;
 const LINK_KM: u16 = 0xD026;
 const LINK_1K: [u16; 2] = [0xD030, 0xD031];
+/// The mice of the "8k" protocol on their cable. The M5 and M6 8K are read there by keychron-battery-dkms, the M6
+/// (D060) by OpenMouse; the others are the rest of the 8K line in the Launcher's list, which lists nothing when a
+/// mouse turns out to have no FFC1 collection.
+const KEYCHRON_8K_CABLE: [u16; 10] = [0xD048, 0xD049, 0xD050, 0xD051, 0xD052, 0xD053, 0xD054, 0xD055, 0xD056, 0xD060];
 const NAPE_CABLE: u16 = 0x0440;
 /// What a Link-KM receiver calls the Nape Pro in its slot list.
 const NAPE_IN_SLOT: u16 = 0x4004;
@@ -114,20 +126,8 @@ const MCHOSE_MODELS: &[(u16, &str)] = &[
 
 pub static SPECS: &[Spec] = &[
     // ---- Keychron ----
-    // The M5 and M6 8K on the cable and the Ultra-Link 8K are read by keychron-battery-dkms, the M6 (D060) by
-    // OpenMouse; the other cable IDs are the rest of the 8K line in the Launcher's list, which pairs to the same
-    // receiver. The Link receivers that keyboards share, and the Nape Pro, are read by KeychronLinkProvider below.
-    Spec {
-        key: "keychron-8k-mouse",
-        name: "Keychron 8K mouse",
-        vid: KEYCHRON,
-        pids: &[ULTRA_LINK_8K, 0xD048, 0xD049, 0xD050, 0xD051, 0xD052, 0xD053, 0xD054, 0xD055, 0xD056, 0xD060],
-        cable_pids: &[0xD048, 0xD049, 0xD050, 0xD051, 0xD052, 0xD053, 0xD054, 0xD055, 0xD056, 0xD060],
-        page: 0xFFC1,
-        usage: 0x0001,
-        query: keychron_8k,
-        ..Spec::MOUSE
-    },
+    // The receiver of the 4K mice. The receivers with slots, the mice of the 8K line on their cable and the Nape Pro
+    // are read by KeychronLinkProvider below.
     Spec {
         key: "keychron-4k-mouse",
         name: "Keychron 4K mouse",
@@ -139,13 +139,14 @@ pub static SPECS: &[Spec] = &[
         ..Spec::MOUSE
     },
     // ---- Telink receivers with the same status report as Keychron's 1K ones ----
+    // Telink's vendor ID is any OEM's, so the L7 is also known by its product string, on the receiver and the cable
     Spec {
         key: "machenike-l7",
         name: "Machenike L7 Arctic / L7 Mix",
         vid: TELINK,
         pids: &[0xFF4C, 0xFF4E],
         cable_pids: &[0xFF4E],
-        accept: Some(is_dms_collection),
+        accept: Some(is_l7_collection),
         shared: true,
         query: machenike_l7,
         ..Spec::MOUSE
@@ -365,11 +366,13 @@ pub static SPECS: &[Spec] = &[
         query: niceboy_mw400,
         ..Spec::MOUSE
     },
-    // Sinowealth's stock receiver ID. The M602-KS has a collection with nothing but the 8-byte feature report;
-    // receivers of other mice (the M690 Pro) are shaped differently and aren't read.
+    // Sinowealth's stock receiver ID: the Redragon M602-KS, M910-KS, M690 Pro and M811 Pro, a Delux and a
+    // Thunderobot mouse all come with it, with the same collections and mostly the same product string ("2.4G
+    // Wireless Receiver"). The two status reads were documented on an M690 Pro and checked on an M602-KS; which
+    // mouse answers them the receiver doesn't say, so it is named only as far as its product string names it.
     Spec {
-        key: "redragon-m602-ks",
-        name: "Redragon M602-KS",
+        key: "sinowealth-receiver-mouse",
+        name: "name.mouse",
         vid: 0x258A,
         pids: &[0x002F],
         interface: 1,
@@ -394,13 +397,15 @@ pub static SPECS: &[Spec] = &[
         query: dareu_togran,
         ..Spec::MOUSE
     },
+    // 2E3C is the vendor ID of the chip maker (Artery), not of Royal Kludge: only with the collection its web driver
+    // talks to
     Spec {
         key: "rk-mg6-pro",
         name: "Royal Kludge MG6 Pro",
         vid: 0x2E3C,
         pids: &[0x00A6, 0x00E6],
-        page: 0xFF00,
-        usage: 0x0001,
+        accept: Some(|i| is_mg6_collection(i, 0xFF00)),
+        shared: true,
         query: rk_mg6_pro,
         ..Spec::MOUSE
     },
@@ -410,8 +415,8 @@ pub static SPECS: &[Spec] = &[
         vid: 0x2E3C,
         pids: &[0x00A5, 0x00E5],
         cable_pids: &[0x00A5, 0x00E5],
-        page: 0xFFF2,
-        usage: 0x0001,
+        accept: Some(|i| is_mg6_collection(i, 0xFFF2)),
+        shared: true,
         query: rk_mg6_pro,
         ..Spec::MOUSE
     },
@@ -448,6 +453,18 @@ fn brand_mouse(brand: &str) -> String {
     tf("name.brandMouse", &[&brand])
 }
 
+/// The name a product string gives a mouse whose USB IDs are its platform's and not its brand's: "Ninjutso Sora"
+/// names one, "Wireless-Receiver" nobody.
+pub fn named_by(product: Option<&str>) -> Option<String> {
+    let words = product?.replace(['-', '_'], " ");
+    (!receiver_name::brand(Some(&words)).is_empty()).then(|| receiver_name::mouse(Some(&words), None))
+}
+
+/// The same, or just "Mouse".
+fn named_or_mouse(product: Option<&str>) -> String {
+    named_by(product).unwrap_or_else(|| t("name.mouse"))
+}
+
 /// The slots of a receiver's answer: vendor, product and status of each paired device, five bytes a slot from `at`.
 pub fn slots(r: &[u8], at: usize, big_endian: bool) -> Vec<(u16, u16, u8)> {
     let word = |a: u8, b: u8| if big_endian { u16::from_be_bytes([a, b]) } else { u16::from_le_bytes([a, b]) };
@@ -464,22 +481,7 @@ fn keychron_name(pid: u16) -> Option<&'static str> {
     KEYCHRON_MICE.iter().find(|m| m.0 == pid).map(|m| m.1)
 }
 
-fn keychron_8k(io: &mut Io) -> win::Result<State> {
-    io.set_timeout(KEYCHRON_TIMEOUT_MS);
-    let mut pid = io.product_id();
-    if pid == ULTRA_LINK_8K {
-        // The receiver answers this itself; without a connected mouse there is nobody to ask for the level
-        let paired = keychron_8k_slots(io)?.unwrap_or_default();
-        match paired.iter().find(|s| s.2 == SLOT_CONNECTED) {
-            Some(mouse) => pid = mouse.1,
-            None => return Ok(State { name: Some(brand_mouse("Keychron")), ..off() }),
-        }
-    }
-    let name = keychron_name(pid).map_or_else(|| brand_mouse("Keychron"), str::to_string);
-    Ok(State { name: Some(name), ..keychron_8k_power(io)? })
-}
-
-/// Who is paired to the receiver, or None when it didn't say.
+/// Who is paired to the receiver (it answers this itself), or None when it didn't say.
 fn keychron_8k_slots(io: &mut Io) -> win::Result<Option<Vec<(u16, u16, u8)>>> {
     Ok(io.ask(&[0xB5, 0x03], |d| d.len() >= 18 && d[1] == 0x03, 8, false)?.map(|r| slots(&r, 3, false)))
 }
@@ -555,6 +557,11 @@ const DMS_LENGTH: usize = 21;
 
 fn is_dms_collection(i: &HidInfo) -> bool {
     i.usage_page == 0x008C && i.usage == 0x0001 && i.feature_length >= DMS_LENGTH
+}
+
+/// Both the receiver and the mouse on its cable call themselves "L7 Mix".
+pub fn is_l7_collection(i: &HidInfo) -> bool {
+    is_dms_collection(i) && i.product.as_deref().is_some_and(|p| contains_ignore_case(p, "L7 Mix"))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -648,21 +655,22 @@ pub fn keychron_1k_state(s: &DmsStatus) -> State {
     State { full: s.power & 3 == 2, ..battery(s.level, s.power & 3 == 1) }
 }
 
-// ---- Keychron's Link receivers, which keyboards use too ----
+// ---- Keychron's receivers with slots, and the mice that pair to them on their cable ----
 
-/// What a Link receiver has paired that is read here, or the Nape Pro on its cable.
+/// What a receiver has paired that is read here, or a mouse on its cable.
 pub struct Paired {
     pub key: String,
     pub name: String,
     pub state: State,
 }
 
-/// The Keychron Link (3434:D030 Type-A, D031 Type-C) and Link-KM (D026, D029 Type-C) receivers. The same receiver
-/// comes with keyboards, which don't answer a battery request, so a table row would list a mouse for every keyboard
-/// owner. This asks the receiver what is paired and lists a mouse only when one is: the M-series mice of the
-/// Launcher's "1k" protocol on the Link, those of its "8k" protocol on the Link-KM Type-C, the Nape Pro on the
-/// Link-KM. The Nape Pro on its cable (3434:0440) is read here as well, so that it stays one entry with the one on
-/// the receiver.
+/// The Keychron Link (3434:D030 Type-A, D031 Type-C), Link-KM (D026, D029 Type-C) and Ultra-Link 8K (D028)
+/// receivers. A receiver holds three devices and the Link ones come with keyboards, which don't answer a battery
+/// request, so a table row would list a mouse for every keyboard owner. This asks the receiver what is paired and
+/// lists a mouse only when one is: the M-series mice of the Launcher's "1k" protocol on the Link, those of its "8k"
+/// protocol on the Link-KM Type-C and the Ultra-Link 8K, the Nape Pro on the Link-KM. The reading is the mouse's,
+/// keyed by its own product ID, so the mice of the 8K line and the Nape Pro are read here on their cable as well:
+/// a mouse that charges next to its receiver stays one entry.
 #[derive(Default)]
 pub struct KeychronLinkProvider {
     /// What this session's log already has.
@@ -711,12 +719,11 @@ impl Provider for KeychronLinkProvider {
                     format!("dev:{}", p.key),
                     p.name,
                     DeviceKind::Mouse,
-                    t(if pid == NAPE_CABLE { "via.cable" } else { "via.24" }),
+                    t(if is_cable(pid) { "via.cable" } else { "via.24" }),
                 )
             });
         }
-        // A Nape Pro on its cable is still paired to its receiver, which finds it off: keep the reading that
-        // reached it
+        // A mouse on its cable is still paired to its receiver, which finds it off: keep the reading that reached it
         one_per_id(result, |r| r.online)
     }
 
@@ -745,16 +752,21 @@ impl KeychronLinkProvider {
     }
 }
 
+/// The product IDs this provider reads: the receivers and the mice on their cable.
 fn is_link(pid: u16) -> bool {
-    LINK_1K.contains(&pid) || matches!(pid, LINK_KM | LINK_KM_TYPE_C | NAPE_CABLE)
+    LINK_1K.contains(&pid) || matches!(pid, LINK_KM | LINK_KM_TYPE_C | ULTRA_LINK_8K) || is_cable(pid)
 }
 
-/// The collection of a Link receiver that the request for its protocol goes to.
+fn is_cable(pid: u16) -> bool {
+    pid == NAPE_CABLE || KEYCHRON_8K_CABLE.contains(&pid)
+}
+
+/// The collection that the request for the device's protocol goes to.
 pub fn is_link_collection(pid: u16, i: &HidInfo) -> bool {
     match pid {
         LINK_KM | NAPE_CABLE => i.usage_page == 0xFF60 && i.usage == 0x0061 && i.output_length == 33,
-        LINK_KM_TYPE_C => i.usage_page == 0xFFC1 && i.usage == 0x0001 && i.output_length >= 21,
-        _ => is_dms_collection(i),
+        pid if LINK_1K.contains(&pid) => is_dms_collection(i),
+        _ => i.usage_page == 0xFFC1 && i.usage == 0x0001 && i.output_length >= 21 && i.input_length >= 21,
     }
 }
 
@@ -765,8 +777,14 @@ pub fn pick(paired: &[(u16, u16, u8)], ours: impl Fn(u16) -> bool) -> Option<(u1
     Some((first.1, first.2 == SLOT_CONNECTED))
 }
 
+/// Every mouse in the Launcher's product list has a product ID of the form D0xx, and none of its keyboards has.
+pub fn is_keychron_mouse_id(pid: u16) -> bool {
+    pid >> 8 == 0xD0
+}
+
 fn keychron_mouse(pid: u16, state: State) -> Paired {
-    Paired { key: format!("keychron-{pid:04x}"), name: keychron_name(pid).unwrap_or("Keychron").to_string(), state }
+    let name = keychron_name(pid).map_or_else(|| brand_mouse("Keychron"), str::to_string);
+    Paired { key: format!("keychron-{pid:04x}"), name, state }
 }
 
 fn link_query(io: &mut Io, pid: u16) -> win::Result<Option<Paired>> {
@@ -774,6 +792,7 @@ fn link_query(io: &mut Io, pid: u16) -> win::Result<Option<Paired>> {
     let nape = |state| Paired { key: "keychron-nape-pro".into(), name: "Keychron Nape Pro".into(), state };
     Ok(match pid {
         NAPE_CABLE => Some(nape(nape_battery(io)?)),
+        pid if KEYCHRON_8K_CABLE.contains(&pid) => Some(keychron_mouse(pid, keychron_8k_power(io)?)),
         LINK_KM => {
             let paired = io.ask(&[0x00, 0xB2], |d| d.len() >= 17 && d[0] == 0xB2, 8, false)?;
             let Some((_, connected)) = paired.and_then(|r| pick(&slots(&r, 2, true), |p| p == NAPE_IN_SLOT)) else {
@@ -781,8 +800,11 @@ fn link_query(io: &mut Io, pid: u16) -> win::Result<Option<Paired>> {
             };
             Some(nape(if connected { nape_battery(io)? } else { off() }))
         }
-        LINK_KM_TYPE_C => {
-            let Some((mouse, connected)) = keychron_8k_slots(io)?.and_then(|s| pick(&s, is_mouse)) else {
+        LINK_KM_TYPE_C | ULTRA_LINK_8K => {
+            // The Ultra-Link 8K is the receiver of this protocol, so any mouse on it is asked; a Link-KM also takes
+            // keyboards and the Nape Pro, and there only the mice known to speak this protocol are
+            let ours = |mouse| if pid == ULTRA_LINK_8K { is_keychron_mouse_id(mouse) } else { is_mouse(mouse) };
+            let Some((mouse, connected)) = keychron_8k_slots(io)?.and_then(|s| pick(&s, ours)) else {
                 return Ok(None);
             };
             Some(keychron_mouse(mouse, if connected { keychron_8k_power(io)? } else { off() }))
@@ -1022,11 +1044,14 @@ pub fn bitmouse_request(target: u8, command: u8) -> Vec<u8> {
 }
 
 /// The byte a reply to `command` carries. The ATK ZERO's replies count only with status 00 and one byte declared,
-/// the NearLink dongle's unless the status is FF.
+/// the NearLink dongle's unless the status is FF or no byte is declared: what follows the declared length is left
+/// over from an earlier exchange.
 pub fn bitmouse_value(d: &[u8], command: u8, zero: bool) -> Option<u8> {
-    let reply = d.len() >= 8 && d[0] == 0x08 && d[1] == 0x72 && d[5] == command;
-    let good = if zero { d.get(2) == Some(&0x00) && d.get(6) == Some(&0x01) } else { d.get(2) != Some(&0xFF) };
-    (reply && good).then(|| d[7])
+    if d.len() < 8 || d[0] != 0x08 || d[1] != 0x72 || d[5] != command {
+        return None;
+    }
+    let good = if zero { d[2] == 0x00 && d[6] == 0x01 } else { d[2] != 0xFF && d[6] >= 1 };
+    good.then(|| d[7])
 }
 
 fn bitmouse(io: &mut Io, zero: bool) -> win::Result<State> {
@@ -1107,21 +1132,21 @@ fn ask_device_info(io: &mut Io, command: u8, packets: u8) -> win::Result<Option<
 
 fn aj179(io: &mut Io) -> win::Result<State> {
     let receiver = io.info().vendor_id != TELINK;
-    Ok(ask_device_info(io, 0x10, 0x00)?.map_or_else(off, |info| aj179_state(info, receiver)))
+    let product = io.info().product.clone();
+    Ok(ask_device_info(io, 0x10, 0x00)?.map_or_else(off, |info| aj179_state(info, receiver, product.as_deref())))
 }
 
 /// The receiver answers this for itself and goes on reporting a level while the mouse sleeps: only its "linked"
-/// byte says whether the mouse is there.
-pub fn aj179_state(info: DeviceInfo, receiver: bool) -> State {
-    match info {
-        DeviceInfo::Info { linked: false, .. } if receiver => asleep(),
-        DeviceInfo::Info { model, power, level, .. } => {
-            // The same receiver ships with siblings that carry another model code
-            let name = (&model != b"M179").then(|| brand_mouse("AJAZZ"));
-            State { name, ..battery(level, power != 0) }
-        }
-        _ => asleep(),
-    }
+/// byte says whether the mouse is there. The model in the answer says whose mouse it is: M179 and M603 are the two
+/// AJAZZ's own driver knows on these IDs, any other is another brand's mouse on the same platform.
+pub fn aj179_state(info: DeviceInfo, receiver: bool, product: Option<&str>) -> State {
+    let DeviceInfo::Info { model, power, level, linked } = info else { return asleep() };
+    let name = match &model {
+        b"M179" => None,
+        b"M603" => Some(brand_mouse("AJAZZ")),
+        _ => Some(named_or_mouse(product)),
+    };
+    State { name, ..if receiver && !linked { asleep() } else { battery(level, power != 0) } }
 }
 
 fn sc580(io: &mut Io) -> win::Result<State> {
@@ -1143,11 +1168,13 @@ pub fn sc580_state(info: DeviceInfo) -> State {
 
 /// The receiver ignores a request that carries the same number as the one before it.
 static DELUX_SEQUENCE: AtomicU8 = AtomicU8::new(0);
+/// The model a status last named, 0 for none yet: whether one for a mouse that is away still names it is not known,
+/// and the name shouldn't change when the mouse dozes off.
+static DELUX_MODEL: AtomicU32 = AtomicU32::new(0);
 
 fn delux_m800(io: &mut Io) -> win::Result<State> {
     let receiver = io.product_id() == 0x5B2F;
-    let sora = io.info().product.as_deref().is_some_and(|p| p.to_ascii_lowercase().contains("sora"));
-    let name = sora.then(|| "Ninjutso Sora".to_string());
+    let product = io.info().product.clone();
     let mut state = off();
     // A receiver that says "not linked" is asked once more, as it may answer with what it had before
     for _ in 0..2 {
@@ -1157,12 +1184,33 @@ fn delux_m800(io: &mut Io) -> win::Result<State> {
         }
         sleep_ms(20);
         let Some(r) = io.get_feature(0x0C) else { break };
+        if let Some(model) = delux_model(&r) {
+            DELUX_MODEL.store(u32::from_le_bytes(model), Ordering::Relaxed);
+        }
         state = delux_state(&r, receiver);
         if state.online {
             break;
         }
     }
-    Ok(State { name, ..state })
+    let model = Some(DELUX_MODEL.load(Ordering::Relaxed).to_le_bytes()).filter(|m| m != &[0; 4]);
+    Ok(State { name: delux_name(product.as_deref(), model), ..state })
+}
+
+/// The model a status names: four capitals or digits, "M802" from the M800 Pro.
+pub fn delux_model(r: &[u8]) -> Option<[u8; 4]> {
+    let model: [u8; 4] = r.get(8..12)?.try_into().ok()?;
+    let named = r[0] == 0x0C && r[2] == 0x20 && model.iter().all(|b| b.is_ascii_uppercase() || b.is_ascii_digit());
+    named.then_some(model)
+}
+
+/// What to call the mouse, None for the row's own name. Other mice carry these IDs, so it is the M800 Pro only when
+/// its status says so; a receiver that names its mouse (the first Ninjutso Sora's does) is believed first, and one
+/// that says neither is just a mouse.
+pub fn delux_name(product: Option<&str>, model: Option<[u8; 4]>) -> Option<String> {
+    match named_by(product) {
+        None if model.as_ref() == Some(b"M802") => None,
+        named => Some(named.unwrap_or_else(|| t("name.mouse"))),
+    }
 }
 
 pub fn delux_state(r: &[u8], receiver: bool) -> State {
@@ -1187,8 +1235,8 @@ pub fn is_niceboy_reply(d: &[u8]) -> bool {
     d.len() >= 7 && d[0] == 0x05 && d[2] == 0xFA && d[3] == 0x48
 }
 
-/// The mouse reports its battery voltage, which Niceboy's own tool turns into tens of percent with this table. All
-/// zeros is a receiver without its mouse.
+/// The mouse reports its battery voltage, which Niceboy's own tool turns into tens of percent with this table: an
+/// estimate, and shown as one. All zeros is a receiver without its mouse.
 pub fn niceboy_state(d: &[u8]) -> State {
     const TABLE: [(i32, i32); 9] =
         [(4200, 100), (4100, 90), (4000, 80), (3900, 70), (3800, 60), (3700, 50), (3500, 40), (3400, 30), (3200, 20)];
@@ -1196,13 +1244,14 @@ pub fn niceboy_state(d: &[u8]) -> State {
     if !(2500..=4500).contains(&mv) {
         return asleep();
     }
-    on(TABLE.iter().find(|row| mv >= row.0).map_or(10, |row| row.1), d[6] != 0)
+    State { estimate: true, ..on(TABLE.iter().find(|row| mv >= row.0).map_or(10, |row| row.1), d[6] != 0) }
 }
 
-// ---- Redragon M602-KS on Sinowealth's receiver ----
+// ---- Mice on Sinowealth's stock receiver ----
 
 fn sinowealth_receiver(io: &mut Io) -> win::Result<State> {
-    let name = Some(receiver_name::mouse(io.info().product.as_deref(), Some("Redragon M602-KS")));
+    // "M690-PRO" on that mouse's receiver; most say nothing ("2.4G Wireless Receiver") and get the row's "Mouse"
+    let name = named_by(io.info().product.as_deref());
     let mut ask = |command: u8| {
         if !io.set_feature(&[0x05, command]) {
             return None;
@@ -1279,6 +1328,11 @@ fn dareu_togran(io: &mut Io) -> win::Result<State> {
 }
 
 // ---- Royal Kludge MG6 Pro ----
+
+/// The vendor collection with 64-byte reports both ways: page FF00 on a dongle, FFF2 on the cable.
+pub fn is_mg6_collection(i: &HidInfo, page: u16) -> bool {
+    i.usage_page == page && i.usage == 0x0001 && i.input_length == 65 && i.output_length == 65
+}
 
 fn rk_mg6_pro(io: &mut Io) -> win::Result<State> {
     io.set_timeout(600);
@@ -1378,6 +1432,30 @@ mod tests {
     }
 
     #[test]
+    fn an_ultra_link_lists_any_mouse_but_no_keyboard() {
+        // A K5 Max (0A50) connected next to an M5 8K that is off: the mouse is the one listed, as off
+        let paired = [(0x3434, 0x0A50, 1), (0x3434, 0xD048, 0)];
+        assert_eq!(pick(&paired, is_keychron_mouse_id), Some((0xD048, false)));
+        assert_eq!(pick(&paired[..1], is_keychron_mouse_id), None);
+        // A mouse the table has no name for is read all the same
+        assert_eq!(pick(&[(0x3434, 0xD06E, 1)], is_keychron_mouse_id), Some((0xD06E, true)));
+        assert_eq!(keychron_mouse(0xD06E, off()).name, brand_mouse("Keychron"));
+    }
+
+    #[test]
+    fn a_mouse_is_one_entry_on_its_cable_and_behind_any_receiver() {
+        // The key is the mouse's own product ID, which is what a receiver's slot holds and what the cable shows
+        let (cable, slot) = (keychron_mouse(0xD060, on(80, true)), keychron_mouse(0xD060, off()));
+        assert_eq!((cable.key.as_str(), cable.name.as_str()), ("keychron-d060", "Keychron M6"));
+        assert_eq!(cable.key, slot.key);
+        for pid in KEYCHRON_8K_CABLE {
+            assert!(is_link(pid) && is_cable(pid) && keychron_name(pid).is_some(), "{pid:04X}");
+        }
+        assert!(is_link(ULTRA_LINK_8K) && !is_cable(ULTRA_LINK_8K));
+        assert!(is_cable(NAPE_CABLE) && !is_cable(LINK_KM));
+    }
+
+    #[test]
     fn each_link_is_asked_on_its_own_collection() {
         let raw = info(0xFF60, 0x0061, 33, 33, 0);
         let status = info(0x008C, 0x0001, 33, 33, 1001);
@@ -1386,8 +1464,21 @@ mod tests {
         assert!(is_link_collection(0xD026, &raw) && !is_link_collection(0xD026, &status));
         assert!(is_link_collection(0x0440, &raw) && !is_link_collection(0x0440, &mouse));
         assert!(is_link_collection(0xD029, &mouse) && !is_link_collection(0xD029, &raw));
+        // The Ultra-Link 8K and a mouse on its cable are asked the same way
+        assert!(is_link_collection(0xD028, &mouse) && !is_link_collection(0xD028, &status));
+        assert!(is_link_collection(0xD048, &mouse) && !is_link_collection(0xD048, &raw));
         // The Ultra-Link 8K has the 008C collection too, without the feature report
         assert!(!is_dms_collection(&info(0x008C, 0x0001, 33, 33, 0)));
+    }
+
+    #[test]
+    fn machenike_l7_is_known_by_its_product_string_too() {
+        // The collection and the name both of them have (docs/machenike.md)
+        let l7 = HidInfo { product: Some("L7 Mix".into()), ..info(0x008C, 0x0001, 33, 33, 1001) };
+        assert!(is_l7_collection(&l7));
+        assert!(!is_l7_collection(&HidInfo { product: Some("RF Dongle".into()), ..l7.clone() }));
+        assert!(!is_l7_collection(&HidInfo { product: None, ..l7.clone() }));
+        assert!(!is_l7_collection(&HidInfo { feature_length: 0, ..l7 }));
     }
 
     #[test]
@@ -1627,6 +1718,15 @@ mod tests {
     }
 
     #[test]
+    fn bitmouse_level_from_the_nearlink_dongle() {
+        // Captured from 373B:1216 at 90% (HaloBattery's notes); what follows the one declared byte is left over
+        let r = pad(64, &h("08 72 00 05 00 07 01 5A BC 10"));
+        assert_eq!(bitmouse_value(&r, 0x07, false), Some(90));
+        // A reply that declares no byte has no level in it
+        assert_eq!(bitmouse_value(&pad(64, &h("08 72 00 05 00 07 00 5A BC 10")), 0x07, false), None);
+    }
+
+    #[test]
     fn bitmouse_error_is_no_value() {
         assert_eq!(bitmouse_value(&pad(64, &h("08 72 FF 3A 01 07 01 3C")), 0x07, false), None);
         // The ZERO's replies count only when they are fresh and one byte long
@@ -1658,7 +1758,7 @@ mod tests {
         let r = h("10 00 01 0B 4D 31 37 39 00 00 95 01 00 51 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 D6");
         let info = device_info(&r, 0x10).unwrap();
         assert_eq!(info, DeviceInfo::Info { model: *b"M179", power: 0, level: 81, linked: true });
-        assert_eq!(aj179_state(info, true), on(81, false));
+        assert_eq!(aj179_state(info, true, None), on(81, false));
     }
 
     #[test]
@@ -1666,15 +1766,37 @@ mod tests {
         // Captured: 82%, mouse asleep
         let r = h("10 00 01 0B 4D 31 37 39 00 00 95 01 00 52 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 D6");
         let info = device_info(&r, 0x10).unwrap();
-        assert_eq!(aj179_state(info, true), asleep());
+        assert_eq!(aj179_state(info, true, None), asleep());
         // On the cable there is no such byte to go by
-        assert_eq!(aj179_state(info, false), on(82, false));
+        assert_eq!(aj179_state(info, false, None), on(82, false));
     }
 
     #[test]
     fn aj179_sibling_gets_the_brand_for_a_name() {
         let info = DeviceInfo::Info { model: *b"M603", power: 1, level: 40, linked: true };
-        assert_eq!(aj179_state(info, true), State { name: Some(brand_mouse("AJAZZ")), ..on(40, true) });
+        assert_eq!(aj179_state(info, true, None), State { name: Some(brand_mouse("AJAZZ")), ..on(40, true) });
+    }
+
+    #[test]
+    fn another_brands_mouse_on_the_aj179_ids_is_not_called_ajazz() {
+        // M910 is what Inphic's web driver expects from its IN9 on 249A:5C2F; its receiver's string names nobody
+        let in9 = DeviceInfo::Info { model: *b"M910", power: 0, level: 55, linked: true };
+        let state = aj179_state(in9, true, Some("Wireless-Receiver"));
+        assert_eq!(state, State { name: Some(t("name.mouse")), ..on(55, false) });
+        // Asleep it is still not an AJ179
+        let asleep_in9 = DeviceInfo::Info { model: *b"M910", power: 0, level: 55, linked: false };
+        let state = aj179_state(asleep_in9, true, Some("Wireless-Receiver"));
+        assert_eq!(state, State { name: Some(t("name.mouse")), ..asleep() });
+        assert_eq!(aj179_state(DeviceInfo::Away, true, Some("Wireless-Receiver")), asleep());
+    }
+
+    #[test]
+    fn a_product_string_names_a_mouse_or_nobody() {
+        assert_eq!(named_by(Some("Ninjutso Sora")), Some("Ninjutso Sora".to_string()));
+        assert_eq!(named_by(Some("Wireless-Receiver")), None);
+        assert_eq!(named_by(Some("2.4G Wireless Receiver")), None);
+        assert_eq!(named_by(Some("M690-PRO")), Some("M690 PRO".to_string()));
+        assert_eq!(named_by(None), None);
     }
 
     /// A device-info frame with this head and the checksum over its data.
@@ -1753,13 +1875,39 @@ mod tests {
     }
 
     #[test]
+    fn delux_receiver_ids_name_nobody_by_themselves() {
+        let m800 = delux_model(&delux_reply(1, 81, 0));
+        assert_eq!(m800, Some(*b"M802"));
+        // The M800 Pro says who it is; the row's name stands
+        assert_eq!(delux_name(Some("Wireless-Receiver"), m800), None);
+        // The first Sora's receiver names it (the string an owner's dump shows), whatever model the status carries
+        assert_eq!(delux_name(Some("Ninjutso Sora"), m800), Some("Ninjutso Sora".to_string()));
+        assert_eq!(delux_name(Some("Ninjutso Sora"), None), Some("Ninjutso Sora".to_string()));
+        // Another mouse on the same IDs, and a receiver that hasn't answered: just a mouse
+        assert_eq!(delux_name(Some("Wireless-Receiver"), Some(*b"M910")), Some(t("name.mouse")));
+        assert_eq!(delux_name(Some("Wireless-Receiver"), None), Some(t("name.mouse")));
+        assert_eq!(delux_name(None, None), Some(t("name.mouse")));
+    }
+
+    #[test]
+    fn delux_model_is_read_only_from_a_status() {
+        let mut other = delux_reply(1, 81, 0);
+        other[2] = 0x21;
+        assert_eq!(delux_model(&other), None);
+        // A status without a model in it, and a report cut short
+        assert_eq!(delux_model(&pad(33, &h("0C 01 20 00 05 00 01"))), None);
+        assert_eq!(delux_model(&delux_reply(1, 81, 0)[..10]), None);
+    }
+
+    #[test]
     fn niceboy_mw400_at_4133_millivolts() {
-        // Captured: raw 1002, 90% in Niceboy's tool
+        // Captured: raw 1002, 90% in Niceboy's tool. The level is worked out from a voltage: an estimate
+        let estimate = |level, charging| State { estimate: true, ..on(level, charging) };
         let r = h("05 49 FA 48 EA 03 00");
         assert!(is_niceboy_reply(&r));
-        assert_eq!(niceboy_state(&r), on(90, false));
-        assert_eq!(niceboy_state(&h("05 49 FA 48 FB 03 01")), on(100, true));
-        assert_eq!(niceboy_state(&h("05 49 FA 48 00 03 00")), on(10, false));
+        assert_eq!(niceboy_state(&r), estimate(90, false));
+        assert_eq!(niceboy_state(&h("05 49 FA 48 FB 03 01")), estimate(100, true));
+        assert_eq!(niceboy_state(&h("05 49 FA 48 00 03 00")), estimate(10, false));
     }
 
     #[test]
@@ -1811,6 +1959,26 @@ mod tests {
         assert_eq!(mg6_state(&pad(64, &h("01 01 02 11 06 10 2C 01")), false), off());
         assert!(!is_mg6_battery(&pad(64, &h("01 01 03 11 06 10 5F 00"))));
         assert!(!is_mg6_battery(&h("01 01 02 11")));
+    }
+
+    #[test]
+    fn rk_mg6_pro_is_asked_only_on_its_own_collection() {
+        assert!(is_mg6_collection(&info(0xFF00, 0x0001, 65, 65, 0), 0xFF00));
+        assert!(is_mg6_collection(&info(0xFFF2, 0x0001, 65, 65, 0), 0xFFF2));
+        // The cable's page on a dongle, and another device of the chip maker's vendor ID
+        assert!(!is_mg6_collection(&info(0xFFF2, 0x0001, 65, 65, 0), 0xFF00));
+        assert!(!is_mg6_collection(&info(0xFF00, 0x0001, 64, 64, 0), 0xFF00));
+        for spec in SPECS.iter().filter(|s| s.key == "rk-mg6-pro") {
+            assert!(spec.shared && spec.accept.is_some());
+        }
+    }
+
+    #[test]
+    fn rows_on_chip_makers_vendor_ids_need_their_collection() {
+        // Telink, Nordic, Sinowealth and Artery sell chips: their vendor IDs say nothing about whose mouse it is
+        for spec in SPECS.iter().filter(|s| matches!(s.vid, TELINK | 0x1915 | 0x258A | 0x2E3C)) {
+            assert!(spec.shared && spec.accept.is_some(), "{}", spec.key);
+        }
     }
 
     #[test]

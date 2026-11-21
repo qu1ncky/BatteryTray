@@ -652,11 +652,13 @@ fn arctis_nova_elite(io: &mut Io) -> win::Result<State> {
 }
 
 /// The status reply of the Nova Elite's station: [6] the headset's level in percent, [14] its power (01 off, 02 on
-/// the cable, 08 on), [15] 02 while it charges. The Nova Pro Omni's hub answers the same way, and its owners read
-/// [15] as 01 off, 02 charging, 08 on. A headset that is off doesn't always come as "off", but then its level is 0.
+/// the cable, 08 on), [15] 02 while it charges. The Nova Pro Omni's hub answers the same way; one of its owners
+/// reads [15] as 01 off, 02 charging, 08 on, another takes [14] for the link as on the Elite, and nobody has looked
+/// at the two with the headset off, so on the Omni both have to say it is there. A headset that is off doesn't
+/// always come as "off", but then its level is 0.
 pub fn nova_elite_state(r: &[u8], omni: bool) -> State {
     let (level, power, charge) = (r[6], r[14], r[15]);
-    let there = if omni { matches!(charge, 0x02 | 0x08) } else { power != 0x01 };
+    let there = power != 0x01 && (!omni || matches!(charge, 0x02 | 0x08));
     let charging = charge == 0x02 || (!omni && power == 0x02);
     if !there || level > 100 || (level == 0 && !charging) {
         return off();
@@ -724,7 +726,11 @@ fn corsair_wireless_v2(io: &mut Io) -> win::Result<State> {
     }
     io.drain()?;
     for _ in 0..3 {
-        let Some(r) = io.ask(&get(0x09, 0x0F), |d| d.len() > 5, 4, false)? else { return Ok(off()) };
+        // The receiver also sends the level by itself on report 03, with the bytes one place further (03 01 01 0F 00
+        // LL HH), and its own late answers come as 01 00: only the headset's reply to a read counts
+        let Some(r) = io.ask(&get(0x09, 0x0F), |d| is_bragi_reply(d, BRAGI_HEADSET), 4, false)? else {
+            return Ok(off());
+        };
         let value = r[4] as i32 | (r[5] as i32) << 8;
         if (1..=1000).contains(&value) {
             return Ok(on(value / 10, false));
@@ -734,8 +740,9 @@ fn corsair_wireless_v2(io: &mut Io) -> win::Result<State> {
 }
 
 fn sony_inzone_h5(io: &mut Io) -> win::Result<State> {
+    // FF = the headset is off; anything else over 100 is no level either
     Ok(match sony_inzone_battery(io, 2)? {
-        Some(r) if r[14] != 0xFF => on(r[14] as i32, r[13] != 0),
+        Some(r) if r[14] <= 100 => on(r[14] as i32, r[13] != 0),
         _ => off(),
     })
 }
@@ -802,11 +809,21 @@ fn v9_pro_status(status: u8) -> Option<(bool, bool)> {
     }
 }
 
+/// What the dongle puts in the status byte when it has lost its headset (the HT6), or the headset is asleep (M HUB).
+const STATUS_5565_AWAY: u8 = 0x1A;
+
 /// The status request several C-Media dongles share: 55 65 01, answered by 55 65 <level> <status>. Other 55 xx
 /// reports come on the same collection (the HT6 says 55 0A when its headset is switched off).
 fn status_5565(io: &mut Io, status: Status5565) -> win::Result<State> {
-    let r = io.ask(&pad(64, &[0x55, 0x65, 0x01]), |d| d.len() > 3 && d[0] == 0x55 && d[1] == 0x65, 32, false)?;
+    let r = io.ask(&pad(64, &[0x55, 0x65, 0x01]), |d| is_5565_reply(d, status), 32, false)?;
     Ok(r.map_or_else(off, |r| parse_5565(&r, status)))
+}
+
+/// A "55 65" report that answers the request: one with a status this headset is known to send. HeadsetControl takes
+/// the byte after the X9's value for the name of the field and waits through the reports that have another one
+/// there; so a status nobody has named is waited through here too, not taken for "off" at once.
+pub fn is_5565_reply(d: &[u8], status: Status5565) -> bool {
+    d.len() > 3 && d[0] == 0x55 && d[1] == 0x65 && (d[3] == STATUS_5565_AWAY || status(d[3]).is_some())
 }
 
 /// A "55 65" reply: [2] the level in percent, [3] the status. A level of 0 with a status of 0 is an empty reply,
@@ -1055,9 +1072,11 @@ mod tests {
         // A headset that is off without saying so reads 0%
         assert_eq!(nova_elite_state(&reply(0, 0x08, 0x08), false), off());
         assert_eq!(nova_elite_state(&reply(101, 0x08, 0x08), false), off());
-        // The Omni's hub says "off" in the other byte
+        // The Omni's hub says "off" in the other byte, or in this one: its owners don't agree which
         assert_eq!(nova_elite_state(&reply(77, 0x08, 0x01), true), off());
+        assert_eq!(nova_elite_state(&reply(77, 0x01, 0x08), true), off());
         assert_eq!(nova_elite_state(&reply(77, 0x08, 0x02), true), state(true, Some(77), true));
+        assert_eq!(nova_elite_state(&reply(77, 0x08, 0x04), true), off());
     }
 
     #[test]
@@ -1085,6 +1104,42 @@ mod tests {
         assert_eq!(parse_5565(&[0x55, 0x65, 0x32, 0x1A], mhub_status), off());
         assert_eq!(parse_5565(&[0x55, 0x65, 0x32, 0x00], mhub_status), off());
         assert_eq!(parse_5565(&[0x55, 0x65, 0x65, 0x02], mhub_status), off());
+    }
+
+    #[test]
+    fn a_55_65_report_with_an_unnamed_status_is_not_the_reply() {
+        // The X9 as HeadsetControl captured it, then charging and full as M HUB reads them
+        assert!(is_5565_reply(&[0x55, 0x65, 0x50, 0x02], mhub_status));
+        assert!(is_5565_reply(&[0x55, 0x65, 0x50, 0x03], mhub_status));
+        assert!(is_5565_reply(&[0x55, 0x65, 0x64, 0x04], mhub_status));
+        // The dongle without its headset is an answer; another byte there, another report and a short one are not
+        assert!(is_5565_reply(&[0x55, 0x65, 0x32, 0x1A], mhub_status));
+        assert!(!is_5565_reply(&[0x55, 0x65, 0x32, 0x07], mhub_status));
+        assert!(!is_5565_reply(&[0x55, 0x65, 0x32, 0x00], mhub_status));
+        assert!(!is_5565_reply(&[0x55, 0x0A, 0x32, 0x02], mhub_status));
+        assert!(!is_5565_reply(&[0x55, 0x65, 0x32], mhub_status));
+        // Only the V9 Pro has 0 for a status
+        assert!(is_5565_reply(&[0x55, 0x65, 0x32, 0x00], v9_pro_status));
+    }
+
+    #[test]
+    fn nova_pro_omni_needs_both_bytes_to_say_the_headset_is_there() {
+        // The captured reply with either byte turned to "off"
+        let mut r = [0x01, 0xB0, 0, 0, 0x04, 0x01, 0x30, 0x3C, 0x08, 0x01, 0, 0x0A, 0x05, 0, 0x08, 0x08, 0x03];
+        assert_eq!(nova_elite_state(&r, true), state(true, Some(48), false));
+        r[14] = 0x01;
+        assert_eq!(nova_elite_state(&r, true), off());
+        (r[14], r[15]) = (0x08, 0x01);
+        assert_eq!(nova_elite_state(&r, true), off());
+    }
+
+    #[test]
+    fn corsair_wireless_v2_level_is_the_headsets_reply_to_a_read() {
+        // An HS80 MAX on its 0A97 receiver, as Windows returned it: 42.0%
+        assert!(is_bragi_reply(&reply(&[0x01, 0x01, 0x02, 0x00, 0xA4, 0x01]), RECEIVER));
+        // The level the receiver sends by itself, and its own answer to a read of its product ID
+        assert!(!is_bragi_reply(&reply(&[0x03, 0x01, 0x01, 0x0F, 0x00, 0xAC, 0x03]), RECEIVER));
+        assert!(!is_bragi_reply(&reply(&[0x01, 0x00, 0x02, 0x00, 0x40, 0x0A]), RECEIVER));
     }
 
     #[test]

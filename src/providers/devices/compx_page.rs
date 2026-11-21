@@ -11,7 +11,8 @@
 //! The battery is page 00, command 83: two bytes of data, 01 while charging and the level in percent. A receiver
 //! whose mouse is off answers A4, A0, a level of 0 or nothing at all, depending on the brand: all of them are "off"
 //! here. A receiver that several models share says which mouse it holds on page 00, command 8B (the mouse's vendor
-//! and product ID). G-Wolves' older models keep the transport and ask in an older layout: `00 02 8F WW` (WW 01
+//! and product ID); it is asked only where a tool is known to ask, and the other shared receivers go by the brand's
+//! name. G-Wolves' older models keep the transport and ask in an older layout: `00 02 8F WW` (WW 01
 //! through a receiver, 00 on the cable), answered `A1 02 8F .. CC PP`, CC charging and PP the level.
 //! Only these reads are sent; nothing is written to the mouse and no mode is changed. A receiver passes the battery
 //! request on to its mouse over the radio, and the tools this follows allow for a dozing mouse answering late, so
@@ -77,7 +78,13 @@ const SHARED_RECEIVERS: &[((u16, u16), &str)] = &[
     ((LAMZU, 0x0036), "LAMZU"),
     ((LAMZU, 0x0048), "LAMZU"),
     ((WLMOUSE, 0xA882), "WLmouse"),
+    ((GWOLVES, 0x3817), "G-Wolves"),
 ];
+
+/// The shared receivers that are asked which mouse they hold: the ones OpenMouse sends that request to (LAMZU's two
+/// Aurora receivers, the 8K one seen answering it, and WLmouse's). No tool is known to send it to the others, so
+/// they keep the brand's name.
+const NAMES_ITS_MOUSE: &[(u16, u16)] = &[(LAMZU, 0x0001), (LAMZU, 0x0003), (WLMOUSE, 0xA882)];
 
 /// Receiver IDs first, then the mouse on its cable. Two rows share a key where one model has IDs under two vendors.
 pub static SPECS: &[Spec] = &[
@@ -152,8 +159,10 @@ pub static SPECS: &[Spec] = &[
     page("wlmouse-1k-receiver", "WLmouse mouse", WLMOUSE, &[0xA882], &[]),
     // ---- MCHOSE A5, first generation: the two receivers came with either model
     page("mchose-a5-pro", "MCHOSE A5 Pro / A5 Pro Max", MCHOSE, &[0xF013, 0xF015, 0xF019, 0xF017], &[0xF019, 0xF017]),
-    // ---- G-Wolves models their configurator marks "new protocol"
-    page("gwolves-htm-plus", "G-Wolves HTM Plus", GWOLVES, &[0x3817, 0x3808], &[0x3808]),
+    // ---- G-Wolves models their configurator marks "new protocol". 3817 is the HTM Plus's receiver and, in the same
+    // table, the receiver the other three can come with: it gets the brand's name, not one model's
+    page("gwolves-htm-plus", "G-Wolves HTM Plus", GWOLVES, &[0x3808], &[0x3808]),
+    page("gwolves-receiver-3817", "G-Wolves mouse", GWOLVES, &[0x3817], &[]),
     page("gwolves-hsk-pro-2", "G-Wolves HSK Pro 2.0", GWOLVES, &[0x6817, 0x6808], &[0x6808]),
     page("gwolves-htxu", "G-Wolves HTXU", GWOLVES, &[0x5617, 0x5608], &[0x5608]),
     page("gwolves-fenrir-pro", "G-Wolves Fenrir Pro", GWOLVES, &[0x3617, 0x3608], &[0x3608]),
@@ -179,7 +188,8 @@ pub static SPECS: &[Spec] = &[
     legacy("gwolves-ht-s2-pro", "G-Wolves HT-S2 Pro", &[0x7917, 0x7908], &[0x7908]),
 ];
 
-/// A mouse asked with the page command.
+/// A mouse asked with the page command. 373E is the ODM's own vendor ID, which every brand it builds for can carry
+/// (some with another protocol): a device on it without the report's collection is not listed at all.
 const fn page(
     key: &'static str,
     name: &'static str,
@@ -187,7 +197,17 @@ const fn page(
     pids: &'static [u16],
     cable_pids: &'static [u16],
 ) -> Spec {
-    Spec { key, name, vid, pids, cable_pids, accept: Some(takes_the_report), query: page_battery, ..Spec::MOUSE }
+    Spec {
+        key,
+        name,
+        vid,
+        pids,
+        cable_pids,
+        accept: Some(takes_the_report),
+        shared: vid == COMPX,
+        query: page_battery,
+        ..Spec::MOUSE
+    }
 }
 
 /// 258A is Sinowealth's vendor ID, which keyboards and mice of many brands carry: the collection has to be a vendor
@@ -349,11 +369,15 @@ fn page_battery(io: &mut Io) -> win::Result<State> {
     let target = if ASKED_AS_ITSELF.contains(&id) { TARGET_SELF } else { TARGET_MOUSE };
     let mut state = state(ask(io, &request(target, 2, PAGE_DEVICE, BATTERY, &[]), SENDS, battery_reply));
     if let Some(brand) = shared_receiver(id) {
-        // The receiver answers this one itself, so the name stays while the mouse is off
-        let paired = ask(io, &request(TARGET_PAIRING, 6, PAGE_DEVICE, PAIRED_MOUSE, &[0x02]), 1, paired_reply);
-        let name = match paired {
-            Reply::Data((vid, pid)) => model(vid, pid),
-            _ => None,
+        let name = if NAMES_ITS_MOUSE.contains(&id) {
+            // The receiver answers this one itself, so the name stays while the mouse is off
+            let paired = ask(io, &request(TARGET_PAIRING, 6, PAGE_DEVICE, PAIRED_MOUSE, &[0x02]), 1, paired_reply);
+            match paired {
+                Reply::Data((vid, pid)) => model(vid, pid),
+                _ => None,
+            }
+        } else {
+            None
         };
         state.name = Some(name.map_or_else(|| tf("name.brandMouse", &[&brand]), str::to_string));
     }
@@ -517,6 +541,26 @@ mod tests {
     }
 
     #[test]
+    fn only_receivers_a_tool_asks_are_asked_which_mouse_they_hold() {
+        for id in NAMES_ITS_MOUSE {
+            assert!(shared_receiver(*id).is_some(), "{:04X}:{:04X} is not a shared receiver", id.0, id.1);
+        }
+        // LAMZU's newer receivers and G-Wolves' are in no tool's list: they are named by the brand and not asked
+        for id in [(LAMZU, 0x002E), (LAMZU, 0x0036), (LAMZU, 0x0048), (GWOLVES, 0x3817)] {
+            assert!(shared_receiver(id).is_some() && !NAMES_ITS_MOUSE.contains(&id), "{:04X}:{:04X}", id.0, id.1);
+        }
+    }
+
+    #[test]
+    fn gwolves_receiver_of_four_models_is_not_named_after_one() {
+        // mouse.xyz gives 3817 to the HTM Plus and as the shared receiver of the HSK Pro 2.0, HTXU and Fenrir Pro
+        assert_eq!(shared_receiver((GWOLVES, 0x3817)), Some("G-Wolves"));
+        assert_eq!(model(GWOLVES, 0x3817), None);
+        assert_eq!(model(GWOLVES, 0x3808), Some("G-Wolves HTM Plus"));
+        assert_ne!(spec(GWOLVES, 0x3817).key, spec(GWOLVES, 0x3808).key);
+    }
+
+    #[test]
     fn older_gwolves_request_says_how_the_mouse_is_connected() {
         assert_eq!(pad(REPORT_LENGTH, &legacy_request(false)), report("00 02 8F 01"));
         assert_eq!(pad(REPORT_LENGTH, &legacy_request(true)), report("00 02 8F 00"));
@@ -560,7 +604,8 @@ mod tests {
         assert!(!vendor_and_takes_the_report(&collection(0x0001, 0x0006, 65)));
         assert!(!vendor_and_takes_the_report(&collection(0xFF00, 0x0001, 6)));
         for s in SPECS.iter() {
-            assert_eq!(s.shared, s.vid == GLORIOUS, "{}", s.key);
+            // The two vendor IDs that aren't one brand's own
+            assert_eq!(s.shared, s.vid == GLORIOUS || s.vid == COMPX, "{}", s.key);
             assert!(s.accept.is_some(), "{}", s.key);
         }
     }

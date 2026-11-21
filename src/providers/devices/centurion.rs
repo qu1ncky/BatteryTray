@@ -1,5 +1,5 @@
 //! Logitech headsets that speak "Centurion" instead of HID++ - G PRO X 2 LIGHTSPEED, G522 LIGHTSPEED, G PRO X 3
-//! LIGHTSPEED, ASTRO A20 X - and the ASTRO A50 base stations that still carry Astro's own vendor ID (Gen 4, Gen 3).
+//! LIGHTSPEED, ASTRO A20 X - and the ASTRO A50 Gen 4 base station, which still carries Astro's own vendor ID.
 //!
 //! Centurion, on the vendor collection FFA0:0001, 64-byte reports both ways:
 //! - A frame is `prefix, length, flags, payload`: the prefix is report 51 on the PRO X 2 and report 50 with the
@@ -17,22 +17,26 @@
 //! - A headset that is off: the receiver refuses the bridge request (`FF, bridge, ...`), or acknowledges it and
 //!   nothing follows, or reports `bridge, 00, 00, 00` (the headset left).
 //!
-//! ASTRO A50 base stations, on the vendor collection FF32:0074, report 02, 64 bytes: the request is `02, command,
-//! [length, data]`, the reply `02, status, length, data` with status 02 = data follows, 00 = taken, 01 = error.
-//! One reply per request and nothing unasked; the reply doesn't say which command it answers. Command 54 answers
-//! the headset's state (bit 0 on the dock, bit 1 radio link), 7C the battery (bit 7 charging, the rest percent).
-//! The base station keeps answering with the last level after the headset went off, hence the look at 54 first.
-//! The Gen 3 refuses 7C; its battery is in the answer to `72 01`, four groups of `02, field, value, 00`, field 04.
+//! ASTRO A50 Gen 4 base station, on the vendor collection FF32:0074, report 02, 64 bytes: the request is `02,
+//! command`, the reply `02, status, length, data` with status 02 = data follows, 00 = taken, 01 = error. One reply
+//! per request and nothing unasked; the reply doesn't say which command it answers. Command 54 answers the
+//! headset's state (bit 0 on the dock, bit 1 radio link), 7C the battery (bit 7 charging, the rest percent). The
+//! base station keeps answering with the last level after the headset went off, hence the look at 54 first.
+//!
+//! The A50 Gen 3 base station (9886:0015) is left out on purpose. Its level is known (it refuses 7C and has the
+//! battery in the answer to `72 01`), but not how it tells that the headset is off: the one study of Astro's own
+//! software for it found no link state, and 54 was only seen answering with the headset on the dock. Without that,
+//! a level the base station remembers would be shown for a headset that is off.
 //!
 //! Facts from HeadsetControl (github.com/Sapd/HeadsetControl: lib/devices/protocols/logitech_centurion_protocol.hpp,
 //! logitech_gpro_x2_lightspeed.hpp, logitech_g522_lightspeed.hpp, logitech_gpro_x3_lightspeed.hpp,
 //! logitech_astro_a50_gen4.hpp, the captured frames in tests/test_protocols.cpp, pull request 641 for the A20 X and
 //! issue 539 for a PRO X 2 owner's captures), Solaar (github.com/pwr-Solaar/Solaar: lib/logitech_receiver/base.py,
 //! device.py, centurion.py), eh-fifty (github.com/tdryer/eh-fifty) and AstroBar (github.com/nichtlegacy/AstroBar)
-//! for the A50 Gen 4, OpenAstroCC (github.com/BenStein1/OpenAstroCC, docs/GEN3-IMPLEMENTATION-GUIDE.md) and
-//! Wireless-Device-Battery-Monitor (github.com/krisgfx9/Wireless-Device-Battery-Monitor, src/drivers/astro.cpp) for
-//! the A50 Gen 3. Own implementation. Read-only: only functions that read are sent. Not yet verified on hardware by
-//! this project.
+//! for the A50 Gen 4; what is said of the A50 Gen 3 is from OpenAstroCC (github.com/BenStein1/OpenAstroCC,
+//! docs/GEN3-IMPLEMENTATION-GUIDE.md) and Wireless-Device-Battery-Monitor
+//! (github.com/krisgfx9/Wireless-Device-Battery-Monitor, src/drivers/astro.cpp and pull request 2329). Own
+//! implementation. Read-only: only functions that read are sent. Not yet verified on hardware by this project.
 
 use super::{off, on, Io, Spec, State};
 use crate::win;
@@ -94,16 +98,6 @@ pub static SPECS: &[Spec] = &[
         page: 0xFF32,
         usage: 0x0074,
         query: astro_a50_gen4,
-        ..Spec::HEADSET
-    },
-    Spec {
-        key: "astro-a50-gen-3",
-        name: "ASTRO A50 Gen 3",
-        vid: 0x9886,
-        pids: &[0x0015],
-        page: 0xFF32,
-        usage: 0x0074,
-        query: astro_a50_gen3,
         ..Spec::HEADSET
     },
 ];
@@ -280,51 +274,42 @@ fn on_its_cable(io: &mut Io, prefix: &[u8]) -> win::Result<State> {
     })
 }
 
-// ---- ASTRO A50 base stations ----
+// ---- ASTRO A50 Gen 4 base station ----
 
+const A50_REPORT: u8 = 0x02;
 const A50_HEADSET_STATE: u8 = 0x54;
 const A50_BATTERY: u8 = 0x7C;
-/// What Astro's own software shows for a Gen 3; on a Gen 4 the same command is the game / voice balance.
-const A50_GEN3_STATE: u8 = 0x72;
 
-/// Bits of the headset state: on the dock, where the base station reads the headset through the contacts, and
-/// linked by radio.
+/// Bits of the headset state: on the dock, and linked by radio (which is also "switched on").
 const A50_DOCKED: u8 = 0x01;
 const A50_LINKED: u8 = 0x02;
 
 /// The base station answers within milliseconds.
 const A50_TIMEOUT_MS: u64 = 1000;
 
-/// `numbered`: the collection declares report 02. Some Gen 3 firmware declares no report IDs, and the same bytes
-/// then go behind the 00 Windows wants in front.
-fn a50_request(numbered: bool, command: u8, data: &[u8]) -> Vec<u8> {
-    let mut request = if numbered { vec![] } else { vec![0x00] };
-    request.extend_from_slice(&[0x02, command]);
-    if !data.is_empty() {
-        request.push(data.len() as u8);
-        request.extend_from_slice(data);
-    }
-    request
+/// Neither command sent here takes data: the report ID and the command are the whole request.
+fn a50_request(command: u8) -> [u8; 2] {
+    [A50_REPORT, command]
 }
 
 /// A reply that carries data: 02, status 02, length, data. The length is not looked at here: Gen 4 firmware is
 /// known to get it wrong.
 fn a50_has_data(reply: &[u8]) -> bool {
-    matches!(reply, [0x02, 0x02, _, _, ..])
+    matches!(reply, [A50_REPORT, 0x02, _, _, ..])
 }
 
-/// The whole reply to a command, when it carries data.
-fn a50_ask(io: &mut Io, command: u8, data: &[u8]) -> win::Result<Option<Vec<u8>>> {
-    let numbered = io.info().output_report_id != 0;
+/// The first data byte of the reply to a command, when the reply carries data.
+fn a50_ask(io: &mut Io, command: u8) -> win::Result<Option<u8>> {
     // One reply per request and nothing unasked: the first report is the answer, whatever its status
-    let reply = io.ask(&a50_request(numbered, command, data), |d| d.first() == Some(&0x02), 4, false)?;
-    Ok(reply.filter(|r| a50_has_data(r)))
+    let reply = io.ask(&a50_request(command), |d| d.first() == Some(&A50_REPORT), 4, false)?;
+    Ok(reply.filter(|r| a50_has_data(r)).map(|r| r[3]))
 }
 
 /// Whether the level the base station has is the headset's current one: it is while the headset is linked or sits
-/// on the dock, and the last one heard otherwise.
-fn a50_headset_there(io: &mut Io) -> win::Result<bool> {
-    Ok(a50_ask(io, A50_HEADSET_STATE, &[])?.is_some_and(|r| r[3] & (A50_DOCKED | A50_LINKED) != 0))
+/// on the dock, and the last one heard otherwise. That is AstroBar's rule, which works out how fast the headset
+/// charges on the dock from these levels; HeadsetControl reads the level only with the link bit set.
+fn a50_is_there(state: u8) -> bool {
+    state & (A50_DOCKED | A50_LINKED) != 0
 }
 
 /// The battery byte: bit 7 charging, the rest percent.
@@ -335,41 +320,19 @@ fn a50_state(battery: u8) -> State {
     }
 }
 
-/// The battery byte in a Gen 3's answer to `72 01`: sixteen bytes, four groups of `02, field, value, 00` with the
-/// fields 01 to 04 in this order, the battery in field 04. The top two bits of the length byte are the sequence
-/// number, 0 as in the request.
-fn a50_gen3_battery(reply: &[u8]) -> Option<u8> {
-    match reply {
-        [0x02, 0x02, length, 0x02, 0x01, _, _, 0x02, 0x02, _, _, 0x02, 0x03, _, _, 0x02, 0x04, battery, ..]
-            if (16..=63).contains(length) =>
-        {
-            Some(*battery)
-        }
-        _ => None,
-    }
-}
-
 fn astro_a50_gen4(io: &mut Io) -> win::Result<State> {
     io.set_timeout(A50_TIMEOUT_MS);
-    if !a50_headset_there(io)? {
+    if !a50_ask(io, A50_HEADSET_STATE)?.is_some_and(a50_is_there) {
         return Ok(off());
     }
-    Ok(a50_ask(io, A50_BATTERY, &[])?.map_or_else(off, |r| a50_state(r[3])))
-}
-
-fn astro_a50_gen3(io: &mut Io) -> win::Result<State> {
-    io.set_timeout(A50_TIMEOUT_MS);
-    if !a50_headset_there(io)? {
-        return Ok(off());
-    }
-    Ok(a50_ask(io, A50_GEN3_STATE, &[0x01])?.and_then(|r| a50_gen3_battery(&r)).map_or_else(off, a50_state))
+    Ok(a50_ask(io, A50_BATTERY)?.map_or_else(off, a50_state))
 }
 
 #[cfg(test)]
 mod tests {
     //! Centurion frames as HeadsetControl's tests have them from G PRO X 2, G522, G PRO X 3 and ASTRO A20 X
-    //! captures, with our software ID where theirs (1) was: the ID is only echoed. A50 replies as in
-    //! HeadsetControl's and Wireless-Device-Battery-Monitor's tests.
+    //! captures, with our software ID where theirs (1) was: the ID is only echoed. A50 Gen 4 replies as in
+    //! HeadsetControl's tests.
     use super::*;
 
     const BRIDGE_AT: u8 = 0x03;
@@ -592,16 +555,21 @@ mod tests {
     }
 
     #[test]
-    fn a50_requests_are_the_command_and_its_data() {
-        assert_eq!(a50_request(true, A50_HEADSET_STATE, &[]), [0x02, 0x54]);
-        assert_eq!(a50_request(true, A50_BATTERY, &[]), [0x02, 0x7C]);
-        assert_eq!(a50_request(true, A50_GEN3_STATE, &[0x01]), [0x02, 0x72, 0x01, 0x01]);
+    fn a50_requests_are_the_report_id_and_the_command() {
+        assert_eq!(a50_request(A50_HEADSET_STATE), [0x02, 0x54]);
+        assert_eq!(a50_request(A50_BATTERY), [0x02, 0x7C]);
     }
 
     #[test]
-    fn a50_requests_go_behind_a_zero_when_the_base_station_declares_no_report_id() {
-        assert_eq!(a50_request(false, A50_HEADSET_STATE, &[]), [0x00, 0x02, 0x54]);
-        assert_eq!(a50_request(false, A50_GEN3_STATE, &[0x01]), [0x00, 0x02, 0x72, 0x01, 0x01]);
+    fn a50_headset_is_there_while_linked_or_on_the_dock() {
+        // The answers to 54 that HeadsetControl's tests have: linked off the dock, linked on it, on it without a
+        // link, and off - when what 7C answers is the last level heard
+        assert!(a50_is_there(0x02));
+        assert!(a50_is_there(0x03));
+        assert!(a50_is_there(0x01));
+        assert!(!a50_is_there(0x00));
+        // A bit nobody has a meaning for is not the headset
+        assert!(!a50_is_there(0x04));
     }
 
     #[test]
@@ -609,7 +577,7 @@ mod tests {
         assert!(a50_has_data(&[0x02, 0x02, 0x01, 0x48]));
         // Taken, without data
         assert!(!a50_has_data(&[0x02, 0x00, 0x00, 0x00]));
-        // What a Gen 3 answers to 7C
+        // An error: its code and its name
         assert!(!a50_has_data(&[0x02, 0x01, 0x1F, 0x01, 0x00, 0x00, 0x00, b'H', b'I', b'D', b'_', b'E']));
         assert!(!a50_has_data(&[0x02, 0x02, 0x01]));
         assert!(!a50_has_data(&[0x03, 0x02, 0x01, 0x48]));
@@ -631,34 +599,8 @@ mod tests {
     }
 
     #[test]
-    fn a50_gen3_battery_is_in_the_fourth_group() {
-        // 63%, charging
-        let reply = [2, 2, 16, 2, 1, 1, 0, 2, 2, 1, 0, 2, 3, 0x80, 0, 2, 4, 0x80 | 63, 0];
-        assert_eq!(a50_gen3_battery(&reply), Some(0xBF));
-        assert_eq!(a50_gen3_battery(&reply).map(a50_state), Some(state(true, Some(63), true)));
-    }
-
-    #[test]
-    fn a50_gen3_reply_of_another_shape_is_no_battery() {
-        let reply = [2, 2, 16, 2, 1, 1, 0, 2, 2, 1, 0, 2, 3, 0x80, 0, 2, 4, 0x80 | 63, 0];
-        // Each tag and field in turn
-        for at in [3, 4, 7, 8, 11, 12, 15, 16] {
-            let mut other = reply;
-            other[at] = 0x05;
-            assert_eq!(a50_gen3_battery(&other), None, "byte {at}");
-        }
-        // An error, a shorter answer, another sequence number, a reply cut before the battery
-        let mut refused = reply;
-        refused[1] = 0x01;
-        assert_eq!(a50_gen3_battery(&refused), None);
-        let mut short = reply;
-        short[2] = 12;
-        assert_eq!(a50_gen3_battery(&short), None);
-        let mut sequence = reply;
-        sequence[2] = 0x40 | 16;
-        assert_eq!(a50_gen3_battery(&sequence), None);
-        assert_eq!(a50_gen3_battery(&reply[..17]), None);
-        // A Gen 4's reply to the same command: one byte, the balance
-        assert_eq!(a50_gen3_battery(&[0x02, 0x02, 0x01, 0x82]), None);
+    fn the_a50_gen_3_is_not_claimed() {
+        // See the module's header: nothing tells when its headset is off
+        assert!(!SPECS.iter().any(|s| s.vid == 0x9886 && s.pids.contains(&0x0015)));
     }
 }

@@ -25,30 +25,34 @@
 //! Alienware Pro Wireless Gaming Keyboard on its receiver 413C:211D: a feature report without an ID, 0E A1, on
 //! FF00:0001, answered by an input report 0E A1 LL SS, SS 04 with the cable in.
 //!
-//! Every request here only reads. What the sources know about waking: an Evision keyboard keeps its own sleep timer
-//! while it is asked (a Feker Alice80's backlight still timed out when asked every minute), and its receiver answers
-//! "asleep" or nothing for it; HaloBattery nevertheless asks an ATK V75X only while it is typed on, and
-//! Wireless-Device-Battery-Monitor asks keyboards on a receiver every 3 to 10 minutes so as not to keep one awake.
-//! An AULA mouse is woken by the request. So the rows in `ROWS` are asked by a provider of their own,
-//! `KeyboardProvider`, every 5 minutes as `aula_mchose.rs` does; the Akko mice are in `SPECS` and asked with the
-//! other mice.
+//! Every request here only reads, but a request can count as activity. The owner of an ATK V75X saw HaloBattery's
+//! periodic requests keep the keyboard from falling asleep (HaloBattery, pull request 308), so that app asks only
+//! while the keyboard is typed on, and Wireless-Device-Battery-Monitor asks the 320F:5088 and ATK Z87 receivers every
+//! 10 minutes at most and a MCHOSE K87 V3, which sleeps after half an hour, every 3. A Feker Alice80's backlight, on
+//! the other hand, still timed out when asked every minute, and a CHERRY MX 2.0S falls asleep while asked twice a
+//! minute. The receiver of a sleeping keyboard answers "asleep" or nothing by itself. An AULA mouse is woken by the
+//! request. So the rows in `ROWS` are asked by a provider of their own, `KeyboardProvider`: every 5 minutes as
+//! `aula_mchose.rs` does, the ones in `KEPT_AWAKE` every 35 minutes once they have answered, a device on shared IDs
+//! that has never answered every 10, and the AULA mouse only while its dongle says the mouse is in use. The Akko
+//! mice are in `SPECS` and asked with the other mice.
 //!
 //! Protocol facts from Wireless-Device-Battery-Monitor (src/drivers/atk_keyboard.cpp, cherry.cpp, akko.cpp,
 //! ajazz_ak992.cpp, aula_mouse.cpp, semico.cpp, via_dongle.cpp, mchose_modern.cpp; issues 324 and 886, pull request
-//! 2934), HaloBattery (providers/atk_keyboard.py, lofree.py, urx.py, alienware.py and docs/protocols.md),
-//! BatteryWatch (src/Providers.cs: the CHERRY frame), cherry-battery-state (cherry_battery.py: the MX 2.0S),
+//! 2934), HaloBattery (providers/atk_keyboard.py, lofree.py, urx.py, alienware.py, docs/protocols.md, pull request
+//! 308), BatteryWatch (src/Providers.cs: the CHERRY frame), cherry-battery-state (cherry_battery.py: the MX 2.0S),
 //! myfinder-device-battery (engine/upstream-protocols.md: the VGN receiver, the MX 2.0S WL Pro) and openajazz
 //! (PROTOCOL.md: the Semico status query). Own implementation. Not yet verified on hardware by this project, which is
 //! why the first exchange with each device goes to the log.
 
 use super::{off, off_because, on, Io, Spec, State, TableProvider};
 use crate::hid::HidInfo;
-use crate::providers::{remaining_ms, secs, Provider};
+use crate::loc::t;
+use crate::providers::{secs, Provider};
 use crate::reading::DeviceReading;
 use crate::win;
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicU16, Ordering};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 /// The mice, asked on every poll with the other mice. Nothing is published about what their receivers answer while
 /// the mouse is off.
@@ -139,6 +143,7 @@ static ROWS: &[Spec] = &[
         query: |io| evision(io, &ATK),
         ..Spec::KEYBOARD
     },
+    // Evision's vendor ID, which its keyboards of any make carry: listed only with the collection this one has
     Spec {
         key: "ajazz-ak992",
         name: "AJAZZ AK992",
@@ -146,11 +151,12 @@ static ROWS: &[Spec] = &[
         pids: &[0x50C3],
         interface: 1,
         accept: Some(|i| evision_64(i) && i.feature_length == 0),
+        shared: true,
         query: |io| evision(io, &ATK),
         ..Spec::KEYBOARD
     },
-    // A mouse, but one that a request wakes, so it is asked as rarely as the keyboards. The X9 and V9 models share
-    // the dongle and nothing says which one is behind it
+    // A mouse, but one that a request wakes, so it is only asked while its dongle says it is in use. The X9 and V9
+    // models share the dongle and nothing says which one is behind it
     Spec {
         key: "aula-8k-dongle",
         name: "AULA X9 Ultra / V9 Max+",
@@ -226,16 +232,35 @@ static TABLES: &[&[Spec]] = &[ROWS];
 /// once it has answered, so a keyboard of another make doesn't sit in the list as one that is always off.
 const UNPROVEN: &[&str] = &["evision-320f-5088", "semico-1a2c", "mchose-k87-v3"];
 
+/// Rows whose keyboard may take a request for activity and stay awake for it: an ATK V75X did, and the others here
+/// have the same firmware maker or are asked rarely by their source for this reason.
+const KEPT_AWAKE: &[&str] = &["evision-320f-5088", "atk-z87", "ajazz-ak992", "mchose-k87-v3"];
+
+/// How long a `KEPT_AWAKE` keyboard that has answered is left alone: longer than the half hour after which such a
+/// keyboard falls asleep, so that one request can put its sleep off once and no more.
+const KEPT_AWAKE_WAIT: Duration = secs(35 * 60);
+
+/// How long a device of an `UNPROVEN` row that has never answered is left alone, while nothing else is waited for:
+/// it may be somebody else's keyboard (a WOBKEY Rainy 75 has the 320F:5088 receiver's IDs and name), and
+/// Wireless-Device-Battery-Monitor asks that receiver every 10 minutes at most.
+const STRANGER_WAIT: Duration = secs(10 * 60);
+
 /// Asks the rows in `ROWS` the way the table engine asks the others, only less often.
 pub struct KeyboardProvider {
     table: TableProvider,
     /// The readings of `UNPROVEN` rows that have had an answer in this session, by Id.
     answered: HashSet<String>,
+    /// The last poll found a device of an `UNPROVEN` row that has never answered.
+    strangers: bool,
 }
 
 impl Default for KeyboardProvider {
     fn default() -> Self {
-        Self { table: TableProvider::new("Keyboards", TABLES).every(secs(300), secs(60)), answered: HashSet::new() }
+        Self {
+            table: TableProvider::new("Keyboards", TABLES).every(secs(300), secs(60)),
+            answered: HashSet::new(),
+            strangers: false,
+        }
     }
 }
 
@@ -246,15 +271,31 @@ impl Provider for KeyboardProvider {
 
     fn poll(&mut self) -> Vec<DeviceReading> {
         let mut readings = self.table.poll();
+        let found = readings.len();
         readings.retain(|r| listed(&mut self.answered, r));
+        self.strangers = readings.len() < found;
         readings
     }
 
     /// The level changes slowly, and a request may keep a keyboard from falling asleep. One that didn't answer is
-    /// asked again sooner, to catch it waking up, as `sonix_keyboard.rs` does.
+    /// asked again sooner, to catch it waking up, as `sonix_keyboard.rs` does: its receiver answers for it.
     fn delay(&self, last: &[DeviceReading]) -> Duration {
-        self.table.delay(last)
+        if last.iter().any(kept_awake) {
+            KEPT_AWAKE_WAIT
+        } else if last.is_empty() && self.strangers {
+            STRANGER_WAIT
+        } else {
+            self.table.delay(last)
+        }
     }
+}
+
+/// Whether a reading is of a `KEPT_AWAKE` keyboard that answered over its receiver: on its cable it is powered and
+/// has no sleep to lose.
+fn kept_awake(reading: &DeviceReading) -> bool {
+    reading.online
+        && reading.via != t("via.cable")
+        && ROWS.iter().any(|s| KEPT_AWAKE.contains(&s.key) && s.id() == reading.id)
 }
 
 /// Whether a reading is shown: all of them but the `UNPROVEN` ones that have never answered.
@@ -434,32 +475,26 @@ fn evision_5088(io: &mut Io) -> win::Result<State> {
     Ok(State { name: name.map(str::to_string), ..state })
 }
 
-/// How long an AULA dongle is listened to for its answer and for a word about the link.
-const AULA_LISTEN_MS: u64 = 1200;
+/// How long an AULA dongle is listened to for a word about the link, which comes about twice a second.
+const AULA_LINK_MS: u64 = 800;
+/// How long its answer is waited for after that.
+const AULA_ANSWER_MS: u64 = 500;
 
 /// The AULA dongle answers from what it remembers, whether the mouse is on or not, so the level alone proves
-/// nothing. While the mouse is in use the dongle also sends, about twice a second, 04 AA 00 AA 00 00 00 00 SS with
-/// SS FF for a link that is up and 00 for one that is down: a level counts only next to one that says "up". A mouse
-/// lying idle sends nothing and comes out as off until it moves. The vendor's software wraps the request in a
-/// "start" and an "end" (commands 01 and 02); the mouse answers without them, and they aren't sent.
+/// nothing, and the request wakes a mouse that sleeps. While the mouse is in use the dongle also sends, about twice
+/// a second, 04 AA 00 AA 00 00 00 00 SS with SS FF for a link that is up and 00 for one that is down. So the dongle
+/// is listened to first, and asked only once it has said "up": a mouse lying idle sends nothing, is sent nothing
+/// and comes out as off until it moves. The vendor's software wraps the request in a "start" and an "end" (commands
+/// 01 and 02); the mouse answers without them, and they aren't sent.
 fn aula_8k(io: &mut Io) -> win::Result<State> {
-    let wanted = |d: &[u8]| aula_link(d).is_some() || aula_battery(d).is_some();
-    let deadline = Instant::now() + Duration::from_millis(AULA_LISTEN_MS);
-    io.set_timeout(AULA_LISTEN_MS);
-    let mut next = io.ask(&[EVISION_REPORT, 0x00, 0x00, EVISION_BATTERY], wanted, 32, false)?;
-    let (mut battery, mut link) = (None, None);
-    while let Some(report) = next {
-        match aula_link(&report) {
-            Some(up) => link = Some(up),
-            None => battery = aula_battery(&report),
-        }
-        if (battery.is_some() && link == Some(true)) || Instant::now() >= deadline {
-            break;
-        }
-        io.set_timeout(remaining_ms(deadline) as u64);
-        next = io.receive(wanted, 32)?;
+    io.set_timeout(AULA_LINK_MS);
+    let link = io.receive(|d| aula_link(d).is_some(), 64)?.and_then(|r| aula_link(&r));
+    if link != Some(true) {
+        return Ok(off());
     }
-    Ok(aula_state(battery, link))
+    io.set_timeout(AULA_ANSWER_MS);
+    let reply = io.ask(&[EVISION_REPORT, 0x00, 0x00, EVISION_BATTERY], |d| aula_battery(d).is_some(), 32, false)?;
+    Ok(aula_state(reply.and_then(|r| aula_battery(&r)), link))
 }
 
 /// The dongle's word about the link: Some(true) for up, Some(false) for down, None for any other report.
@@ -685,6 +720,12 @@ mod tests {
             assert!(spec.cable_pids.iter().all(|p| spec.pids.contains(p)), "{}", spec.key);
         }
         assert!(UNPROVEN.iter().all(|k| ROWS.iter().any(|s| s.key == *k && s.shared)));
+        assert!(KEPT_AWAKE.iter().all(|k| ROWS.iter().any(|s| s.key == *k)));
+    }
+
+    #[test]
+    fn evisions_own_vendor_id_is_never_enough_to_list_a_device() {
+        assert!(ROWS.iter().filter(|s| s.vid == 0x320F).all(|s| s.shared && s.accept.is_some()));
     }
 
     #[test]
@@ -708,6 +749,7 @@ mod tests {
 
     #[test]
     fn atk_v75x_on_its_receiver() {
+        assert_eq!(read(&ATK, "04 01 6a 1a 00 00 00 00 3b 00", 0x6A01), Some(state(true, Some(59), false)));
         assert_eq!(read(&ATK, "04 01 7b 1a 00 00 00 00 3c 01", 0x7B01), Some(state(true, Some(60), true)));
         assert_eq!(read(&ATK, "04 01 7c 1a 00 00 00 00 3e 00", 0x7C01), Some(state(true, Some(62), false)));
     }
@@ -920,9 +962,10 @@ mod tests {
         assert_eq!(via_level(&h("08 00 07 ff")), Some(None));
     }
 
-    /// A "device info" reply with this data, its length and its checksum.
+    /// A "device info" reply with this data, its length and its checksum. The flags byte is FF in the captured
+    /// reply, not the request's 01.
     fn mchose_reply(data: &[u8]) -> Vec<u8> {
-        let mut r = vec![0x4D, 0x01, 0x01, data.len() as u8, 0x00, 0x09, 0x00, 0x00];
+        let mut r = vec![0x4D, 0x01, 0xFF, data.len() as u8, 0x00, 0x09, 0x00, 0x00];
         r.extend_from_slice(data);
         r.push(r[2..].iter().fold(0, |x, &b| x ^ b));
         pad(64, &r)
@@ -1008,6 +1051,33 @@ mod tests {
         assert!(listed(&mut answered, &reading("semico-1a2c", true)));
         assert!(listed(&mut answered, &reading("semico-1a2c", false)));
         assert!(!listed(&mut answered, &reading("mchose-k87-v3", false)));
+    }
+
+    #[test]
+    fn a_keyboard_that_a_request_may_keep_awake_is_left_alone_once_it_has_answered() {
+        let provider = KeyboardProvider::default();
+        // HaloBattery's requests kept an ATK V75X from falling asleep
+        assert_eq!(provider.delay(&[reading("evision-320f-5088", true)]), KEPT_AWAKE_WAIT);
+        assert_eq!(provider.delay(&[reading("cherry-pixiu-75", true), reading("atk-z87", true)]), KEPT_AWAKE_WAIT);
+        // Asleep, its receiver answers for it, and it is asked again soon to catch it waking up
+        assert_eq!(provider.delay(&[reading("evision-320f-5088", false)]), secs(60));
+        assert_eq!(provider.delay(&[reading("mchose-k87-v3", false), reading("cherry-pixiu-75", true)]), secs(300));
+        // A CHERRY keyboard falls asleep while it is asked
+        assert_eq!(provider.delay(&[reading("cherry-pixiu-75", true)]), secs(300));
+        // On its cable the keyboard is powered
+        let cabled = DeviceReading { via: t("via.cable"), ..reading("evision-320f-5088", true) };
+        assert_eq!(provider.delay(&[cabled]), secs(300));
+        assert_eq!(provider.delay(&[]), secs(60));
+        assert!(KEPT_AWAKE_WAIT > secs(30 * 60), "longer than the keyboards' own half hour");
+    }
+
+    #[test]
+    fn a_device_on_shared_ids_that_has_never_answered_is_asked_rarely() {
+        let provider = KeyboardProvider { strangers: true, ..KeyboardProvider::default() };
+        assert_eq!(provider.delay(&[]), STRANGER_WAIT);
+        // Next to a keyboard that is waited for it is asked as often as that one
+        assert_eq!(provider.delay(&[reading("cherry-pixiu-75", false)]), secs(60));
+        assert_eq!(provider.delay(&[reading("cherry-pixiu-75", true)]), secs(300));
     }
 
     #[test]

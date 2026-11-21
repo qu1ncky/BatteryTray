@@ -33,7 +33,8 @@
 //! JBL Quantum: the newer models answer a "get device info" feature report 88 with input report 86 on the FF12
 //! collection; the older dongles keep the link and the level in the one-byte feature reports 68 and 49
 //! (Wireless-Device-Battery-Monitor, src/drivers/jbl.cpp; Visner-org/jbl-quantum-battery for the 810 and 910;
-//! the product IDs from sidmax7/QuantumEngine, models.rs).
+//! Tymon3310/jbl-quantum-linux, docs/QUANTUM610_PACKETS.md, for the 610; the product IDs from
+//! sidmax7/QuantumEngine, models.rs).
 //!
 //! ASUS ROG Pelta / Delta II / Cetra: report CC on the FF00 collection, `CC 12 <sub>` echoed with the data from
 //! byte 5, FF AA for a headset that is away. ROG Strix Go 2.4: feature report FF with the battery voltage
@@ -66,21 +67,28 @@ pub static SPECS: &[Spec] = &[
     Spec {
         key: "audeze-maxwell",
         name: "Audeze Maxwell",
-        vid: 0x3329,
-        pids: &[0x4B19, 0x4B18, 0x4B1A],
-        cable_pids: &[0x4B1A],
+        vid: AUDEZE,
+        pids: &[0x4B19, 0x4B18, MAXWELL_CABLE],
+        cable_pids: &[MAXWELL_CABLE],
         page: 0xFF13,
         usage: 0x0001,
         query: |io| {
-            let link = if io.product_id() == 0x4B1A { RaceLink::Cable } else { RaceLink::AudezeDongle };
-            race_battery(io, link)
+            if io.product_id() == MAXWELL_CABLE {
+                return race_battery(io, RaceLink::Cable);
+            }
+            // On its cable the headset keeps its link to the dongle and both answer with the same level
+            // (HaloBattery measured it), but only the cable tells that it is charging: the dongle leaves it to it
+            if maxwell_is_on_its_cable() {
+                return Ok(off());
+            }
+            race_battery(io, RaceLink::AudezeDongle)
         },
         ..Spec::HEADSET
     },
     Spec {
         key: "audeze-maxwell-2",
         name: "Audeze Maxwell 2",
-        vid: 0x3329,
+        vid: AUDEZE,
         pids: &[0x4B29, 0x4B28],
         page: 0xFF13,
         usage: 0x0001,
@@ -200,7 +208,9 @@ pub static SPECS: &[Spec] = &[
     },
     // ---- JBL Quantum, the newer models: dongle, then the headset on its cable ----
     // Only the Quantum 650 dongle was read on hardware by the source; the other IDs are the vendor app's list for
-    // the same code path. `shared` keeps each of them out of the list unless it really has the FF12 collection.
+    // the same code path. `shared` keeps each of them out of the list unless it really has the FF12 collection:
+    // the 950, 950X and 850 dongles may carry it under an ID of their own (2186, 2187 and 2199 in
+    // jbl-quantum-linux's list), which no source has read and which are not claimed.
     Spec {
         key: "jbl-quantum-650",
         name: "JBL Quantum 650 Wireless",
@@ -382,6 +392,8 @@ pub static SPECS: &[Spec] = &[
         ..Spec::HEADSET
     },
     // ---- Others ----
+    // 0001 is the first product ID of a vendor that makes other USB devices too, and the source goes by the
+    // collection alone: listed only while that collection is there
     Spec {
         key: "fractal-scape",
         name: "Fractal Design Scape",
@@ -389,6 +401,7 @@ pub static SPECS: &[Spec] = &[
         pids: &[0x0001, 0x2001],
         cable_pids: &[0x2001],
         accept: Some(|i| i.usage_page == 0xFF00 && i.usage == 0x0001 && i.output_length >= 4 && i.input_length >= 24),
+        shared: true,
         query: |io| {
             let dongle = io.product_id() == 0x0001;
             fractal_scape(io, dongle)
@@ -416,6 +429,10 @@ fn level_unknown(charging: bool) -> State {
 }
 
 // ---- Airoha dongles ----
+
+const AUDEZE: u16 = 0x3329;
+/// The first Maxwell on its USB-C cable.
+const MAXWELL_CABLE: u16 = 0x4B1A;
 
 const REPORT_OUT: u8 = 0x06;
 const REPORT_IN: u8 = 0x07;
@@ -511,6 +528,13 @@ fn race_state(level: u8, link: RaceLink) -> State {
     }
 }
 
+/// Whether the first Maxwell is plugged in by its cable as well, with the collection its battery is read on.
+fn maxwell_is_on_its_cable() -> bool {
+    hid::enumerate(|vid, pid| vid == AUDEZE && pid == MAXWELL_CABLE)
+        .iter()
+        .any(|i| !i.access_denied && i.usage_page == 0xFF13 && i.usage == 0x0001)
+}
+
 fn race_battery(io: &mut Io, link: RaceLink) -> win::Result<State> {
     if link == RaceLink::AudezeDongle && names_no_headset(io.info().product.as_deref()) {
         return Ok(off());
@@ -526,6 +550,24 @@ fn race_battery(io: &mut Io, link: RaceLink) -> win::Result<State> {
     })
 }
 
+/// Whether an input report 07 carries nothing: `07 00 ..`, which is also what the AW920H's dongle answers until
+/// the reply is there.
+fn is_empty_report(report: &[u8]) -> bool {
+    report.get(1).is_none_or(|&length| length == 0)
+}
+
+/// Whether a report read after the request is news. `held` is what the dongle still handed out before the
+/// request, if reading didn't take it away: the same report again is that old one. Once the dongle has shown an
+/// empty report it has let go of it, and what follows is new even when it reads the same (a level that hasn't
+/// moved gives the same bytes).
+fn is_news(report: &[u8], held: &mut Vec<u8>) -> bool {
+    if is_empty_report(report) {
+        held.clear();
+        return false;
+    }
+    held.is_empty() || report != held.as_slice()
+}
+
 /// Sends `request` as output report 06 and hands every input report 07 that follows, fetched over the control
 /// pipe every `every_ms`, to `read` until it gives a state; off after `attempts` requests, each waited for
 /// `wait_ms`. Reading report 07 takes it from the dongle, so what it still holds from earlier exchanges is read
@@ -539,14 +581,14 @@ fn over_control_pipe(
     mut read: impl FnMut(&[u8]) -> Option<State>,
 ) -> win::Result<State> {
     for _ in 0..attempts {
-        let mut old = Vec::new();
+        let mut held = Vec::new();
         for _ in 0..8 {
             let Some(report) = io.get_input_report(REPORT_IN) else { return Ok(off()) };
-            if report.get(1).is_none_or(|&length| length == 0) {
-                old.clear();
+            if is_empty_report(&report) {
+                held.clear();
                 break;
             }
-            old = report;
+            held = report;
         }
         if !io.send(request)? {
             return Ok(off());
@@ -555,7 +597,7 @@ fn over_control_pipe(
         while Instant::now() < deadline {
             sleep_ms(every_ms);
             let Some(report) = io.get_input_report(REPORT_IN) else { continue };
-            if !old.is_empty() && report == old {
+            if !is_news(&report, &mut held) {
                 continue;
             }
             if let Some(state) = read(&report) {
@@ -861,16 +903,22 @@ fn jbl_feature_byte(report: Option<Vec<u8>>, id: u8) -> Option<u8> {
     report.filter(|r| r.len() >= 2 && r[0] == id).map(|r| r[1])
 }
 
+/// The level of a linked headset from feature report 49. It is a number the dongle keeps, not one the headset
+/// is asked for, so a 0 is one the dongle hasn't been given yet: a headset that empty is off.
+fn jbl_kept_level(level: Option<u8>) -> State {
+    match level {
+        Some(level @ 1..=100) => on(level as i32, false),
+        _ => level_unknown(false),
+    }
+}
+
 /// The older dongles are only read: feature report 68 is 1 while the headset is linked, and 49 is the level,
 /// which stays at its last value while the headset is off - hence the link first.
 fn jbl_feature_bytes(io: &mut Io) -> win::Result<State> {
     if jbl_feature_byte(io.get_feature(0x68), 0x68) != Some(1) {
         return Ok(off());
     }
-    Ok(match jbl_feature_byte(io.get_feature(0x49), 0x49) {
-        Some(level) if level <= 100 => on(level as i32, false),
-        _ => level_unknown(false),
-    })
+    Ok(jbl_kept_level(jbl_feature_byte(io.get_feature(0x49), 0x49)))
 }
 
 // ---- ASUS ROG ----
@@ -945,7 +993,7 @@ fn strix_go_state(d: &[u8]) -> Option<State> {
     };
     // A voltage no lithium cell has is no reading
     Some(if (3000..=4400).contains(&mv) {
-        State { detail: Some("d.estimate".into()), ..on(level, false) }
+        State { estimate: true, detail: Some("d.estimate".into()), ..on(level, false) }
     } else {
         level_unknown(false)
     })
@@ -1247,6 +1295,25 @@ mod tests {
         assert!(race_fragment(&[0x07, 0x00]).is_empty());
         // A dongle that passes nothing on answers with the head of the request and no bytes (HaloBattery)
         assert!(race_fragment(&pad(62, &[0x07, 0x00, 0x80])).is_empty());
+    }
+
+    #[test]
+    fn a_report_the_dongle_held_before_the_request_is_not_news_until_it_has_let_go_of_it() {
+        let reply = report_07(&[ACK.as_slice(), &RESULT_62].concat(), &[]);
+        let nothing = pad(62, &[0x07, 0x00, 0x80]);
+        // Reading took the old report away: the first one with bytes is the answer
+        let mut held = Vec::new();
+        assert!(!is_news(&nothing, &mut held));
+        assert!(is_news(&reply, &mut held));
+        // The dongle kept handing out the old report: the same one after the request is still that one
+        let mut held = reply.clone();
+        assert!(!is_news(&reply, &mut held));
+        assert!(is_news(&report_07(&RESULT_62, &[]), &mut held));
+        // It showed an empty report in between: the answer of a level that hasn't moved reads the same
+        let mut held = reply.clone();
+        assert!(!is_news(&reply, &mut held));
+        assert!(!is_news(&nothing, &mut held));
+        assert!(is_news(&reply, &mut held));
     }
 
     #[test]
@@ -1566,6 +1633,30 @@ mod tests {
     }
 
     #[test]
+    fn jbl_level_the_dongle_keeps() {
+        // Read on a Quantum 610 dongle (jbl-quantum-linux, docs/QUANTUM610_PACKETS.md): 68 01, 49 5a = 90%
+        assert_eq!(jbl_feature_byte(Some(vec![0x68, 0x01]), 0x68), Some(1));
+        let level = jbl_feature_byte(Some(vec![0x49, 0x5A]), 0x49);
+        assert_eq!(jbl_kept_level(level), State::new(true, Some(90), false));
+        // Nothing kept yet, and a byte that is no percentage
+        assert_eq!(jbl_kept_level(Some(0)), unknown(false));
+        assert_eq!(jbl_kept_level(Some(0x65)), unknown(false));
+        assert_eq!(jbl_kept_level(None), unknown(false));
+    }
+
+    #[test]
+    fn rows_on_ids_other_products_may_carry_are_listed_only_with_their_collection() {
+        for key in ["fractal-scape", "moondrop-gm01-pro"] {
+            let spec = SPECS.iter().find(|s| s.key == key).unwrap();
+            assert!(spec.shared && spec.accept.is_some(), "{key}");
+        }
+        let scape = SPECS.iter().find(|s| s.key == "fractal-scape").unwrap().accept.unwrap();
+        assert!(scape(&collection(0xFF00, 0x0001, 64, 64, 0)));
+        assert!(!scape(&collection(0xFF00, 0x0001, 8, 64, 0)));
+        assert!(!scape(&collection(0x000C, 0x0001, 64, 64, 0)));
+    }
+
+    #[test]
     fn rog_replies_echo_the_request() {
         // The Cetra Open against Armoury Crate: left 99%, right 99%, case 86%
         let cetra = pad(64, &[0xCC, 0x12, 0x12, 0x00, 0x00, 0x63, 0x63, 0x56]);
@@ -1609,7 +1700,8 @@ mod tests {
 
     #[test]
     fn strix_go_level_is_a_quarter_from_the_voltage() {
-        let estimate = |level| State { detail: Some("d.estimate".into()), ..State::new(true, Some(level), false) };
+        let estimate =
+            |level| State { estimate: true, detail: Some("d.estimate".into()), ..State::new(true, Some(level), false) };
         // The pairs HaloBattery's reporter measured against Armoury Crate: 3831 mV at 75%, 3743 mV at 50%
         assert_eq!(strix_go_state(&strix_go(0x1B, 3831, 0x03)), Some(estimate(75)));
         assert_eq!(strix_go_state(&strix_go(0x1B, 3743, 0x03)), Some(estimate(50)));

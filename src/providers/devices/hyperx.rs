@@ -443,8 +443,9 @@ fn is_stinger_battery(r: &[u8]) -> bool {
 fn stinger_state(r: &[u8]) -> Option<State> {
     let mv = u16::from_le_bytes([r[11], r[12]]) as i32;
     match r[9] {
+        // The level is worked out here from the voltage, and is marked so wherever it is shown
         0x03 if (3000..=4400).contains(&mv) => {
-            Some(State { detail: Some("d.estimate".into()), ..on(stinger_percent(mv), false) })
+            Some(State { detail: Some("d.estimate".into()), estimate: true, ..on(stinger_percent(mv), false) })
         }
         // The charger lifts the voltage at once, and the sources say their curve for a charging headset reads
         // high on these receivers: no level until the cable is out
@@ -648,6 +649,21 @@ mod tests {
     }
 
     #[test]
+    fn haste_2_level_is_remembered_until_the_mouse_goes_off() {
+        // A product ID no row has, so no other test's mouse is in the way
+        let pid = 0xFFF0;
+        assert_eq!(haste_2_level_before(pid), None);
+        haste_2_remember(pid, Some(70));
+        haste_2_remember(pid, Some(69));
+        assert_eq!(haste_2_level_before(pid), Some(69));
+        // Each mouse has its own
+        assert_eq!(haste_2_level_before(pid + 1), None);
+        // Off, asleep or without a level: the next one is asked again
+        haste_2_remember(pid, None);
+        assert_eq!(haste_2_level_before(pid), None);
+    }
+
+    #[test]
     fn haste_2_jump_is_asked_again() {
         // Switched off and on between two polls: 70% before, the made-up 40% now
         assert!(!haste_2_is_settled(Some(70), 40));
@@ -705,7 +721,7 @@ mod tests {
     fn stinger_battery_answer_as_captured() {
         // From the receiver of the Cloud Core Wireless, which answers the same request: 3602 mV and 4085 mV on
         // battery, then 4102 mV on the charger
-        let estimate = |level| Some(State { detail: Some("d.estimate".into()), ..state(level, false) });
+        let estimate = |level| Some(State { detail: Some("d.estimate".into()), estimate: true, ..state(level, false) });
         let reply = h("FF 12 05 FE 0C 04 1F 0B 01 03 05 12 0E 00 00 03 68 10");
         assert!(is_stinger_battery(&reply));
         assert_eq!(stinger_state(&reply), estimate(6));

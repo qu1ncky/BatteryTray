@@ -9,6 +9,7 @@
 //!   0x30 and 0x50 (Delux M900 Pro), 0x73 and 0x74 (Inphic IN10R MAX, IN10 MAX): ST 01 = on battery, LL = percent;
 //!     02 and 03 = on external power (cable or dock), when the level they send is frozen, so none is shown.
 //!   0x10 (X6 / R1): ST is the DPI stage and LL the level in tens; there is no charging state.
+//!   The V6 was only ever seen at 100%, which doesn't tell percent from tens, so its levels up to 10 aren't shown.
 //! A mouse with another code is listed without a level, and its frames go to the log so that it can be added.
 //! Each time the mouse links up it sends one "on battery, 100%" frame before the real one, so a reading only
 //! counts once two battery frames in a row agree.
@@ -75,6 +76,11 @@ fn model(code: u8) -> Option<(&'static str, bool)> {
     MODELS.iter().find(|m| m.0 == code).map(|m| (m.1, m.2))
 }
 
+/// Codes whose only captured frame is "on battery, 100%" - which is also the false frame every mouse sends when it
+/// links up, the ones that count in tens too. A level of 10 or less from such a mouse may be tens, so it isn't
+/// shown until one of them has been seen at another level.
+const SCALE_UNPROVEN: [u8; 1] = [0x24];
+
 /// Whose mouse sends this code. The model isn't shown: several send the same code.
 fn brand(code: u8) -> Option<&'static str> {
     let (seen_on, _) = model(code)?;
@@ -87,6 +93,15 @@ fn default_name(pid: u16) -> String {
         RECEIVER_PID | 0xFA55 | 0x2155 | 0x2126 => DEVICE_NAME.to_string(),
         0xFA71 => "Delux".to_string(),
         _ => t("name.mouse"),
+    }
+}
+
+/// The receiver a mouse with this cable ID comes with: the X8 Pro's is the 8K one.
+fn receiver_of(wired_pid: u16) -> u16 {
+    if wired_pid == 0x2126 {
+        RECEIVER_8K_PID
+    } else {
+        RECEIVER_PID
     }
 }
 
@@ -127,10 +142,11 @@ pub fn parse(report: &[u8]) -> Option<(u8, Option<Battery>)> {
         ));
     }
     // 0 is what devices of this kind send before they have measured: unknown, not empty
+    let readable = level != 0 && !(SCALE_UNPROVEN.contains(&code) && level <= 10);
     Some((
         code,
         match st {
-            ON_BATTERY if level <= 100 => Some(Battery { on_power: false, level: (level != 0).then_some(level) }),
+            ON_BATTERY if level <= 100 => Some(Battery { on_power: false, level: readable.then_some(level) }),
             0x02 | 0x03 => Some(Battery { on_power: true, level: None }),
             _ => None,
         },
@@ -175,13 +191,14 @@ impl XentaReceiverProvider {
             });
         }
 
-        // A mouse on the cable is the one that went quiet on its receiver when the cable went in
+        // A mouse on the cable is the one that went quiet on its receiver when the cable went in. A quiet receiver
+        // of the other kind is another mouse asleep
         let mut slots: Vec<usize> = (0..receivers.len()).collect(); // the receivers' indexes in result
         for (pid, s) in wired {
             if !s.online {
                 continue; // a mouse on the cable that sends no battery frames: nothing to show
             }
-            match slots.iter().position(|&i| !result[i].online) {
+            match slots.iter().position(|&i| !result[i].online && receivers[i].0 == receiver_of(*pid)) {
                 Some(slot) => {
                     let at = slots.remove(slot);
                     let id = result[at].id.clone();
@@ -587,6 +604,19 @@ mod tests {
     }
 
     #[test]
+    fn a_level_that_may_be_tens_is_not_shown_for_a_mouse_whose_scale_nobody_has_seen() {
+        // All that is known of the V6 is 03 24 41 01 64, which a mouse counting in tens sends too when it links up
+        let on_battery = |level| Some(Battery { on_power: false, level });
+        assert_eq!(parse(&[3, 0x24, 0x41, 1, 6]), Some((0x24, on_battery(None))));
+        assert_eq!(parse(&[3, 0x24, 0x41, 1, 10]), Some((0x24, on_battery(None))));
+        assert_eq!(parse(&[3, 0x24, 0x41, 1, 11]), Some((0x24, on_battery(Some(11)))));
+        assert_eq!(parse(&[3, 0x24, 0x40, 1, 60]), Some((0x24, on_battery(Some(60)))));
+        // The mice whose levels owners have read keep their low ones
+        assert_eq!(parse(&[3, 0x55, 0x40, 1, 6]), Some((0x55, on_battery(Some(6)))));
+        assert_eq!(parse(&[3, 0x08, 0x40, 1, 10]), Some((0x08, on_battery(Some(10)))));
+    }
+
+    #[test]
     fn the_name_is_the_brand_of_the_model_code() {
         let p = XentaReceiverProvider::new(Arc::new(StateStore::empty()));
         let on = |code| Status {
@@ -671,5 +701,31 @@ mod tests {
         assert_eq!(readings.len(), 1);
         assert_eq!(readings[0].id, RECEIVER_ID);
         assert!(readings[0].online && readings[0].charging && readings[0].level.is_none());
+    }
+
+    #[test]
+    fn mouse_on_the_cable_leaves_a_quiet_receiver_of_the_other_kind_alone() {
+        let p = XentaReceiverProvider::new(Arc::new(StateStore::empty()));
+        let quiet = Status { running: true, online: false, code: None, battery: None, error: None };
+        let charging = |code| Status {
+            running: true,
+            online: true,
+            code: Some(code),
+            battery: Some(Battery { on_power: true, level: None }),
+            error: None,
+        };
+        let receivers = [(RECEIVER_8K_PID, quiet.clone()), (RECEIVER_PID, quiet)];
+        // An X11 on its cable: the 8K receiver listed first belongs to another mouse, which is asleep
+        let readings = p.build(&receivers, &[(0xFA55, charging(0x55))], false);
+        assert_eq!(readings.len(), 2);
+        assert_eq!((readings[0].id.as_str(), readings[0].online), ("xenta:1d57:fa65", false));
+        assert_eq!((readings[1].id.as_str(), readings[1].charging), (RECEIVER_ID, true));
+        // An X8 Pro on its cable takes the 8K receiver's slot, and without that receiver gets one of its own
+        let readings = p.build(&receivers, &[(0x2126, charging(0x08))], false);
+        assert_eq!((readings[0].id.as_str(), readings[0].charging), ("xenta:1d57:fa65", true));
+        assert!(!readings[1].online);
+        let readings = p.build(&receivers[1..], &[(0x2126, charging(0x08))], false);
+        assert_eq!(readings.len(), 2);
+        assert_eq!((readings[1].id.as_str(), readings[1].charging), ("xenta:1d57:2126", true));
     }
 }

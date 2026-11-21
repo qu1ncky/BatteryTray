@@ -6,10 +6,11 @@
 //! None of them is listed twice. The receivers of the 8BitDo, Flydigi, GameSir and BEITONG pads show up in XInput as
 //! a wired Xbox 360 pad (battery type "wired", which the XInput provider skips): GamesirBatteryTray's README says so
 //! for the Nova 2, HaloBattery (providers/xinput.py, flydigi.py, issue 191) for the Vader 5 Pro and the KP40D, WDBM
-//! (eightbitdo.cpp, gamesir_sapjoy.cpp) for the Ultimate 2 Wireless and the Super Nova. The SHIELD and Steam
-//! controllers are plain HID devices that XInput doesn't see. Windows lists a battery only for Bluetooth devices,
-//! and every row here is a USB device: the SHIELD controller is read on its cable only, and the Steam Controller's
-//! Bluetooth ID isn't claimed.
+//! (eightbitdo.cpp, gamesir_sapjoy.cpp) for the Ultimate 2 Wireless and the Super Nova; for the Flydigi Apex 5 and
+//! Apex 6 nobody says, they are taken to be as the Vader. The SHIELD and Steam controllers are plain HID devices
+//! that XInput doesn't see. Windows lists a battery only for Bluetooth devices, and every row here is a USB device:
+//! the SHIELD controller is read on its cable only, and of the Steam Controller only its receivers are claimed,
+//! neither its Bluetooth ID nor its cable's, since a controller on a cable goes on reporting through its puck.
 //!
 //! The protocols, each a read-only status request (or nothing sent at all):
 //!   8BitDo Ultimate 2 Wireless: vendor collection FF7A:0001 (FFA0:0001 while the receiver is idle), output report
@@ -239,7 +240,8 @@ fn flydigi_state(body: &[u8], models: &[u8], steps: u8) -> Option<State> {
         return None;
     }
     match state {
-        0 => Some(on(step as i32 * 100 / steps as i32, false)),
+        // One step is a fifth or a tenth of the battery: an estimate
+        0 => Some(State { estimate: true, ..on(step as i32 * 100 / steps as i32, false) }),
         // SDL shows the step while charging, Flydigi's own software shows no level then: no number
         1 => Some(State::new(true, None, true)),
         2 => Some(State { full: true, ..State::new(true, Some(100), false) }),
@@ -277,8 +279,9 @@ fn gamesir_nova_state(d: &[u8]) -> Option<State> {
 }
 
 fn gamesir_nova(io: &mut Io) -> win::Result<State> {
+    // The controller's state frames share the collection: the wait is what ends the listening, not their number
     io.set_timeout(1000);
-    let reply = io.ask(&[0x00, 0x01, 0x01], |d| d.len() >= 19 && d[0] == 0x01, 32, false)?;
+    let reply = io.ask(&[0x00, 0x01, 0x01], |d| d.len() >= 19 && d[0] == 0x01, 1000, false)?;
     Ok(reply.and_then(|d| gamesir_nova_state(&d)).unwrap_or_else(off))
 }
 
@@ -360,10 +363,11 @@ fn shield_charger(d: &[u8]) -> (bool, bool) {
 }
 
 fn shield(io: &mut Io) -> win::Result<State> {
+    // The collection may be the one the controller's state arrives on: the wait ends the listening, not a count
     io.set_timeout(1000);
-    let battery = io.ask(&[0x04, SHIELD_BATTERY, 0x00], |d| shield_is_reply(d, SHIELD_BATTERY), 64, false)?;
+    let battery = io.ask(&[0x04, SHIELD_BATTERY, 0x00], |d| shield_is_reply(d, SHIELD_BATTERY), 1000, false)?;
     let Some(level) = battery.and_then(|d| shield_level(&d)) else { return Ok(off()) };
-    let charger = io.ask(&[0x04, SHIELD_CHARGER, 0x00], |d| shield_is_reply(d, SHIELD_CHARGER), 64, false)?;
+    let charger = io.ask(&[0x04, SHIELD_CHARGER, 0x00], |d| shield_is_reply(d, SHIELD_CHARGER), 1000, false)?;
     let (charging, full) = charger.map_or((false, false), |d| shield_charger(&d));
     Ok(State { full, ..on(level, charging) })
 }
@@ -421,17 +425,18 @@ enum Slot {
 struct SteamModel {
     pid: u16,
     name: &'static str,
-    via: &'static str,
     heard: fn(&[u8]) -> Heard,
 }
 
+/// The receivers only. The 2026 controller on its cable (28DE:1302) sends the same reports, but a controller that
+/// charges on a cable was seen to go on reporting through its puck (HaloBattery, issue 58), so it would be here
+/// twice, under two keys.
 static STEAM_MODELS: &[SteamModel] = &[
     // The puck of the 2026 controller, and the receiver built into the Steam Machine
-    SteamModel { pid: 0x1304, name: "Steam Controller", via: "via.24", heard: heard_2026 },
-    SteamModel { pid: 0x1305, name: "Steam Controller", via: "via.24", heard: heard_2026 },
-    SteamModel { pid: 0x1302, name: "Steam Controller", via: "via.cable", heard: heard_2026 },
+    SteamModel { pid: 0x1304, name: "Steam Controller", heard: heard_2026 },
+    SteamModel { pid: 0x1305, name: "Steam Controller", heard: heard_2026 },
     // The wireless adapter of the 2015 controller
-    SteamModel { pid: 0x1142, name: "Steam Controller (2015)", via: "via.24", heard: heard_2015 },
+    SteamModel { pid: 0x1142, name: "Steam Controller (2015)", heard: heard_2015 },
 ];
 
 fn steam_model(pid: u16) -> Option<&'static SteamModel> {
@@ -481,8 +486,8 @@ fn heard_2015(d: &[u8]) -> Heard {
 }
 
 /// The collection a controller's reports arrive on. Puck: one controller per interface 2-5, on FF00:0001
-/// (interface 6 with FF00:0002 is the charging contacts). Cable: the one vendor collection. 2015 adapter: one
-/// controller per interface 1-4, interface 0 is its keyboard.
+/// (interface 6 with FF00:0002 is the charging contacts). 2015 adapter: one controller per interface 1-4, interface
+/// 0 is its keyboard.
 fn is_steam_slot(info: &HidInfo) -> bool {
     if info.access_denied || info.usage_page != 0xFF00 || info.input_length < 15 {
         return false;
@@ -490,7 +495,6 @@ fn is_steam_slot(info: &HidInfo) -> bool {
     let interface = info.interface_number();
     match info.product_id {
         0x1304 | 0x1305 => (2..=5).contains(&interface) && info.usage == 0x0001,
-        0x1302 => info.usage != 0x0002,
         0x1142 => (1..=4).contains(&interface),
         _ => false,
     }
@@ -530,8 +534,8 @@ fn listen(
     Ok(if on { Slot::On(None) } else { Slot::Quiet })
 }
 
-/// Steam Controllers behind their receivers: the 2026 controller on its puck (or its cable) and the 2015 one on
-/// its wireless adapter. A receiver has four slots, one HID interface each, and a controller sends its battery
+/// Steam Controllers behind their receivers: the 2026 controller on its puck and the 2015 one on its wireless
+/// adapter. A receiver has four slots, one HID interface each, and a controller sends its battery
 /// level there by itself. So this only listens: Steam and SDL talk to the controller over the same collection
 /// (rumble, and a setting that turns its mouse and keyboard emulation off), and nothing of that may come from
 /// here. The collections are opened for reading only, next to Steam.
@@ -583,7 +587,7 @@ impl Provider for SteamControllerProvider {
             let numbered = format!("{} #", model.name);
             let same = result.iter().filter(|r| r.name == model.name || r.name.starts_with(&numbered)).count();
             let name = if same == 0 { model.name.to_string() } else { format!("{} #{}", model.name, same + 1) };
-            let reading = DeviceReading::new(id, name, DeviceKind::Gamepad, t(model.via));
+            let reading = DeviceReading::new(id, name, DeviceKind::Gamepad, t("via.24"));
             result.push(match slot {
                 Ok(Slot::On(Some(Heard::Battery { level, charging, full }))) => {
                     DeviceReading { online: true, level: Some(level), charging, full_on_charger: full, ..reading }
@@ -714,22 +718,36 @@ mod tests {
         flydigi_reply(reply, FLYDIGI_INFO).and_then(|b| flydigi_state(b, models, steps))
     }
 
+    /// A level counted in steps: on battery, and an estimate.
+    fn step(level: i32) -> State {
+        State { estimate: true, ..state(true, Some(level), false) }
+    }
+
     #[test]
     fn apex_5_on_its_receiver_is_full() {
-        assert_eq!(flydigi_parsed(&APEX5, APEX5_MODELS, 5), Some(state(true, Some(100), false)));
+        assert_eq!(flydigi_parsed(&APEX5, APEX5_MODELS, 5), Some(step(100)));
+    }
+
+    #[test]
+    fn vader_5_pro_on_its_receiver_and_on_its_cable() {
+        // What its owner's log has (HaloBattery, issue 191): device 130, connection 2 and battery 05 on the receiver,
+        // connection 1 and battery 15 on the cable; unnumbered reports
+        let reply = |connection, battery| at(32, &[0x5A, 0xA5, 0x01, 0x01, 0x00, 130, connection], 11, battery);
+        assert_eq!(flydigi_parsed(&reply(2, 0x05), &[130], 5), Some(step(100)));
+        assert_eq!(flydigi_parsed(&reply(1, 0x15), &[130], 5), Some(state(true, None, true)));
     }
 
     #[test]
     fn flydigi_level_comes_in_steps() {
         let mut r = APEX5;
         r[12] = 0x02;
-        assert_eq!(flydigi_parsed(&r, APEX5_MODELS, 5), Some(state(true, Some(40), false)));
+        assert_eq!(flydigi_parsed(&r, APEX5_MODELS, 5), Some(step(40)));
         r[12] = 0x00;
-        assert_eq!(flydigi_parsed(&r, APEX5_MODELS, 5), Some(state(true, Some(0), false)));
+        assert_eq!(flydigi_parsed(&r, APEX5_MODELS, 5), Some(step(0)));
         // The Apex 6 counts to ten, in unnumbered reports
         let mut apex6 = pad(32, &[0x5A, 0xA5, 0x01, 0x01, 0x00, 150, 0x01]);
         apex6[11] = 0x07;
-        assert_eq!(flydigi_parsed(&apex6, &[149, 150, 152], 10), Some(state(true, Some(70), false)));
+        assert_eq!(flydigi_parsed(&apex6, &[149, 150, 152], 10), Some(step(70)));
     }
 
     #[test]
@@ -995,6 +1013,12 @@ mod tests {
         assert!(is_steam_slot(&slot(0x1142, 4, 0x0001)));
         assert!(!is_steam_slot(&slot(0x1142, 0, 0x0001)), "the adapter's keyboard");
         assert!(!is_steam_slot(&slot(0x1205, 2, 0x0001)), "the Steam Deck isn't claimed");
+    }
+
+    #[test]
+    fn the_controller_on_its_cable_is_not_claimed_next_to_its_puck() {
+        assert!(steam_model(0x1302).is_none());
+        assert!(!is_steam_slot(&slot(0x1302, 0, 0x0001)));
     }
 
     #[test]

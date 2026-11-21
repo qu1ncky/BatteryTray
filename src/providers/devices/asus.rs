@@ -5,7 +5,7 @@
 //! One request each, an output report of the "get" family (12 ..) on the device's vendor control collection,
 //! answered by an input report that echoes it. Bytes counted from the echo:
 //!   mouse     12 07 -> 12 07 00 00 LL ..   [4] level: percent, or quarters 0-4 on the older mice (the Strix Carry
-//!                                          has them at [6]); [9] not 0 while charging
+//!                                          has them at [6]), shown as an estimate; [9] not 0 while charging
 //!   keyboard  12 01 -> 12 01 00 00 00 LL   [5] percent ([10] on the Falchion family); [8] = 1 while charging
 //! A device that is asleep or switched off has its receiver answer FF AA in place of the echo, or an empty report,
 //! or a level of 0: none of them is an empty battery. Some mice (the Gladius III Wireless) answer only while they
@@ -38,7 +38,7 @@ use crate::log;
 use crate::providers::{contains_ignore_case, group_by, no_link_reason, one_per_id, secs, Provider};
 use crate::reading::{DeviceKind, DeviceReading};
 use crate::win;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 const VID: u16 = 0x0B05;
@@ -59,11 +59,14 @@ pub enum Level {
     Percent(usize),
     /// 0-4, a quarter of the battery each.
     Quarters(usize),
+    /// The same on a mouse that runs on AA cells: it never charges, and in its layout no source says what the byte
+    /// holds that means "charging" on the others.
+    CellQuarters(usize),
 }
 
 const MOUSE_PERCENT: Level = Level::Percent(4);
 const MOUSE_QUARTERS: Level = Level::Quarters(4);
-const STRIX_CARRY_QUARTERS: Level = Level::Quarters(6);
+const STRIX_CARRY_QUARTERS: Level = Level::CellQuarters(6);
 const KEYBOARD_PERCENT: usize = 5;
 /// The Falchion family: G-Helper found a 0-10 gauge in the usual place on the first Falchion, and the percentage here.
 const FALCHION_PERCENT: usize = 10;
@@ -199,15 +202,9 @@ pub static SPECS: &[Spec] = &[
         1,
         keyboard_percent,
     ),
-    // G-Helper doesn't say which interface: the FF00 collection with full-length reports, wherever it is
-    keyboard(
-        "asus-rog-strix-scope-rx-tkl-wireless-deluxe",
-        "ROG Strix Scope RX TKL Wireless Deluxe",
-        &[0x1A07],
-        &[],
-        -1,
-        keyboard_percent,
-    ),
+    // Left out: the ROG Strix Scope RX TKL Wireless Deluxe (0B05:1A07). G-Helper has it without an interface and with
+    // the level in the usual place, and no owner has compared that with Armoury Crate's; the first Falchion, a
+    // keyboard of the same years, has a 0-10 gauge there, which would be shown as a percentage
 ];
 
 /// A mouse's control collection: the vendor collection of its interface, with reports of the full length. The mouse
@@ -308,20 +305,19 @@ pub fn is_no_answer(b: &[u8]) -> bool {
 
 /// What a mouse's reply says, from the echo on.
 pub fn mouse_state(b: &[u8], level: Level) -> State {
-    let level = match level {
-        Level::Percent(at) => Some(b[at] as i32).filter(|l| *l <= 100),
-        Level::Quarters(at) => Some(b[at] as i32).filter(|q| *q <= 4).map(|q| q * 25),
-    };
-    state(level, b[9] != 0)
+    let charging = b[9] != 0 && !matches!(level, Level::CellQuarters(_));
+    match level {
+        Level::Percent(at) => state(Some(b[at] as i32).filter(|l| *l <= 100), charging),
+        Level::Quarters(at) | Level::CellQuarters(at) => {
+            let state = state(Some(b[at] as i32).filter(|q| *q <= 4).map(|q| q * 25), charging);
+            // A quarter is all the mouse says: 25% is anything from there to just under 50%
+            State { estimate: state.level.is_some(), ..state }
+        }
+    }
 }
 
 /// What a keyboard's reply says, from the echo on.
 pub fn keyboard_state(b: &[u8], level_at: usize) -> State {
-    // G-Helper tells a collection that isn't the control one by FA in this byte of its answer to 12 00; in every
-    // captured battery reply the byte is 00
-    if b[4] == 0xFA {
-        return off();
-    }
     state(Some(b[level_at] as i32).filter(|l| *l <= 100), b[8] == 0x01)
 }
 
@@ -394,6 +390,10 @@ pub struct Slot {
     pub channel: u8,
 }
 
+/// What an Omni receiver says about its pair list. None: it has none to give - no such collection, or the request
+/// refused - which is the receiver's firmware and the same at every poll.
+pub type PairList = Option<Vec<Slot>>;
+
 fn is_receiver(pid: u16) -> bool {
     pid == OMNI || pid == SPEEDNOVA
 }
@@ -421,7 +421,7 @@ pub struct Paired {
     pub listed: bool,
 }
 
-/// The mouse to ask an Omni receiver for. `pairs`: None when the receiver gave no pair list.
+/// The mouse to ask an Omni receiver for. `pairs`: None when the receiver has no pair list to give.
 /// The first mouse of the list that is known names it, as in G-Helper. Every mouse on this receiver answers the same
 /// way, so one the table doesn't have is still read, without a model name; so is the mouse of a receiver without a
 /// pair list, which is then shown only once it has answered. A list without a mouse leaves the channel alone.
@@ -481,14 +481,16 @@ struct Behind {
 impl Behind {
     fn reading(self) -> DeviceReading {
         let name = if self.device.name.is_empty() { tf("name.brandMouse", &[&"ROG"]) } else { t(self.device.name) };
+        // The Id the table gives the same model on its cable
+        let id = Spec { key: self.device.key, kind: self.kind, ..Spec::MOUSE }.id();
         DeviceReading {
             online: self.state.online,
             level: self.state.level,
+            estimate: self.state.estimate && self.state.level.is_some(),
             charging: self.state.charging,
             full_on_charger: self.state.full,
             detail: self.state.detail.as_deref().map(t),
-            // The Id the table gives the same model on its cable
-            ..DeviceReading::new(format!("dev:{}", self.device.key), name, self.kind, t("via.24"))
+            ..DeviceReading::new(id, name, self.kind, t("via.24"))
         }
     }
 }
@@ -499,6 +501,8 @@ impl Behind {
 pub struct AsusReceiverProvider {
     /// The receivers whose mouse gave a level in this session: see `Paired::listed`.
     answered: HashSet<String>,
+    /// What each Omni receiver said last about its pair list: see `pair_list`.
+    pairs: HashMap<String, PairList>,
     /// What this session's log already has: see `log_once`.
     logged: HashSet<String>,
 }
@@ -552,7 +556,14 @@ impl AsusReceiverProvider {
         lines: &mut Vec<String>,
     ) -> Vec<Behind> {
         let mut devices = Vec::new();
-        let pairs = if pid == OMNI { read_pairs(collections, lines) } else { None };
+        let receiver = format!("{pid:04x} {instance}");
+        let pairs = if pid == OMNI {
+            let said = read_pairs(collections, lines);
+            let Some(pairs) = self.pair_list(&receiver, said) else { return devices };
+            pairs
+        } else {
+            None
+        };
         let mouse = if pid == SPEEDNOVA {
             Some(speednova_mouse(collections.iter().find_map(|i| i.product.as_deref())))
         } else {
@@ -562,7 +573,6 @@ impl AsusReceiverProvider {
         if let Some(device) = mouse {
             let state = on_channel(collections, MOUSE, lines, |io| mouse_battery(io, MOUSE.id, MOUSE_PERCENT))
                 .unwrap_or_else(off_because);
-            let receiver = format!("{pid:04x} {instance}");
             if state.online {
                 self.answered.insert(receiver.clone());
             }
@@ -576,6 +586,20 @@ impl AsusReceiverProvider {
             devices.push(Behind { device, kind: DeviceKind::Keyboard, state });
         }
         devices
+    }
+
+    /// The pair list to go by. `said`: what the receiver says now, None when it has a list and gave nothing that reads
+    /// as one this time. The list names the devices, and the app remembers every name it has shown a level under: a
+    /// mouse read without its list for one poll would stay in the app's list as a second, nameless one. So a receiver
+    /// that doesn't say is taken at its last word, and one that hasn't said yet (None) is asked again at the next poll.
+    fn pair_list(&mut self, receiver: &str, said: Option<PairList>) -> Option<PairList> {
+        match said {
+            Some(pairs) => {
+                self.pairs.insert(receiver.into(), pairs.clone());
+                Some(pairs)
+            }
+            None => self.pairs.get(receiver).cloned(),
+        }
     }
 
     /// Logs a receiver's collections and the exchange with it, the first time nothing behind it answers and the first
@@ -598,11 +622,17 @@ impl AsusReceiverProvider {
     }
 }
 
-/// The pair list of an Omni receiver; None when it has no such collection or doesn't answer with one.
-fn read_pairs(collections: &[HidInfo], lines: &mut Vec<String>) -> Option<Vec<Slot>> {
+/// What an Omni receiver says about its pair list; None when it has the collection and didn't answer the request
+/// this time, or couldn't be asked.
+fn read_pairs(collections: &[HidInfo], lines: &mut Vec<String>) -> Option<PairList> {
     let request = [PAIRS.id, PAIR_LIST, 0x00];
-    let reply = on_channel(collections, PAIRS, lines, |io| io.ask(&request, is_pairs_answer, 4, false));
-    reply.ok().flatten().and_then(|d| parse_pairs(&d))
+    let has_collection = channel(collections, PAIRS).is_some();
+    match on_channel(collections, PAIRS, lines, |io| io.ask(&request, is_pairs_answer, 4, false)) {
+        // The list, or the refusal of the request
+        Ok(Some(d)) => Some(parse_pairs(&d)),
+        Err(_) if !has_collection => Some(None),
+        _ => None,
+    }
 }
 
 /// Runs `query` on one channel of a receiver. The error is the text for a reading: why the channel couldn't be asked.
@@ -634,8 +664,9 @@ mod tests {
     //! Replies as the sources captured them. Harpe II Ace on the SpeedNova receiver: HaloBattery
     //! (tests/test_harpe_ii.py, from its pull request 364) and rogctl (.claude/rules/protocol.md). Harpe Ace Mini and
     //! Falchion RX Low Profile on an Omni receiver, with its pair list: HaloBattery (tests/test_device_pr185_asus.py)
-    //! and rogctl. TX Gaming Mini Miku on its own receiver: HaloBattery (tests/test_device_pr205_asus.py). The other
-    //! frames are made up after the layouts in G-Helper and OpenAzoth, and say so.
+    //! and rogctl. TX Gaming Mini Miku on its own receiver: HaloBattery (tests/test_device_pr205_asus.py). Gladius II
+    //! Wireless on its receiver: the log attached to G-Helper's issue 2762. The other frames are made up after the
+    //! layouts in G-Helper and OpenAzoth, and say so.
     use super::*;
 
     fn h(text: &str) -> Vec<u8> {
@@ -650,6 +681,11 @@ mod tests {
 
     fn level_unknown(charging: bool) -> State {
         State { detail: Some("d.levelUnknown".into()), ..State::new(true, None, charging) }
+    }
+
+    /// A level that is one of the mouse's quarters.
+    fn about(level: i32, charging: bool) -> State {
+        State { estimate: true, ..on(level, charging) }
     }
 
     /// What `ask` makes of an input report, as far as it can be told without a device.
@@ -810,16 +846,33 @@ mod tests {
     }
 
     #[test]
-    fn older_mice_count_in_quarters() {
+    fn older_mice_count_in_quarters_which_are_shown_as_estimates() {
         // Made up after G-Helper and rogdrv: the level, the power-off setting, the warning level
-        assert_eq!(mouse_on(&h("12 07 00 00 04 02 01"), 0x00, MOUSE_QUARTERS), Some(on(100, false)));
-        assert_eq!(mouse_on(&h("12 07 00 00 03 02 01"), 0x00, MOUSE_QUARTERS), Some(on(75, false)));
-        assert_eq!(mouse_on(&h("12 07 00 00 01 02 01 00 00 01"), 0x00, MOUSE_QUARTERS), Some(on(25, true)));
+        assert_eq!(mouse_on(&h("12 07 00 00 04 02 01"), 0x00, MOUSE_QUARTERS), Some(about(100, false)));
+        assert_eq!(mouse_on(&h("12 07 00 00 03 02 01"), 0x00, MOUSE_QUARTERS), Some(about(75, false)));
+        assert_eq!(mouse_on(&h("12 07 00 00 01 02 01 00 00 01"), 0x00, MOUSE_QUARTERS), Some(about(25, true)));
+        // A percentage is the mouse's own number
+        assert!(!mouse_on(&h("12 07 00 00 4b"), 0x00, MOUSE_PERCENT).unwrap().estimate);
+    }
+
+    #[test]
+    fn gladius_ii_wireless_full_on_its_receiver() {
+        // The reply in the log of G-Helper's issue 2762, with Armoury Crate showing 100%: the level in the same place
+        // as on the newer mice and nothing after it, not where the Strix Carry has it
+        assert_eq!(mouse_on(&h("12 07 00 00 04"), 0x00, MOUSE_QUARTERS), Some(about(100, false)));
+        assert_eq!(mouse_on(&h("12 07 00 00 04"), 0x00, STRIX_CARRY_QUARTERS), Some(asleep()));
     }
 
     #[test]
     fn strix_carry_has_the_power_off_setting_first_and_the_level_two_bytes_on() {
-        assert_eq!(mouse_on(&h("12 07 00 00 02 01 03"), 0x00, STRIX_CARRY_QUARTERS), Some(on(75, false)));
+        assert_eq!(mouse_on(&h("12 07 00 00 02 01 03"), 0x00, STRIX_CARRY_QUARTERS), Some(about(75, false)));
+    }
+
+    #[test]
+    fn strix_carry_runs_on_aa_cells_and_never_charges() {
+        // Made up: whatever its reply has in the byte that says "charging" on the other mice
+        assert_eq!(mouse_on(&h("12 07 00 00 02 01 03 00 00 01"), 0x00, STRIX_CARRY_QUARTERS), Some(about(75, false)));
+        assert_eq!(mouse_on(&h("12 07 00 00 02 01 00 00 00 01"), 0x00, STRIX_CARRY_QUARTERS), Some(asleep()));
     }
 
     #[test]
@@ -828,11 +881,6 @@ mod tests {
         assert_eq!(mouse_on(&h("12 07 00 00 05"), 0x00, MOUSE_QUARTERS), Some(level_unknown(false)));
         assert_eq!(mouse_on(&h("12 07 00 00 4b"), 0x00, MOUSE_QUARTERS), Some(level_unknown(false)));
         assert_eq!(keyboard_on(&h("12 01 00 00 00 fe 00 00 01"), 0x00, KEYBOARD_PERCENT), Some(level_unknown(true)));
-    }
-
-    #[test]
-    fn a_collection_that_is_not_the_keyboards_control_one_gives_no_reading() {
-        assert_eq!(keyboard_on(&h("12 01 00 00 fa 40"), 0x00, KEYBOARD_PERCENT), Some(off()));
     }
 
     #[test]
@@ -881,6 +929,20 @@ mod tests {
     #[test]
     fn without_a_pair_list_the_mouse_is_shown_only_once_it_answers() {
         assert_eq!(omni_mouse(None), Some(Paired { key: UNNAMED_MOUSE, name: "", listed: false }));
+    }
+
+    #[test]
+    fn a_receiver_that_misses_one_answer_is_taken_at_its_last_word() {
+        let mut p = AsusReceiverProvider::default();
+        // Nothing said yet: nobody is asked under a name the next poll would change
+        assert_eq!(p.pair_list("1ace a", None), None);
+        let list = parse_pairs(&h("01 a0 00 02 00 06 1b 02 04 65 1b 03 05"));
+        assert_eq!(p.pair_list("1ace a", Some(list.clone())), Some(list.clone()));
+        assert_eq!(p.pair_list("1ace a", None), Some(list));
+        // A refusal is an answer too, and another receiver has its own
+        assert_eq!(p.pair_list("1ace b", Some(parse_pairs(&h("01 ff aa")))), Some(None));
+        assert_eq!(p.pair_list("1ace b", None), Some(None));
+        assert_eq!(p.pair_list("1ace c", None), None);
     }
 
     #[test]
@@ -943,6 +1005,15 @@ mod tests {
     }
 
     #[test]
+    fn a_device_behind_a_receiver_has_the_id_of_its_row() {
+        let device = Paired { key: "asus-rog-azoth", name: "ROG Azoth", listed: true };
+        let reading = Behind { device, kind: DeviceKind::Keyboard, state: on(77, true) }.reading();
+        let row = SPECS.iter().find(|s| s.key == "asus-rog-azoth").unwrap();
+        assert_eq!((reading.id, reading.kind), (row.id(), row.kind));
+        assert_eq!((reading.level, reading.charging, reading.estimate), (Some(77), true, false));
+    }
+
+    #[test]
     fn a_model_keeps_its_key_name_and_kind_behind_the_omni_receiver() {
         let behind = OMNI_MICE
             .iter()
@@ -993,7 +1064,13 @@ mod tests {
             collection(0x1A83, 2, 0xFF00, 65, 65),
         ];
         assert_eq!(asked(0x1A83, &all), [(1, 0xFF00)]);
-        // The one row without an interface takes the collection wherever it is
-        assert_eq!(asked(0x1A07, &all), [(1, 0xFF00), (2, 0xFF00)]);
+    }
+
+    #[test]
+    fn every_row_names_its_interface() {
+        // A row that takes its collection wherever it is would ask every vendor collection of the device
+        for spec in SPECS {
+            assert!(spec.interface >= 0, "{}", spec.key);
+        }
     }
 }

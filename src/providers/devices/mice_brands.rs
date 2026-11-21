@@ -340,7 +340,17 @@ fn ninjutso_ten(io: &mut Io) -> win::Result<State> {
     let (Some(level), Some(charging)) = (ten_get(io, TEN_LEVEL), ten_get(io, TEN_CHARGING)) else {
         return Ok(off());
     };
-    Ok(if level <= 100 { on(level as i32, charging != 0) } else { level_unknown(charging != 0) })
+    Ok(ten_state(level, charging))
+}
+
+/// The level and the charging sign of a mouse that said it is linked. A level of 0 is not shown: a linked mouse
+/// isn't empty, and a reply that echoes the command with nothing behind it would read as that.
+pub fn ten_state(level: u8, charging: u8) -> State {
+    if (1..=100).contains(&level) {
+        on(level as i32, charging != 0)
+    } else {
+        level_unknown(charging != 0)
+    }
 }
 
 fn ten_get(io: &mut Io, command: u8) -> Option<u8> {
@@ -626,7 +636,7 @@ pub fn finalmouse_state(percent: Option<u8>, charging: bool, millivolts: Option<
         return charging_without_level();
     }
     match millivolts.and_then(finalmouse_percent) {
-        Some(level) => State { detail: Some("d.estimate".into()), ..on(level, false) },
+        Some(level) => State { detail: Some("d.estimate".into()), estimate: true, ..on(level, false) },
         None => level_unknown(false),
     }
 }
@@ -634,10 +644,10 @@ pub fn finalmouse_state(percent: Option<u8>, charging: bool, millivolts: Option<
 #[cfg(test)]
 mod tests {
     //! Replies as the sources publish them: the Ninjutso Ten's from ninjutso-battery-tray (docs/hid-protocol.md), the
-    //! Endgame Gear mouse-info and battery data from vole (re/PROTOCOL.md), the Cooler Master status report from
-    //! coolermaster-usb-protocol (docs/PROTOCOL.md), the ZOWIE replies from zowie-battery (test_zowie_daemon.py), the
-    //! Kone Pro Air's from OpenMouse (captures/roccat-kone-pro-air). The others are put together from the layouts
-    //! the sources describe.
+    //! Endgame Gear mouse-info and battery data from vole (re/PROTOCOL.md), the Cooler Master status reports from
+    //! coolermaster-usb-protocol (docs/PROTOCOL.md) and the USB captures of MM731-Controller (captures/*.pcapng), the
+    //! ZOWIE replies from zowie-battery (test_zowie_daemon.py), the Kone Pro Air's from OpenMouse
+    //! (captures/roccat-kone-pro-air). The others are put together from the layouts the sources describe.
     use super::*;
 
     fn h(text: &str) -> Vec<u8> {
@@ -836,6 +846,15 @@ mod tests {
     }
 
     #[test]
+    fn ten_level_outside_1_to_100_is_not_shown() {
+        assert_eq!(ten_state(0x5D, 0), State::new(true, Some(93), false));
+        assert_eq!(ten_state(100, 1), State::new(true, Some(100), true));
+        // What a reply with the echo and no value yet would give
+        assert_eq!(ten_state(0, 0), unknown(false));
+        assert_eq!(ten_state(101, 1), unknown(true));
+    }
+
+    #[test]
     fn ten_collection_is_the_one_with_the_16_byte_feature_report() {
         assert!(ten_collection(&collection(0xFF01, 0x0001, 0, 0, 16)));
         assert!(!ten_collection(&collection(0xFF01, 0x0001, 0, 0, 64)));
@@ -918,6 +937,15 @@ mod tests {
         let r = pad(64, &h("47 81 50 03 00 00 F2 9B 1E 00 2A 01 00 00 02 FF"));
         assert_eq!(cooler_master_state(&r), State::new(true, Some(42), true));
         assert_eq!(cooler_master_name(0x0169, r[2]), Some("Cooler Master MM712"));
+    }
+
+    #[test]
+    fn mm731_through_the_dongle_at_39_percent() {
+        // A status report from the USB captures of MM731-Controller: the MM712's layout, byte for byte
+        let r = pad(32, &h("47 81 70 02 00 00 0F 98 1E 00 27 00 01 00 02 FF 00 FF"));
+        assert!(is_cooler_master_status(&r));
+        assert_eq!(cooler_master_state(&r), State::new(true, Some(39), false));
+        assert_eq!(cooler_master_name(0x01B7, r[2]), Some("Cooler Master MM731"));
     }
 
     #[test]
@@ -1053,8 +1081,10 @@ mod tests {
 
     #[test]
     fn finalmouse_level_from_the_voltage_is_marked_as_an_estimate() {
-        let estimate = State { detail: Some("d.estimate".into()), ..State::new(true, Some(50), false) };
+        let estimate = State { detail: Some("d.estimate".into()), estimate: true, ..State::new(true, Some(50), false) };
         assert_eq!(finalmouse_state(None, false, Some(3880)), estimate);
+        // The mouse's own percent is not one
+        assert!(!finalmouse_state(Some(81), false, Some(3880)).estimate);
     }
 
     #[test]

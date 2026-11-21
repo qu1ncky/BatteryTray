@@ -24,7 +24,10 @@
 //! software showed 70% for a level byte of 07 (issue #18). Own implementation. Not yet verified on hardware by this
 //! project, which is why the first exchange goes to the log.
 
-use super::{group_by, hex_trimmed as hex, no_link_reason, one_per_id, receiver_name, remaining_ms, secs, Provider};
+use super::{
+    contains_ignore_case, group_by, hex_trimmed as hex, no_link_reason, one_per_id, receiver_name, remaining_ms, secs,
+    Provider,
+};
 use crate::hid::{self, HidDevice, HidInfo};
 use crate::loc::{t, tf};
 use crate::log;
@@ -68,6 +71,7 @@ pub struct Battery {
 /// `name`: a text key or a ready name. `step`: what one unit of the level byte is worth, in percent: 10 when the
 /// level comes in tens. `by_product`: several models carry these IDs, so the name comes from the product string and
 /// `name` is only what to call it when that string names nobody: a model, a brand (one word) or "" for just a mouse.
+/// With a brand, the product string counts only when it carries that brand: the others name the receiver.
 struct Model {
     key: &'static str,
     name: &'static str,
@@ -114,8 +118,9 @@ static MODELS: &[((u16, u16), Model)] = &[
     ((0x373B, 0x1085), vxe("vxe:r1se", "VXE R1 SE / SE+", R)),
     ((0x3554, 0xF58E), vxe("vxe:r1se", "VXE R1 SE / SE+", R)),
     ((0x3554, 0xF58F), vxe("vxe:r1se", "VXE R1 SE / SE+", C)),
-    ((0x3554, 0xF505), compx("vxe:r1-4k", "VGN / VXE Dragonfly R1", R).by_product()),
-    ((0x3554, 0xF506), compx("vxe:r1-4k", "VGN / VXE Dragonfly R1", C).by_product()),
+    // The R1's receivers call themselves after their radio ("VXE NordicMouse 1K Dongle"), so the string isn't asked
+    ((0x3554, 0xF505), compx("vxe:r1-4k", "VGN / VXE Dragonfly R1", R)),
+    ((0x3554, 0xF506), compx("vxe:r1-4k", "VGN / VXE Dragonfly R1", C)),
     ((0x3554, 0xFB56), compx("vgn:f2", "VGN Dragonfly F2", R)),
     ((0x3554, 0xFB57), compx("vgn:f2", "VGN Dragonfly F2", C)),
     ((0x3554, 0xF503), compx("compx:f503", "VGN", R).by_product()),
@@ -125,10 +130,12 @@ static MODELS: &[((u16, u16), Model)] = &[
     ((0x373B, 0x10C9), compx("atk:10c9", "ATK", R).by_product()),
     ((0x373B, 0x1278), compx("atk:1278", "ATK", R).by_product()),
     ((0x373B, 0x1040), compx("atk:1040", "ATK", R).by_product()),
-    ((0x373B, 0x11D9), compx("atk:a9-ultimate", "ATK A9 Ultimate", R)),
+    // "Wireless mouse 8k dongle-L": read with an A9 Ultimate behind it and with an F1 Ultimate 2.0
+    ((0x373B, 0x11D9), compx("atk:11d9", "ATK", R).by_product()),
     ((0x373B, 0x11B6), compx("atk:a9-ultimate", "ATK A9 Ultimate", C)),
-    // "Wireless mouse 8k NANO dongle-L": the product string names nobody, two owners name this mouse (issue #30)
-    ((0x373B, 0x11FE), compx("atk:a9-ultra-max-2", "ATK A9 Ultra Max 2.0", R)),
+    // "Wireless mouse 8k NANO dongle-L": the product string names nobody, two owners name this mouse (issue #30).
+    // Asked for the level alone, as in the release that added it
+    ((0x373B, 0x11FE), vxe("atk:a9-ultra-max-2", "ATK A9 Ultra Max 2.0", R)),
     ((0x373B, 0x1017), compx("atk:x1-pro-max", "ATK X1 Pro Max", C)),
     ((0x373B, 0x1115), compx("atk:a9-plus", "ATK A9 Plus", C)),
     ((0x373B, 0x11E4), compx("atk:f1-ultimate-2", "ATK F1 Ultimate 2.0", C)),
@@ -148,10 +155,11 @@ static MODELS: &[((u16, u16), Model)] = &[
     ((0x3710, 0x5406), compx("pulsar:5406", "Pulsar", R).by_product()),
     ((0x3554, 0xF57C), compx("kysona:m600", "Kysona M600", R)),
     ((0x3554, 0xF57D), compx("kysona:m600", "Kysona M600", C)),
-    // Redragon, Taidu and Kysona mice share the next two receivers
+    // Redragon, Taidu and Kysona mice share the first receiver; the second one and the cable ("3-mode mouse") are
+    // those of several Redragon models
     ((0x3554, 0xF5D5), compx("compx:f5d5", "", R).by_product()),
-    ((0x3554, 0xF55D), compx("compx:f55d", "Redragon M916 Pro", R).by_product()),
-    ((0x3554, 0xF55E), compx("compx:f55e", "Redragon M991", C).by_product()),
+    ((0x3554, 0xF55D), compx("compx:f55d", "Redragon", R).by_product()),
+    ((0x3554, 0xF55E), compx("compx:f55e", "Redragon", C).by_product()),
     ((0x3554, 0xF512), compx("compx:f512", "Chimera V2", R).by_product()),
     // "Compx 2.4G Wireless 8K", read on a Zaopin Z2 Mini: silent until it is asked for the link
     ((0x3554, 0xF527), compx("compx:f527", "", R).by_product()),
@@ -187,9 +195,10 @@ static MODELS: &[((u16, u16), Model)] = &[
     ((0x25A7, 0xFA4A), areson("areson:fa4a", "name.aresonMouse", R, 10)),
     ((0x25A7, 0xFA07), areson("areson:fa07", "name.aresonMouse", R, 10)),
     ((0x25A7, 0xFA08), areson("areson:fa07", "name.aresonMouse", R, 10)),
-    // This receiver may answer with what it last heard from a mouse that is off
-    ((0x260D, 0x1074), areson("dareu:em901x", "Dareu EM901X", R, 1).link(Link::Ask)),
-    ((0x260D, 0x1090), areson("dareu:em901x", "Dareu EM901X", C, 1)),
+    // This receiver may answer with what it last heard from a mouse that is off. It was read with an EM901X behind
+    // it and with an A950
+    ((0x260D, 0x1074), areson("dareu:em901x", "Dareu EM901X / A950", R, 1).link(Link::Ask)),
+    ((0x260D, 0x1090), areson("dareu:em901x", "Dareu EM901X / A950", C, 1)),
     // And this one always does
     ((0x3367, 0x1961), areson("endgame:xm2we", "Endgame Gear XM2we / OP1we", R, 1).link(Link::Must)),
     ((0x3367, 0x1960), areson("endgame:xm2we", "Endgame Gear XM2we / OP1we", C, 1)),
@@ -204,13 +213,20 @@ fn name(model: &Model, product: Option<&str>) -> String {
     if !model.by_product {
         return t(model.name);
     }
-    // A name of one word is a brand: "ATK mouse"
-    let fallback = match model.name {
-        "" => None,
-        brand if !brand.contains(' ') => Some(tf("name.brandMouse", &[&brand])),
-        name => Some(name.to_string()),
-    };
-    receiver_name::mouse(product, fallback.as_deref())
+    match model.name {
+        "" => receiver_name::mouse(product, None),
+        // A name of one word is a brand: "ATK mouse". A string without it ("8K dongle-L", "MAD 8K DONGLE", "3-mode
+        // mouse") says what the receiver is, not whose mouse it has
+        brand if !brand.contains(' ') => {
+            let fallback = tf("name.brandMouse", &[&brand]);
+            if contains_ignore_case(&receiver_name::brand(product), brand) {
+                receiver_name::mouse(product, Some(&fallback))
+            } else {
+                fallback
+            }
+        }
+        name => receiver_name::mouse(product, Some(name)),
+    }
 }
 
 #[derive(Default)]
@@ -598,7 +614,7 @@ mod tests {
         assert_eq!(parse(&h("08 04 00 00 00 02 64 01 11 2A 00 00 00 00 00 00 A7"), 1), b(100, true));
         let dongle = model(0x373B, 0x11FE).unwrap();
         assert_eq!(name(dongle, Some("Wireless mouse 8k NANO dongle-L")), "ATK A9 Ultra Max 2.0");
-        assert_eq!(dongle.link, Link::Ask);
+        assert!(dongle.wireless && dongle.transport == Transport::Output && dongle.step == 1);
     }
 
     #[test]
@@ -636,6 +652,7 @@ mod tests {
         assert_eq!(model(0x3367, 0x1961).unwrap().link, Link::Must);
         // The rows that were here first are asked as before
         assert_eq!(model(0x3554, 0xF58A).unwrap().link, Link::No);
+        assert_eq!(model(0x373B, 0x11FE).unwrap().link, Link::No);
         assert_eq!(model(0x25A7, 0xFA7C).unwrap().link, Link::No);
     }
 
@@ -647,6 +664,29 @@ mod tests {
         assert_eq!(name(model(0x3554, 0xF512).unwrap(), Some("2.4G Wireless Receiver")), "Chimera V2");
         assert_eq!(name(model(0x3554, 0xF5D5).unwrap(), None), "Mouse");
         assert_eq!(name(model(0x3554, 0xF517).unwrap(), Some("Scyrox Turbo 8k dongle")), "Scyrox V8S");
+        assert_eq!(name(model(0x3554, 0xF503).unwrap(), Some("VGN Mouse")), "VGN mouse");
+        assert_eq!(name(model(0x3554, 0xF524).unwrap(), Some("2.4G Wireless")), "Mouse");
+    }
+
+    #[test]
+    fn a_product_string_without_the_brand_names_the_receiver_not_the_mouse() {
+        // The strings these receivers and this cable were seen with
+        assert_eq!(name(model(0x373B, 0x1278).unwrap(), Some("8K dongle-L")), "ATK mouse");
+        assert_eq!(name(model(0x373B, 0x11D9).unwrap(), Some("Wireless mouse 8k dongle-L")), "ATK mouse");
+        assert_eq!(name(model(0x373B, 0x1040).unwrap(), Some("MAD 8K DONGLE")), "ATK mouse");
+        assert_eq!(name(model(0x373B, 0x10C9).unwrap(), Some("NK mouse NANO dongle")), "ATK mouse");
+        assert_eq!(name(model(0x3554, 0xF55E).unwrap(), Some("3-mode mouse")), "Redragon mouse");
+        assert_eq!(name(model(0x3554, 0xF55D).unwrap(), Some("2.4G Wireless Receiver")), "Redragon mouse");
+        // The Dragonfly R1's receivers are named after their radio
+        assert_eq!(name(model(0x3554, 0xF505).unwrap(), Some("VXE NordicMouse 1K Dongle")), "VGN / VXE Dragonfly R1");
+    }
+
+    #[test]
+    fn a_receiver_read_with_two_models_is_named_after_neither() {
+        // 373B:11D9 with an A9 Ultimate and with an F1 Ultimate 2.0, 260D:1074 with an EM901X and with an A950
+        let dongle = model(0x373B, 0x11D9).unwrap();
+        assert!(dongle.by_product && dongle.key != model(0x373B, 0x11B6).unwrap().key);
+        assert_eq!(name(model(0x260D, 0x1074).unwrap(), None), "Dareu EM901X / A950");
     }
 
     #[test]
