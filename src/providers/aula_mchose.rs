@@ -17,13 +17,15 @@
 //! Wireless-Device-Battery-Monitor (src/drivers/aula.cpp); own implementation. Not yet verified on
 //! hardware by this project, which is why the first exchange goes to the log.
 
-use super::{group_by, hex_trimmed as hex, no_link_reason, receiver_name, remaining_ms, secs, Provider};
+use super::{group_by, hex_trimmed as hex, no_link_reason, receiver_name, remaining_ms, secs, Proven, Provider};
 use crate::hid::{self, HidDevice, HidInfo};
 use crate::loc::{t, tf};
 use crate::log;
 use crate::reading::{DeviceKind, DeviceReading};
+use crate::state::StateStore;
 use crate::win;
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 /// `name`: what to call the keyboard when neither its model code nor the product string says: a model, a brand (one
@@ -110,6 +112,14 @@ pub struct AulaMchoseProvider {
     /// The model each receiver answered with, by device path; None = it answered with a code not in the table.
     models: HashMap<String, Option<&'static str>>,
     logged: HashSet<String>,
+    proven: Proven,
+}
+
+impl AulaMchoseProvider {
+    /// `state`: the levels this PC has seen, by which a keyboard on a shared ID that is asleep is known.
+    pub fn new(state: Arc<StateStore>) -> Self {
+        Self { proven: Proven::new(state), ..Self::default() }
+    }
 }
 
 impl Provider for AulaMchoseProvider {
@@ -155,6 +165,11 @@ impl Provider for AulaMchoseProvider {
                 .and_then(|v| v.product.as_deref())
                 .or_else(|| collections.iter().find_map(|i| i.product.as_deref()));
             self.log_once((vid, pid), &collections, vendor, product, &trace, battery.is_some());
+            let id = format!("compx:{vid:04x}:{pid:04x}");
+            // Under a shared ID the collection alone doesn't say whose keyboard it is: its first answer does
+            if receiver.shared && !self.proven.check(&id, battery.is_some()) {
+                continue;
+            }
 
             result.push(DeviceReading {
                 online: battery.is_some(),
@@ -162,7 +177,7 @@ impl Provider for AulaMchoseProvider {
                 charging: battery.is_some_and(|b| b.charging),
                 detail: if battery.is_none() { Some(error.unwrap_or_else(|| t("d.asleep"))) } else { None },
                 ..DeviceReading::new(
-                    format!("compx:{vid:04x}:{pid:04x}"),
+                    id,
                     model.map(str::to_string).unwrap_or_else(|| name(receiver, product)),
                     DeviceKind::Keyboard,
                     t("via.24"),

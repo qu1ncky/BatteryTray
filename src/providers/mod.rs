@@ -48,8 +48,8 @@ pub fn create(state: &Arc<StateStore>) -> Vec<Box<dyn Provider>> {
         Box::new(steelseries::SteelSeriesProvider::default()),
         Box::new(oem_mouse::OemMouseProvider::default()),
         Box::new(ajazz_mouse::AjazzMouseProvider::default()),
-        Box::new(aula_mchose::AulaMchoseProvider::default()),
-        Box::new(sonix_keyboard::SonixKeyboardProvider::default()),
+        Box::new(aula_mchose::AulaMchoseProvider::new(state.clone())),
+        Box::new(sonix_keyboard::SonixKeyboardProvider::new(state.clone())),
         Box::new(razer_peripheral::RazerPeripheralProvider),
         Box::new(devices::TableProvider::headsets().remembering(state.clone())),
         Box::new(devices::razer_audio::BlackSharkV3Provider::default()),
@@ -69,6 +69,29 @@ pub fn create(state: &Arc<StateStore>) -> Vec<Box<dyn Provider>> {
         Box::new(bluetooth::BluetoothProvider),
         Box::new(standard_hid::StandardHidBatteryProvider),
     ]
+}
+
+/// Tells the device of a row whose USB IDs unrelated products share from somebody else's device with the same IDs:
+/// it counts as the row's once it has answered in this session, or when this PC has had a level from it before.
+/// Until then it isn't listed, so nobody gets a device they don't own sitting in the list as one that is always off.
+#[derive(Default)]
+pub(crate) struct Proven {
+    state: Option<Arc<StateStore>>,
+    answered: std::collections::HashSet<String>,
+}
+
+impl Proven {
+    pub fn new(state: Arc<StateStore>) -> Self {
+        Self { state: Some(state), answered: Default::default() }
+    }
+
+    /// Whether the device with this reading Id is to be listed; `online`: it has just answered.
+    pub fn check(&mut self, id: &str, online: bool) -> bool {
+        if online {
+            self.answered.insert(id.to_string());
+        }
+        self.answered.contains(id) || self.state.as_ref().is_some_and(|s| s.get(id).is_some())
+    }
 }
 
 /// Clears a "running" flag when it goes out of scope, however the scope is left.
@@ -165,4 +188,34 @@ pub(crate) fn sleep_ms(ms: u64) {
 
 pub(crate) fn contains_ignore_case(haystack: &str, needle: &str) -> bool {
     haystack.to_ascii_lowercase().contains(&needle.to_ascii_lowercase())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::reading::DeviceKind;
+
+    #[test]
+    fn a_device_of_shared_ids_is_the_rows_once_it_has_answered() {
+        let mut proven = Proven::new(Arc::new(StateStore::empty()));
+        assert!(!proven.check("sonix:05ac:024f", false));
+        assert!(proven.check("sonix:05ac:024f", true));
+        // Asleep later in the session: still listed
+        assert!(proven.check("sonix:05ac:024f", false));
+        assert!(!proven.check("compx:05ac:024f", false));
+    }
+
+    #[test]
+    fn a_level_this_pc_has_had_before_proves_it_too() {
+        let state = Arc::new(StateStore::empty());
+        state.update(&DeviceReading {
+            online: true,
+            level: Some(80),
+            ..DeviceReading::new("compx:258a:024f", "VGN V98 Pro V3", DeviceKind::Keyboard, "2.4 GHz")
+        });
+        let mut proven = Proven::new(state);
+        assert!(proven.check("compx:258a:024f", false));
+        assert!(!proven.check("compx:258a:027f", false));
+        assert!(!Proven::default().check("compx:258a:024f", false));
+    }
 }

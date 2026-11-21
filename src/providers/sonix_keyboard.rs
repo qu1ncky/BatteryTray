@@ -24,13 +24,15 @@
 //! (engine/upstream-protocols.md: the AULA F87 Pro V2 and F99 MAX). Own implementation. Not yet verified on hardware
 //! by this project, which is why the first exchange goes to the log.
 
-use super::{group_by, no_link_reason, receiver_name, remaining_ms, secs, Provider};
+use super::{group_by, no_link_reason, receiver_name, remaining_ms, secs, Proven, Provider};
 use crate::hid::{self, HidDevice, HidInfo};
 use crate::loc::{t, tf};
 use crate::log;
 use crate::reading::{DeviceKind, DeviceReading};
+use crate::state::StateStore;
 use crate::win;
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 const BATTERY_COMMAND: u8 = 0x20;
@@ -89,6 +91,14 @@ pub struct SonixKeyboardProvider {
     /// The form of the request each keyboard answered last, by device path: it is the one tried first.
     answered: HashMap<String, usize>,
     logged: HashSet<String>,
+    proven: Proven,
+}
+
+impl SonixKeyboardProvider {
+    /// `state`: the levels this PC has seen, by which a keyboard on a shared ID that is asleep is known.
+    pub fn new(state: Arc<StateStore>) -> Self {
+        Self { proven: Proven::new(state), ..Self::default() }
+    }
 }
 
 impl Provider for SonixKeyboardProvider {
@@ -122,13 +132,18 @@ impl Provider for SonixKeyboardProvider {
                 .and_then(|v| v.product.as_deref())
                 .or_else(|| collections.iter().find_map(|i| i.product.as_deref()));
             self.log_once((vid, pid), &collections, vendor, product, &trace, level.is_some());
+            let id = format!("sonix:{vid:04x}:{pid:04x}");
+            // The collection of a shared ID is one any QMK keyboard has too: until it answers, it may be one
+            if dongle.shared && !self.proven.check(&id, level.is_some()) {
+                continue;
+            }
 
             result.push(DeviceReading {
                 online: level.is_some(),
                 level,
                 detail: if level.is_none() { Some(error.unwrap_or_else(|| t("d.asleep"))) } else { None },
                 ..DeviceReading::new(
-                    format!("sonix:{vid:04x}:{pid:04x}"),
+                    id,
                     receiver_name::keyboard(product, Some(&t("name.fa09Keyboard"))),
                     DeviceKind::Keyboard,
                     t("via.24"),
