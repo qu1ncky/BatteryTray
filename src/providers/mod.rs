@@ -4,6 +4,7 @@ pub mod ajazz_mouse;
 pub mod aula_mchose;
 pub mod barracuda;
 pub mod bluetooth;
+pub mod devices;
 pub mod headset;
 pub mod logitech;
 pub mod oem_mouse;
@@ -50,7 +51,8 @@ pub fn create(state: &Arc<StateStore>) -> Vec<Box<dyn Provider>> {
         Box::new(aula_mchose::AulaMchoseProvider::default()),
         Box::new(sonix_keyboard::SonixKeyboardProvider::default()),
         Box::new(razer_peripheral::RazerPeripheralProvider),
-        Box::new(headset::HeadsetProvider::default()),
+        Box::new(devices::TableProvider::headsets()),
+        Box::new(devices::TableProvider::peripherals()),
         Box::new(logitech::LogitechProvider::default()),
         Box::new(playstation::PlayStationProvider),
         Box::new(xinput::XInputProvider),

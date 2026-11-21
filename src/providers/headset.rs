@@ -8,58 +8,9 @@
 //! Read-only status queries; not yet verified on hardware by this project, which is why the first exchange with
 //! each headset goes to the log.
 
-use super::{group_by, hex_trimmed as hex, one_per_id, pad, remaining_ms, secs, sleep_ms, Provider};
-use crate::hid::{self, HidDevice, HidInfo};
-use crate::loc::{t, tf};
-use crate::log;
-use crate::reading::{DeviceKind, DeviceReading};
-use crate::win::{self, Error};
-use std::collections::HashSet;
-use std::time::{Duration, Instant};
-
-const TIMEOUT_MS: u64 = 2000;
-
-/// `detail`: a text key or a ready text. `full`: the headset itself says it is full, with the charger connected.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct State {
-    pub online: bool,
-    pub level: Option<i32>,
-    pub charging: bool,
-    pub detail: Option<String>,
-    pub full: bool,
-}
-
-impl State {
-    fn new(online: bool, level: Option<i32>, charging: bool) -> Self {
-        Self { online, level, charging, detail: None, full: false }
-    }
-}
-
-fn off() -> State {
-    State { detail: Some("d.offOrAway".into()), ..State::new(false, None, false) }
-}
-
-fn off_because(detail: impl Into<String>) -> State {
-    State { detail: Some(detail.into()), ..off() }
-}
-
-fn on(level: i32, charging: bool) -> State {
-    State::new(true, Some(level.clamp(0, 100)), charging)
-}
-
-type Query = fn(&mut Io) -> win::Result<State>;
-
-/// `page`: usage page of the collection to talk to, 0 = any vendor collection. `interface`: USB interface, -1 = any.
-struct Spec {
-    key: &'static str,
-    name: &'static str,
-    vid: u16,
-    pids: &'static [u16],
-    page: u16,
-    usage: u16,
-    interface: i32,
-    query: Query,
-}
+use super::devices::{map, off, on, Io, Spec, State};
+use super::{pad, sleep_ms};
+use crate::win;
 
 // Voltage (mV) -> percent tables HeadsetControl uses for the Logitech headsets
 const G533: &[(i32, i32)] = &[(4200, 100), (3850, 50), (3790, 30), (3750, 20), (3680, 5), (3330, 0)];
@@ -68,7 +19,7 @@ const G633: &[(i32, i32)] =
     &[(4100, 100), (3950, 80), (3850, 60), (3750, 40), (3650, 20), (3500, 10), (3300, 5), (3150, 0)];
 const GPRO: &[(i32, i32)] = &[(4150, 100), (3830, 50), (3780, 30), (3740, 20), (3670, 5), (3320, 0)];
 
-static SPECS: &[Spec] = &[
+pub static SPECS: &[Spec] = &[
     // ---- HyperX ----
     Spec {
         key: "hyperx-cloud-alpha-wireless",
@@ -79,6 +30,7 @@ static SPECS: &[Spec] = &[
         usage: 0,
         interface: -1,
         query: hyperx_cloud_alpha,
+        ..Spec::HEADSET
     },
     Spec {
         key: "hyperx-cloud-ii-wireless",
@@ -89,6 +41,7 @@ static SPECS: &[Spec] = &[
         usage: 0x0303,
         interface: -1,
         query: hyperx_cloud_ii_hp,
+        ..Spec::HEADSET
     },
     Spec {
         key: "hyperx-cloud-ii-wireless",
@@ -99,6 +52,7 @@ static SPECS: &[Spec] = &[
         usage: 0,
         interface: -1,
         query: hyperx_cloud_ii_kingston,
+        ..Spec::HEADSET
     },
     Spec {
         key: "hyperx-cloud-iii-wireless",
@@ -109,6 +63,7 @@ static SPECS: &[Spec] = &[
         usage: 0,
         interface: -1,
         query: hyperx_cloud_iii,
+        ..Spec::HEADSET
     },
     Spec {
         key: "hyperx-cloud-flight",
@@ -119,6 +74,7 @@ static SPECS: &[Spec] = &[
         usage: 0,
         interface: -1,
         query: hyperx_cloud_flight,
+        ..Spec::HEADSET
     },
     // ---- Logitech G (HID++ with a fixed feature index; the reply carries the battery voltage) ----
     Spec {
@@ -130,6 +86,7 @@ static SPECS: &[Spec] = &[
         usage: 0x0202,
         interface: 3,
         query: |io| logitech_voltage(io, 0x07, 0x01, G533),
+        ..Spec::HEADSET
     },
     Spec {
         key: "logitech-g535",
@@ -140,6 +97,7 @@ static SPECS: &[Spec] = &[
         usage: 0x0001,
         interface: 3,
         query: |io| logitech_voltage(io, 0x05, 0x0D, G535),
+        ..Spec::HEADSET
     },
     Spec {
         key: "logitech-g-headset",
@@ -150,6 +108,7 @@ static SPECS: &[Spec] = &[
         usage: 0x0202,
         interface: -1,
         query: |io| logitech_voltage(io, 0x08, 0x0A, G633),
+        ..Spec::HEADSET
     },
     Spec {
         key: "logitech-g-pro",
@@ -160,6 +119,7 @@ static SPECS: &[Spec] = &[
         usage: 0x0202,
         interface: -1,
         query: |io| logitech_voltage(io, 0x06, 0x0D, GPRO),
+        ..Spec::HEADSET
     },
     Spec {
         key: "logitech-g930",
@@ -170,6 +130,7 @@ static SPECS: &[Spec] = &[
         usage: 0x0001,
         interface: -1,
         query: logitech_g930,
+        ..Spec::HEADSET
     },
     Spec {
         key: "astro-a50",
@@ -180,6 +141,7 @@ static SPECS: &[Spec] = &[
         usage: 0x0074,
         interface: -1,
         query: astro_a50,
+        ..Spec::HEADSET
     },
     // ---- SteelSeries Arctis ----
     Spec {
@@ -191,6 +153,7 @@ static SPECS: &[Spec] = &[
         usage: 0x0202,
         interface: 3,
         query: arctis_1,
+        ..Spec::HEADSET
     },
     Spec {
         key: "arctis-7",
@@ -201,6 +164,7 @@ static SPECS: &[Spec] = &[
         usage: 0,
         interface: 5,
         query: arctis_7,
+        ..Spec::HEADSET
     },
     Spec {
         key: "arctis-9",
@@ -211,6 +175,7 @@ static SPECS: &[Spec] = &[
         usage: 0,
         interface: -1,
         query: arctis_9,
+        ..Spec::HEADSET
     },
     Spec {
         key: "arctis-pro-wireless",
@@ -221,6 +186,7 @@ static SPECS: &[Spec] = &[
         usage: 0,
         interface: -1,
         query: arctis_pro_wireless,
+        ..Spec::HEADSET
     },
     Spec {
         key: "arctis-nova-pro-wireless",
@@ -231,6 +197,7 @@ static SPECS: &[Spec] = &[
         usage: 0,
         interface: 4,
         query: arctis_nova_pro,
+        ..Spec::HEADSET
     },
     Spec {
         key: "arctis-7-plus",
@@ -241,6 +208,7 @@ static SPECS: &[Spec] = &[
         usage: 0x0001,
         interface: 3,
         query: arctis_7_plus,
+        ..Spec::HEADSET
     },
     Spec {
         key: "arctis-nova-7",
@@ -254,6 +222,7 @@ static SPECS: &[Spec] = &[
         usage: 0x0001,
         interface: 3,
         query: arctis_nova_7,
+        ..Spec::HEADSET
     },
     Spec {
         key: "arctis-nova-5",
@@ -264,6 +233,7 @@ static SPECS: &[Spec] = &[
         usage: 0x0001,
         interface: 3,
         query: arctis_nova_5,
+        ..Spec::HEADSET
     },
     Spec {
         key: "arctis-gamebuds",
@@ -274,6 +244,7 @@ static SPECS: &[Spec] = &[
         usage: 0x0001,
         interface: 3,
         query: arctis_gamebuds,
+        ..Spec::HEADSET
     },
     // ---- Corsair ----
     Spec {
@@ -288,6 +259,7 @@ static SPECS: &[Spec] = &[
         usage: 0x0001,
         interface: 3,
         query: corsair_void,
+        ..Spec::HEADSET
     },
     Spec {
         key: "corsair-wireless-v2",
@@ -298,6 +270,7 @@ static SPECS: &[Spec] = &[
         usage: 0,
         interface: 4,
         query: corsair_wireless_v2,
+        ..Spec::HEADSET
     },
     // Receiver and cable IDs share a key: a Virtuoso XT on its cable leaves the receiver and shows up under the cable
     // ID, and the reading that reaches the headset wins (see poll)
@@ -313,6 +286,7 @@ static SPECS: &[Spec] = &[
             let wired = matches!(io.product_id(), 0x0A62 | 0x0A3D);
             bragi(io, wired)
         },
+        ..Spec::HEADSET
     },
     Spec {
         key: "corsair-hs80-rgb-wireless",
@@ -326,6 +300,7 @@ static SPECS: &[Spec] = &[
             let wired = io.product_id() == 0x0A69;
             bragi(io, wired)
         },
+        ..Spec::HEADSET
     },
     // ---- Others ----
     Spec {
@@ -337,6 +312,7 @@ static SPECS: &[Spec] = &[
         usage: 0x0002,
         interface: -1,
         query: sony_inzone_h5,
+        ..Spec::HEADSET
     },
     Spec {
         key: "mchose-x9",
@@ -347,6 +323,7 @@ static SPECS: &[Spec] = &[
         usage: 0x0001,
         interface: -1,
         query: mchose_x9,
+        ..Spec::HEADSET
     },
     Spec {
         key: "lenovo-wireless-voip",
@@ -357,13 +334,9 @@ static SPECS: &[Spec] = &[
         usage: 0x0222,
         interface: 3,
         query: lenovo_voip,
+        ..Spec::HEADSET
     },
 ];
-
-/// Product IDs handled here, so the general Logitech HID++ provider leaves them alone.
-pub fn handled(vid: u16, pid: u16) -> bool {
-    SPECS.iter().any(|s| s.vid == vid && s.pids.contains(&pid))
-}
 
 fn hyperx_cloud_alpha(io: &mut Io) -> win::Result<State> {
     // Mute events 21 BB 23 arrive on the same collection: match the command echo
@@ -420,15 +393,14 @@ fn hyperx_cloud_iii(io: &mut Io) -> win::Result<State> {
         Some(link) if link[2] == 0x01 => {}
         _ => return Ok(off()),
     }
-    let power = ask(io, 0x8A, 0x0C)?.map_or(0, |c| c[2]); // 1 = charging, 2 = full with the cable still in
-                                                          // The level counts only when one of the two bytes in front of it is set
+    // 1 = charging, 2 = full with the cable still in
+    let power = ask(io, 0x8A, 0x0C)?.map_or(0, |c| c[2]);
+    // The level counts only when one of the two bytes in front of it is set
     let level = ask(io, 0x89, 0x0D)?.filter(|b| (b[2] | b[3]) != 0).map(|b| (b[4] as i32).clamp(0, 100));
     Ok(State {
-        online: true,
-        level,
-        charging: power == 1,
         detail: level.is_none().then(|| "d.levelUnknown".to_string()),
         full: power == 2,
+        ..State::new(true, level, power == 1)
     })
 }
 
@@ -716,240 +688,6 @@ fn interpolate(mv: i32, table: &[(i32, i32)]) -> i32 {
     0
 }
 
-/// Clamps v to a..b and scales it to c..d (integer arithmetic, as HeadsetControl's map()).
-fn map(v: i32, a: i32, b: i32, c: i32, d: i32) -> i32 {
-    let v = v.clamp(a, b);
-    c + (v - a) * (d - c) / (b - a)
-}
-
-#[derive(Default)]
-pub struct HeadsetProvider {
-    /// What this session's log already has: see `log_once`.
-    logged: HashSet<String>,
-}
-
-impl Provider for HeadsetProvider {
-    fn name(&self) -> &'static str {
-        "Headsets"
-    }
-
-    fn poll(&mut self) -> Vec<DeviceReading> {
-        let mut result = Vec::new();
-        let found = hid::enumerate(handled);
-        for ((vid, pid), collections) in group_by(found, |i| (i.vendor_id, i.product_id)) {
-            let Some(spec) = SPECS.iter().find(|s| s.vid == vid && s.pids.contains(&pid)) else { continue };
-            let mut asked = Vec::new();
-            let state = query(spec, &collections, &mut asked);
-            self.log_once(spec, &collections, &asked, state.online);
-            result.push(DeviceReading {
-                online: state.online,
-                level: state.level,
-                charging: state.charging,
-                full_on_charger: state.full,
-                detail: state.detail.as_deref().map(t),
-                ..DeviceReading::new(format!("headset:{}", spec.key), spec.name, DeviceKind::Headset, t("via.24"))
-            });
-        }
-        one_per_id(result, |r| r.online)
-    }
-
-    fn delay(&self, last: &[DeviceReading]) -> Duration {
-        if last.iter().any(|r| r.online) {
-            secs(60)
-        } else {
-            secs(30)
-        }
-    }
-}
-
-impl HeadsetProvider {
-    /// Logs how a headset was queried - its HID collections, the requests and the replies - the first time it is
-    /// found off and the first time it is found on in a session.
-    fn log_once(&mut self, spec: &Spec, collections: &[HidInfo], asked: &[(String, Vec<String>)], online: bool) {
-        let id = format!("{:04x}:{:04x}", collections[0].vendor_id, collections[0].product_id);
-        if !self.logged.insert(format!("{id}{online}")) {
-            return;
-        }
-        log::write(&format!(
-            "{} {id}: found {}, {} HID collections",
-            spec.name,
-            if online { "on" } else { "off" },
-            collections.len()
-        ));
-        for info in collections {
-            let trace =
-                asked.iter().find(|a| a.0 == info.path).map(|a| a.1.join("  ")).unwrap_or_else(|| "not asked".into());
-            log::write(&format!("  mi={} {info}: {trace}", info.interface_number()));
-        }
-    }
-}
-
-/// `asked` is filled with the collections that were tried and what was sent to and received from each.
-fn query(spec: &Spec, collections: &[HidInfo], asked: &mut Vec<(String, Vec<String>)>) -> State {
-    let mut candidates: Vec<&HidInfo> = collections
-        .iter()
-        .filter(|i| spec.interface < 0 || i.interface_number().max(0) == spec.interface)
-        .filter(|i| {
-            i.access_denied
-                || if spec.page == 0 {
-                    i.usage_page >= 0xFF00 || spec.interface >= 0
-                } else {
-                    i.usage_page == spec.page && i.usage == spec.usage
-                }
-        })
-        .collect();
-    candidates.sort_by_key(|i| if i.output_length > 0 { 0 } else { 1 });
-    if candidates.is_empty() {
-        return off_because("d.noLink");
-    }
-    if candidates.iter().all(|i| i.access_denied) {
-        return off_because("d.needsAdmin");
-    }
-
-    // A clean "headset off" from one collection beats an error from another that can't take the request
-    let mut clean = None;
-    let mut error = off();
-    for info in candidates.into_iter().filter(|i| !i.access_denied) {
-        let mut trace = Vec::new();
-        let result = HidDevice::open(info).and_then(|dev| (spec.query)(&mut Io { dev, trace: &mut trace }));
-        match result {
-            Ok(state) if state.online => {
-                asked.push((info.path.clone(), trace));
-                return state;
-            }
-            Ok(state) => {
-                clean.get_or_insert(state);
-            }
-            Err(e) => {
-                trace.push(format!("error: {e}"));
-                error = off_because(tf("d.error", &[&e]));
-            }
-        }
-        asked.push((info.path.clone(), trace));
-    }
-    clean.unwrap_or(error)
-}
-
-/// Request/response helpers over one HID collection, with hidapi's view of input reports.
-pub struct Io<'a> {
-    dev: HidDevice,
-    trace: &'a mut Vec<String>, // what was sent and received, for log_once
-}
-
-impl Io<'_> {
-    const ERROR_INVALID_FUNCTION: u32 = 1;
-
-    fn product_id(&self) -> u16 {
-        self.dev.info.product_id
-    }
-
-    /// An input report as hidapi returns it: without the 0x00 Windows adds when there are no report IDs.
-    pub fn data(raw: &[u8]) -> &[u8] {
-        if raw.first() == Some(&0x00) {
-            &raw[1..]
-        } else {
-            raw
-        }
-    }
-
-    fn send(&mut self, report: &[u8]) -> win::Result<bool> {
-        self.trace.push(format!("> {}", hex(report)));
-        let sent = self.dev.write(report, TIMEOUT_MS as u32)?;
-        if !sent {
-            self.trace.push("(not sent)".into());
-        }
-        Ok(sent)
-    }
-
-    /// Sends a request and returns the first input report that `matches` accepts. `or_feature`: send the request as
-    /// a feature report when the collection doesn't take it as an output one - HyperHeadset found HyperX dongles that
-    /// take theirs only that way on Windows.
-    fn ask(
-        &mut self,
-        request: &[u8],
-        matches: impl Fn(&[u8]) -> bool,
-        reads: usize,
-        or_feature: bool,
-    ) -> win::Result<Option<Vec<u8>>> {
-        self.dev.flush();
-        let sent = match self.send(request) {
-            Ok(sent) => sent,
-            // What Windows answers to an output report the collection doesn't have
-            Err(Error { code: Some(Self::ERROR_INVALID_FUNCTION), .. }) if or_feature => false,
-            Err(e) => return Err(e),
-        };
-        if sent || (or_feature && self.set_feature(request)) {
-            self.receive(matches, reads)
-        } else {
-            Ok(None)
-        }
-    }
-
-    fn receive(&mut self, matches: impl Fn(&[u8]) -> bool, reads: usize) -> win::Result<Option<Vec<u8>>> {
-        let deadline = Instant::now() + Duration::from_millis(TIMEOUT_MS);
-        for _ in 0..reads {
-            if Instant::now() >= deadline {
-                break;
-            }
-            let Some(raw) = self.dev.read(remaining_ms(deadline))? else {
-                self.trace.push("< nothing".into());
-                return Ok(None);
-            };
-            let data = Self::data(&raw);
-            self.trace.push(format!("< {}", hex(data)));
-            if matches(data) {
-                return Ok(Some(data.to_vec()));
-            }
-        }
-        Ok(None)
-    }
-
-    /// Throws away whatever the device sent unasked.
-    fn drain(&mut self) -> win::Result<()> {
-        for _ in 0..16 {
-            if self.dev.read(5)?.is_none() {
-                break;
-            }
-        }
-        Ok(())
-    }
-
-    fn set_feature(&mut self, report: &[u8]) -> bool {
-        // Exactly the length the device declares, as hidapi does
-        let length = if self.dev.info.feature_length > 0 { self.dev.info.feature_length } else { report.len() };
-        let mut buf = vec![0u8; length];
-        let n = report.len().min(length);
-        buf[..n].copy_from_slice(&report[..n]);
-        self.trace.push(format!("feature > {}", hex(&buf)));
-        let taken = self.dev.set_feature(&buf);
-        if !taken {
-            self.trace.push("(not taken)".into());
-        }
-        taken
-    }
-
-    fn get_feature(&mut self, report_id: u8) -> Option<Vec<u8>> {
-        if self.dev.info.feature_length == 0 {
-            return None;
-        }
-        let r = self.dev.get_feature(report_id);
-        self.traced("feature < ", r)
-    }
-
-    fn get_input_report(&mut self, report_id: u8) -> Option<Vec<u8>> {
-        if self.dev.info.input_length == 0 {
-            return None;
-        }
-        let r = self.dev.get_input_report(report_id);
-        self.traced("input < ", r)
-    }
-
-    fn traced(&mut self, what: &str, report: Option<Vec<u8>>) -> Option<Vec<u8>> {
-        self.trace.push(format!("{what}{}", report.as_deref().map(hex).unwrap_or_else(|| "nothing".into())));
-        report
-    }
-}
-
 #[cfg(test)]
 mod tests {
     //! Corsair's Bragi property replies as the Virtuoso XT / SE and the HS80 RGB Wireless send them on report 01:
@@ -1028,7 +766,5 @@ mod tests {
         assert_eq!(interpolate(3850, G533), 50);
         assert_eq!(interpolate(3820, G533), 40);
         assert_eq!(interpolate(3000, G533), 0);
-        assert_eq!(map(2, 0, 4, 0, 100), 50);
-        assert_eq!(map(0xA0, 0x64, 0x9A, 0, 100), 100);
     }
 }
