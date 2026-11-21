@@ -277,10 +277,16 @@ impl HidDevice {
     }
 
     pub fn get_feature(&self, report_id: u8) -> Option<Vec<u8>> {
-        if self.info.feature_length == 0 {
+        self.get_feature_of(report_id, self.info.feature_length)
+    }
+
+    /// Reads a feature report into a buffer of `length` bytes: for a report shorter than the collection's longest
+    /// one, on a device that refuses to be asked for more than the report has.
+    pub fn get_feature_of(&self, report_id: u8, length: usize) -> Option<Vec<u8>> {
+        if self.info.feature_length == 0 || length == 0 {
             return None;
         }
-        let mut buf = vec![0u8; self.info.feature_length];
+        let mut buf = vec![0u8; length];
         buf[0] = report_id;
         let ok = unsafe { ffi::HidD_GetFeature(self.handle, buf.as_mut_ptr() as *mut c_void, buf.len() as u32) };
         (ok != 0).then_some(buf)

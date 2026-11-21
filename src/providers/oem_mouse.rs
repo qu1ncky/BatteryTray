@@ -127,6 +127,8 @@ static MODELS: &[((u16, u16), Model)] = &[
     ((0x373B, 0x1040), compx("atk:1040", "ATK", R).by_product()),
     ((0x373B, 0x11D9), compx("atk:a9-ultimate", "ATK A9 Ultimate", R)),
     ((0x373B, 0x11B6), compx("atk:a9-ultimate", "ATK A9 Ultimate", C)),
+    // "Wireless mouse 8k NANO dongle-L": the product string names nobody, two owners name this mouse (issue #30)
+    ((0x373B, 0x11FE), compx("atk:a9-ultra-max-2", "ATK A9 Ultra Max 2.0", R)),
     ((0x373B, 0x1017), compx("atk:x1-pro-max", "ATK X1 Pro Max", C)),
     ((0x373B, 0x1115), compx("atk:a9-plus", "ATK A9 Plus", C)),
     ((0x373B, 0x11E4), compx("atk:f1-ultimate-2", "ATK F1 Ultimate 2.0", C)),
@@ -586,6 +588,17 @@ mod tests {
         assert_eq!(parse(&h("08 04 00 00 00 02 19 00 0E 46 00 00 00 00 00 00 DA"), 1), b(25, false));
         assert_eq!(parse(&h("08 04 00 00 00 02 2D 01 0F 06 00 00 00 00 00 00 04"), 1), b(45, true));
         assert_eq!(parse(&h("08 04 00 00 00 02 64 01 10 8E 00 00 00 00 00 00 44"), 1), b(100, true));
+    }
+
+    #[test]
+    fn atk_a9_ultra_max_2_on_its_nano_dongle() {
+        // Posted by an owner (vigil-watt issue 71): 50% on battery, 50% charging, full on the cable
+        assert_eq!(parse(&h("08 04 00 00 00 02 32 00 0F 9B 00 00 00 00 00 00 6B"), 1), b(50, false));
+        assert_eq!(parse(&h("08 04 00 00 00 02 32 01 0F 96 00 00 00 00 00 00 6F"), 1), b(50, true));
+        assert_eq!(parse(&h("08 04 00 00 00 02 64 01 11 2A 00 00 00 00 00 00 A7"), 1), b(100, true));
+        let dongle = model(0x373B, 0x11FE).unwrap();
+        assert_eq!(name(dongle, Some("Wireless mouse 8k NANO dongle-L")), "ATK A9 Ultra Max 2.0");
+        assert_eq!(dongle.link, Link::Ask);
     }
 
     #[test]

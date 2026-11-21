@@ -48,6 +48,7 @@ static PERIPHERALS: &[&[Spec]] = &[
 
 /// `detail`: a text key or a ready text. `full`: the device itself says it is full, with the charger connected.
 /// `name`: what to call the device when the table's name doesn't say (several models behind one product ID).
+/// `estimate`: the level is worked out here (from a voltage, say), not the device's own number.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct State {
     pub online: bool,
@@ -56,11 +57,12 @@ pub struct State {
     pub detail: Option<String>,
     pub full: bool,
     pub name: Option<String>,
+    pub estimate: bool,
 }
 
 impl State {
     pub fn new(online: bool, level: Option<i32>, charging: bool) -> Self {
-        Self { online, level, charging, detail: None, full: false, name: None }
+        Self { online, level, charging, detail: None, full: false, name: None, estimate: false }
     }
 }
 
@@ -137,7 +139,7 @@ impl Spec {
     }
 
     /// The stable key of the reading. Headsets keep the one they had before the other kinds joined.
-    fn id(&self) -> String {
+    pub fn id(&self) -> String {
         if self.kind == DeviceKind::Headset {
             format!("headset:{}", self.key)
         } else {
@@ -158,17 +160,30 @@ pub fn handled(vid: u16, pid: u16) -> bool {
 pub struct TableProvider {
     name: &'static str,
     tables: &'static [&'static [Spec]],
+    /// How long to wait before the next poll: with a device online, and with none.
+    delays: (Duration, Duration),
     /// What this session's log already has: see `log_once`.
     logged: HashSet<String>,
 }
 
 impl TableProvider {
     pub fn headsets() -> Self {
-        Self { name: "Headsets", tables: HEADSETS, logged: HashSet::new() }
+        Self::new("Headsets", HEADSETS)
     }
 
     pub fn peripherals() -> Self {
-        Self { name: "Devices", tables: PERIPHERALS, logged: HashSet::new() }
+        Self::new("Devices", PERIPHERALS)
+    }
+
+    /// A provider over tables of its own, polled every minute, or every half a minute while nothing is online.
+    pub fn new(name: &'static str, tables: &'static [&'static [Spec]]) -> Self {
+        Self { name, tables, delays: (secs(60), secs(30)), logged: HashSet::new() }
+    }
+
+    /// The same with other waits: `online` with a device online, `offline` with none. For devices that a request
+    /// may keep awake.
+    pub fn every(self, online: Duration, offline: Duration) -> Self {
+        Self { delays: (online, offline), ..self }
     }
 
     /// Logs how a device was queried - its HID collections, the requests and the replies - the first time it is
@@ -213,6 +228,7 @@ impl Provider for TableProvider {
             result.push(DeviceReading {
                 online: state.online,
                 level: state.level,
+                estimate: state.estimate && state.level.is_some(),
                 charging: state.charging,
                 full_on_charger: state.full,
                 detail: state.detail.as_deref().map(t),
@@ -226,9 +242,9 @@ impl Provider for TableProvider {
 
     fn delay(&self, last: &[DeviceReading]) -> Duration {
         if last.iter().any(|r| r.online) {
-            secs(60)
+            self.delays.0
         } else {
-            secs(30)
+            self.delays.1
         }
     }
 }
@@ -272,8 +288,7 @@ fn query(spec: &Spec, collections: &[HidInfo], asked: &mut Vec<(String, Vec<Stri
     let mut error = off();
     for info in candidates.into_iter().filter(|i| !i.access_denied) {
         let mut trace = Vec::new();
-        let result = HidDevice::open(info)
-            .and_then(|dev| (spec.query)(&mut Io { dev, trace: &mut trace, timeout_ms: TIMEOUT_MS }));
+        let result = HidDevice::open(info).and_then(|dev| (spec.query)(&mut Io::new(dev, &mut trace)));
         match result {
             Ok(state) if state.online => {
                 asked.push((info.path.clone(), trace));
@@ -297,10 +312,24 @@ pub struct Io<'a> {
     dev: HidDevice,
     trace: &'a mut Vec<String>, // what was sent and received, for log_once
     timeout_ms: u64,
+    feature_length: usize,
 }
 
-impl Io<'_> {
+impl<'a> Io<'a> {
     const ERROR_INVALID_FUNCTION: u32 = 1;
+
+    /// For a provider of its own that talks to a collection it has opened: what is sent and received goes to
+    /// `trace`, for its log.
+    pub fn new(dev: HidDevice, trace: &'a mut Vec<String>) -> Self {
+        let feature_length = dev.info.feature_length;
+        Self { dev, trace, timeout_ms: TIMEOUT_MS, feature_length }
+    }
+
+    /// The length feature reports are sent and read at from here on, the report ID included, instead of the
+    /// collection's longest one: for a device that wants a report at its own length.
+    pub fn set_feature_length(&mut self, length: usize) {
+        self.feature_length = length;
+    }
 
     pub fn product_id(&self) -> u16 {
         self.dev.info.product_id
@@ -393,7 +422,7 @@ impl Io<'_> {
     /// Sends a feature report of exactly the length the device declares, as hidapi does: `report` is padded with
     /// zeros or cut to it. The first byte is the report ID.
     pub fn set_feature(&mut self, report: &[u8]) -> bool {
-        let length = if self.dev.info.feature_length > 0 { self.dev.info.feature_length } else { report.len() };
+        let length = if self.feature_length > 0 { self.feature_length } else { report.len() };
         let mut buf = vec![0u8; length];
         let n = report.len().min(length);
         buf[..n].copy_from_slice(&report[..n]);
@@ -407,10 +436,7 @@ impl Io<'_> {
 
     /// Reads a feature report, report ID first, at the length the device declares.
     pub fn get_feature(&mut self, report_id: u8) -> Option<Vec<u8>> {
-        if self.dev.info.feature_length == 0 {
-            return None;
-        }
-        let r = self.dev.get_feature(report_id);
+        let r = self.dev.get_feature_of(report_id, self.feature_length);
         self.traced("feature < ", r)
     }
 
