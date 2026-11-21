@@ -1,15 +1,16 @@
-//! Attack Shark mice on the Xenta 2.4 GHz receiver 1D57:FA60 ("2.4G Wireless Device"), and the Delux and Inphic
-//! mice that share it; and the 8K receiver 1D57:FA65 of the Attack Shark X8 Pro, the Inphic IN10 MAX and others.
+//! Mice on the Xenta 2.4 GHz receiver 1D57:FA60 ("2.4G Wireless Device"): Attack Shark, FURYCUBE, Delux, Inphic,
+//! MAMBASNAKE; and the 8K receiver 1D57:FA65 of the Attack Shark X8 Pro, the Inphic IN10 MAX and others.
 //! Nothing is ever sent: the mouse pushes a 5-byte input report by itself
 //! about every 2 s on the receiver's collection with usage page 0x000A, and this only reads it, on its own
 //! GENERIC_READ handle:
 //!   03 MM 40 ST LL  -  report ID 3, model code, 0x40 = battery frame (some models send 0x41), state, level.
-//! What ST and LL mean depends on the model code, so only codes seen on real mice are read:
-//!   0x55 (X11), 0x4E (X3 Max), 0xE5 (V3 Pro), 0x07 (X11 SE), 0x08 (X8 Pro), 0x24 (V6), 0x20 (Delux M600 Pro),
-//!   0x30 and 0x50 (Delux M900 Pro), 0x73 and 0x74 (Inphic IN10R MAX, IN10 MAX): ST 01 = on battery, LL = percent;
-//!     02 and 03 = on external power (cable or dock), when the level they send is frozen, so none is shown.
+//! What ST and LL mean depends on the model code, so only known codes are read (MODELS): the ones seen on real mice,
+//! and the model table of these brands' common web driver (bk-gmice.com), which reads every code the same way:
+//!   ST 01 = on battery, LL = percent; 02 and 03 = on external power (cable or dock), when the level they send is
+//!     frozen, so none is shown.
 //!   0x10 (X6 / R1): ST is the DPI stage and LL the level in tens; there is no charging state.
-//!   The V6 was only ever seen at 100%, which doesn't tell percent from tens, so its levels up to 10 aren't shown.
+//!   The V6 was only ever seen at 100%, which doesn't tell percent from tens, and the web driver's code for the X6
+//!   (0x85) may count in tens like 0x10, so their levels up to 10 aren't shown.
 //! A mouse with another code is listed without a level, and its frames go to the log so that it can be added.
 //! Each time the mouse links up it sends one "on battery, 100%" frame before the real one, so a reading only
 //! counts once two battery frames in a row agree.
@@ -19,8 +20,10 @@
 //! Protocol facts from daeoxide/attackshark-battery-windows (docs/PROTOCOL.md), Attack-Shark-Battery-KDE
 //! (gitlab.com/gabriel17166), the HaloBattery community fork (providers/inphic.py), OpenMouse (mouse-protocol:
 //! src/drivers/attackshark/hid.ts, docs/delux-m600-pro-testing.md, docs/attackshark-x11-testing.md and an X8 Pro
-//! owner's notes in its issue 171) and Wireless-Device-Battery-Monitor (docs/inphic.md, src/drivers/misc_mice.cpp);
-//! own implementation.
+//! owner's notes in its issue 171) and Wireless-Device-Battery-Monitor (docs/inphic.md, src/drivers/misc_mice.cpp).
+//! The web driver's model table (its mouseNum and the brand folders of its pages) and a FURYCUBE G3's frame from
+//! furycube-g3-linux-bridge (HeyDSN, docs/PROTOCOL.md), which led to it; the In9 Pro's 0x95 from HaloBattery
+//! (HeyOkay, providers/inphic.py); own implementation.
 
 use super::{group_by, secs, Provider};
 use crate::hid::{self, HidDevice, HidInfo};
@@ -52,12 +55,16 @@ const BATTERY_FRAMES: [u8; 2] = [0x40, 0x41];
 const ON_BATTERY: u8 = 0x01;
 const RECEIVER_ID: &str = "xenta:1d57:fa60";
 const DEVICE_NAME: &str = "Attack Shark";
+/// The brands a model's name starts with, the name a mouse is shown under.
+const BRANDS: [&str; 5] = [DEVICE_NAME, "FURYCUBE", "Delux", "Inphic", "MAMBASNAKE"];
 /// How long a poll waits for a new listener's first reading, so the mouse doesn't show up as asleep for a moment:
 /// a reading takes two frames, 2 s apart.
 const FIRST_READING_WAIT: Duration = secs(5);
 
-/// (code, the mouse it was seen on - for the log only, other models may send the same code, the 0x10 layout)
-const MODELS: [(u8, &str, bool); 12] = [
+/// (code, the mouse it was seen on or the web driver has it for - for the log only, other models may send the same
+/// code, the 0x10 layout)
+const MODELS: &[(u8, &str, bool)] = &[
+    // Seen on real mice
     (0x55, "Attack Shark X11", false),
     (0x4E, "Attack Shark X3 Max", false),
     (0xE5, "Attack Shark V3 Pro", false),
@@ -70,6 +77,31 @@ const MODELS: [(u8, &str, bool); 12] = [
     (0x50, "Delux M900 Pro", false),
     (0x73, "Inphic IN10R MAX", false),
     (0x74, "Inphic IN10 MAX", false),
+    (0x66, "FURYCUBE G3", false),
+    // The web driver's (0x95: INPHIC HUB's, the In9 Pro's own app)
+    (0x95, "Inphic In9 Pro", false),
+    (0xC2, "FURYCUBE F1", false),
+    (0xC3, "FURYCUBE G9", false),
+    (0xC9, "FURYCUBE G9 PRO", false),
+    (0x77, "FURYCUBE G11", false),
+    (0x9F, "FURYCUBE G13S", false),
+    (0x01, "Attack Shark X3 Pro", false),
+    (0x4D, "Attack Shark X3", false),
+    (0x85, "Attack Shark X6", false),
+    (0xB1, "Attack Shark X1", false),
+    (0xBE, "Attack Shark X11 Pro", false),
+    (0x02, "Attack Shark X8 SE", false),
+    (0x06, "Attack Shark X8 Plus", false),
+    (0xEA, "Attack Shark V3", false),
+    (0x0E, "Attack Shark G3 Pro", false),
+    (0x3D, "Delux M900 Mini", false),
+    (0x41, "Inphic IN6", false),
+    (0x92, "Inphic IN6 SE", false),
+    (0x42, "Inphic IN9", false),
+    (0x90, "Inphic IN9 Ultra", false),
+    (0x93, "Inphic IN10", false),
+    (0x99, "Inphic INX", false),
+    (0xBC, "MAMBASNAKE M3", false),
 ];
 
 fn model(code: u8) -> Option<(&'static str, bool)> {
@@ -77,20 +109,21 @@ fn model(code: u8) -> Option<(&'static str, bool)> {
 }
 
 /// Codes whose only captured frame is "on battery, 100%" - which is also the false frame every mouse sends when it
-/// links up, the ones that count in tens too. A level of 10 or less from such a mouse may be tens, so it isn't
-/// shown until one of them has been seen at another level.
-const SCALE_UNPROVEN: [u8; 1] = [0x24];
+/// links up, the ones that count in tens too - and the web driver's X6, whose 0x10 sibling counts in tens. A level of
+/// 10 or less from such a mouse may be tens, so it isn't shown until one of them has been seen at another level.
+const SCALE_UNPROVEN: [u8; 2] = [0x24, 0x85];
 
 /// Whose mouse sends this code. The model isn't shown: several send the same code.
 fn brand(code: u8) -> Option<&'static str> {
     let (seen_on, _) = model(code)?;
-    [DEVICE_NAME, "Delux", "Inphic"].into_iter().find(|b| seen_on.starts_with(b))
+    BRANDS.into_iter().find(|b| seen_on.starts_with(b))
 }
 
-/// What a mouse is called before it has sent a code: these IDs are Attack Shark's own, the rest are shared.
+/// What a mouse is called before it has sent a code: these cable IDs are Attack Shark's own; the receivers are
+/// shared by several brands.
 fn default_name(pid: u16) -> String {
     match pid {
-        RECEIVER_PID | 0xFA55 | 0x2155 | 0x2126 => DEVICE_NAME.to_string(),
+        0xFA55 | 0x2155 | 0x2126 => DEVICE_NAME.to_string(),
         0xFA71 => "Delux".to_string(),
         _ => t("name.mouse"),
     }
@@ -187,7 +220,7 @@ impl XentaReceiverProvider {
         if receivers.is_empty() && receiver_locked {
             result.push(DeviceReading {
                 detail: Some(t("d.needsAdmin")),
-                ..DeviceReading::new(RECEIVER_ID, DEVICE_NAME, DeviceKind::Mouse, t("via.24"))
+                ..DeviceReading::new(RECEIVER_ID, default_name(RECEIVER_PID), DeviceKind::Mouse, t("via.24"))
             });
         }
 
@@ -578,7 +611,7 @@ mod tests {
         assert_eq!(parse(&[3, 0x4E, 0x40, 1, 0]), Some((0x4E, Some(Battery { on_power: false, level: None }))));
         assert_eq!(parse(&[3, 0x10, 0x40, 2, 7]), Some((0x10, Some(Battery { on_power: false, level: Some(70) }))));
         assert_eq!(parse(&[3, 0x10, 0x40, 2, 11]), Some((0x10, None)));
-        assert_eq!(parse(&[3, 0x77, 0x40, 1, 50]), Some((0x77, None)), "unknown model");
+        assert_eq!(parse(&[3, 0x7F, 0x40, 1, 50]), Some((0x7F, None)), "unknown model");
         assert_eq!(parse(&[3, 0x55, 0x01, 0, 0]), None, "link blink");
         assert_eq!(parse(&[3, 0x55, 0x40, 1]), None, "too short");
     }
@@ -614,6 +647,26 @@ mod tests {
         // The mice whose levels owners have read keep their low ones
         assert_eq!(parse(&[3, 0x55, 0x40, 1, 6]), Some((0x55, on_battery(Some(6)))));
         assert_eq!(parse(&[3, 0x08, 0x40, 1, 10]), Some((0x08, on_battery(Some(10)))));
+        // The web driver's X6 may count in tens like the 0x10 one
+        assert_eq!(parse(&[3, 0x85, 0x40, 1, 9]), Some((0x85, on_battery(None))));
+        assert_eq!(parse(&[3, 0x85, 0x40, 1, 45]), Some((0x85, on_battery(Some(45)))));
+    }
+
+    #[test]
+    fn the_web_drivers_models_are_read_in_percent() {
+        let on_battery = |level| Some(Battery { on_power: false, level: Some(level) });
+        // A FURYCUBE G3's frame as furycube-g3-linux-bridge documents it, and an F1 at a low level
+        assert_eq!(parse(&[3, 0x66, 0x41, 1, 0x50]), Some((0x66, on_battery(80))));
+        assert_eq!(parse(&[3, 0xC2, 0x40, 1, 7]), Some((0xC2, on_battery(7))));
+        assert_eq!(parse(&[3, 0xC2, 0x40, 3, 0x50]), Some((0xC2, Some(Battery { on_power: true, level: None }))));
+    }
+
+    #[test]
+    fn every_model_code_is_listed_once_under_a_brand() {
+        for (i, (code, seen_on, _)) in MODELS.iter().enumerate() {
+            assert!(MODELS[i + 1..].iter().all(|m| m.0 != *code), "0x{code:02X} is listed twice");
+            assert!(brand(*code).is_some(), "{seen_on} has no brand");
+        }
     }
 
     #[test]
@@ -631,11 +684,14 @@ mod tests {
         assert_eq!(name(RECEIVER_PID, &on(0x20)), "Delux");
         assert_eq!(name(RECEIVER_8K_PID, &on(0x73)), "Inphic");
         assert_eq!(name(RECEIVER_8K_PID, &on(0x08)), "Attack Shark");
-        // Before a code has come, and for a code nobody knows
+        assert_eq!(name(RECEIVER_PID, &on(0xC2)), "FURYCUBE");
+        assert_eq!(name(RECEIVER_PID, &on(0xBC)), "MAMBASNAKE");
+        // Before a code has come, and for a code nobody knows: the receivers are shared, a cable ID is Attack Shark's
         let quiet = Status { running: true, online: false, code: None, battery: None, error: None };
-        assert_eq!(name(RECEIVER_PID, &quiet), "Attack Shark");
+        assert_eq!(name(RECEIVER_PID, &quiet), "Mouse");
         assert_eq!(name(RECEIVER_8K_PID, &quiet), "Mouse");
-        assert_eq!(name(RECEIVER_PID, &on(0x99)), "Attack Shark");
+        assert_eq!(name(RECEIVER_PID, &on(0x7F)), "Mouse");
+        assert_eq!(name(0xFA55, &quiet), "Attack Shark");
     }
 
     #[test]
