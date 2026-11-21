@@ -1,27 +1,74 @@
-//! Wireless keyboards on the CompX 2.4 GHz receiver 3554:FA09 ("2.4G Wireless Receiver"), which MCHOSE (M HUB) and
-//! AULA keyboards, among others, share. The receiver's vendor collection
+//! Wireless keyboards on CompX's "BY" 2.4 GHz receivers: 3554:FA09 ("2.4G Wireless Receiver"), which MCHOSE (M HUB)
+//! and AULA keyboards, among others, share, and the receivers of the AULA F75 Max (3554:FB40), of MCHOSE's newer
+//! boards (41E4:2001, 05AC:024F) and of VGN's (258A:024F, 258A:027F, 258A:027B, 391D:2A01, 391D:2A02). The
+//! receiver's vendor collection
 //! FF02:0002 takes 20-byte output reports 13 and answers with 20-byte input reports 13, the command echoed in byte 1:
 //!   13 4A 01 00 .. 00 5E   battery: reply 13 4A 01 00 xx LL SS ..   LL level in percent, SS high nibble 1 = charging
 //!   13 05 01 00 .. 00 19   model code: reply 13 05 01 00 xx C C C C C C ..   six bytes that name an MCHOSE model
 //! The last request byte is the sum of the others; MCHOSE firmware leaves the reply's last byte at 0, so it isn't
 //! checked. Some firmware sets the top bit of the echoed command. A keyboard that is asleep or off doesn't answer.
-//! Only these two reads are sent, the model code once per receiver. The keyboard is asked every 5 minutes, no more:
-//! a request may wake a dozing keyboard (Wireless-Device-Battery-Monitor issue 191).
+//! Only these two reads are sent, the model code once per receiver and only to the receivers M HUB asks it of. The
+//! keyboard is asked every 5 minutes, no more: a request may wake a dozing keyboard (Wireless-Device-Battery-Monitor
+//! issue 191). Except for FA09, the IDs are ones that unrelated devices carry too (a mouse receiver has FB40, SONiX
+//! keyboards 05AC:024F: see `sonix_keyboard`), so those receivers are listed only when they have the 20-byte
+//! collection.
 //! Protocol facts from myfinder-device-battery (engine/upstream-protocols.md, "MCHOSE BY keyboard receiver
-//! 3554:FA09") and Wireless-Device-Battery-Monitor (src/drivers/aula.cpp); own implementation. Not yet verified on
+//! 3554:FA09", "VGN beiying keyboard receivers"), HaloBattery (providers/mchose_kb.py) and
+//! Wireless-Device-Battery-Monitor (src/drivers/aula.cpp); own implementation. Not yet verified on
 //! hardware by this project, which is why the first exchange goes to the log.
 
-use super::{hex_trimmed as hex, no_link_reason, remaining_ms, secs, Provider};
+use super::{group_by, hex_trimmed as hex, no_link_reason, receiver_name, remaining_ms, secs, Proven, Provider};
 use crate::hid::{self, HidDevice, HidInfo};
 use crate::loc::{t, tf};
 use crate::log;
 use crate::reading::{DeviceKind, DeviceReading};
+use crate::state::StateStore;
 use crate::win;
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-const VID: u16 = 0x3554;
-const PID: u16 = 0xFA09;
+/// `name`: what to call the keyboard when neither its model code nor the product string says: a model, a brand (one
+/// word) or "" for just a keyboard on a receiver. `model_code`: M HUB asks this receiver which MCHOSE model it has.
+/// `shared`: unrelated devices carry these IDs too, so the receiver is listed only when it has the collection.
+struct Receiver {
+    vid: u16,
+    pid: u16,
+    name: &'static str,
+    model_code: bool,
+    shared: bool,
+}
+
+const fn shared(vid: u16, pid: u16, name: &'static str, model_code: bool) -> Receiver {
+    Receiver { vid, pid, name, model_code, shared: true }
+}
+
+static RECEIVERS: &[Receiver] = &[
+    Receiver { vid: 0x3554, pid: 0xFA09, name: "", model_code: true, shared: false },
+    shared(0x3554, 0xFB40, "", false),
+    shared(0x41E4, 0x2001, "MCHOSE", true),
+    shared(0x05AC, 0x024F, "", true),
+    shared(0x258A, 0x024F, "VGN V98 Pro V3", false),
+    shared(0x258A, 0x027F, "VGN V98 Pro V3", false),
+    shared(0x258A, 0x027B, "VGN V87 V2", false),
+    shared(0x391D, 0x2A01, "VGN N75 V2", false),
+    shared(0x391D, 0x2A02, "VGN V108", false),
+];
+
+fn receiver(vid: u16, pid: u16) -> Option<&'static Receiver> {
+    RECEIVERS.iter().find(|r| r.vid == vid && r.pid == pid)
+}
+
+/// What the keyboard is called: by its product string, or by the receiver's row when that names nobody.
+fn name(receiver: &Receiver, product: Option<&str>) -> String {
+    let fallback = match receiver.name {
+        "" => t("name.fa09Keyboard"),
+        brand if !brand.contains(' ') => tf("name.brandKeyboard", &[&brand]),
+        name => name.to_string(),
+    };
+    receiver_name::keyboard(product, Some(&fallback))
+}
+
 const VENDOR_PAGE: u16 = 0xFF02;
 const VENDOR_USAGE: u16 = 0x0002;
 const REPORT_ID: u8 = 0x13;
@@ -29,7 +76,6 @@ const BATTERY_COMMAND: u8 = 0x4A;
 const MODEL_COMMAND: u8 = 0x05;
 const FRAME_LENGTH: usize = 20;
 const TIMEOUT_MS: u64 = 2500;
-const ID: &str = "compx:3554:fa09";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Battery {
@@ -38,7 +84,7 @@ pub struct Battery {
 }
 
 /// M HUB's keyboardPwds table: the six bytes the model code request returns.
-const MODELS: [([u8; 6], &str); 18] = [
+const MODELS: [([u8; 6], &str); 20] = [
     ([0x03, 0x00, 0x00, 0x00, 0x02, 0x1C], "MCHOSE G87"),
     ([0x03, 0x00, 0x00, 0x00, 0x00, 0x77], "MCHOSE K99"),
     ([0x03, 0x00, 0x00, 0x00, 0x01, 0xDF], "MCHOSE K99 V2"),
@@ -57,13 +103,23 @@ const MODELS: [([u8; 6], &str); 18] = [
     ([0x03, 0x00, 0x00, 0x00, 0x01, 0x35], "MCHOSE K87"),
     ([0x03, 0x00, 0x00, 0x00, 0x03, 0x35], "MCHOSE G75 V2"),
     ([0x0A, 0x00, 0x00, 0x00, 0x00, 0x34], "MCHOSE G87 V2"),
+    ([0x03, 0x00, 0x00, 0x00, 0x00, 0x6A], "Redragon Horus Pro"),
+    ([0x03, 0x00, 0x00, 0x00, 0x03, 0xDA], "Redragon Horus Pro V2"),
 ];
 
 #[derive(Default)]
 pub struct AulaMchoseProvider {
     /// The model each receiver answered with, by device path; None = it answered with a code not in the table.
     models: HashMap<String, Option<&'static str>>,
-    logged: HashSet<bool>,
+    logged: HashSet<String>,
+    proven: Proven,
+}
+
+impl AulaMchoseProvider {
+    /// `state`: the levels this PC has seen, by which a keyboard on a shared ID that is asleep is known.
+    pub fn new(state: Arc<StateStore>) -> Self {
+        Self { proven: Proven::new(state), ..Self::default() }
+    }
 }
 
 impl Provider for AulaMchoseProvider {
@@ -72,51 +128,63 @@ impl Provider for AulaMchoseProvider {
     }
 
     fn poll(&mut self) -> Vec<DeviceReading> {
-        let collections = hid::enumerate(|v, p| v == VID && p == PID);
-        if collections.is_empty() {
-            return Vec::new();
-        }
-
-        let vendor = vendor_collection(&collections);
-        let mut trace = Vec::new();
-        let mut battery = None;
-        let mut error = None;
-        match vendor {
-            None => error = Some(t(no_link_reason(&collections))),
-            Some(v) => {
-                let asked = (|| -> win::Result<()> {
-                    let dev = HidDevice::open(v)?;
-                    if !self.models.contains_key(&v.path) {
-                        if let Some(code) = ask(&dev, MODEL_COMMAND, &mut trace)? {
-                            self.models.insert(v.path.clone(), model_name(&code));
+        let mut result = Vec::new();
+        let found = hid::enumerate(|v, p| receiver(v, p).is_some());
+        for ((vid, pid), collections) in group_by(found, |i| (i.vendor_id, i.product_id)) {
+            let Some(receiver) = receiver(vid, pid) else { continue };
+            let vendor = vendor_collection(receiver, &collections);
+            if vendor.is_none() && receiver.shared {
+                continue;
+            }
+            let mut trace = Vec::new();
+            let mut battery = None;
+            let mut error = None;
+            match vendor {
+                None => error = Some(t(no_link_reason(&collections))),
+                Some(v) => {
+                    let asked = (|| -> win::Result<()> {
+                        let dev = HidDevice::open(v)?;
+                        if receiver.model_code && !self.models.contains_key(&v.path) {
+                            if let Some(code) = ask(&dev, MODEL_COMMAND, &mut trace)? {
+                                self.models.insert(v.path.clone(), model_name(&code));
+                            }
                         }
+                        if let Some(reply) = ask(&dev, BATTERY_COMMAND, &mut trace)? {
+                            battery = parse_battery(&reply);
+                        }
+                        Ok(())
+                    })();
+                    if let Err(e) = asked {
+                        trace.push(format!("error: {e}"));
+                        error = Some(tf("d.error", &[&e]));
                     }
-                    if let Some(reply) = ask(&dev, BATTERY_COMMAND, &mut trace)? {
-                        battery = parse_battery(&reply);
-                    }
-                    Ok(())
-                })();
-                if let Err(e) = asked {
-                    trace.push(format!("error: {e}"));
-                    error = Some(tf("d.error", &[&e]));
                 }
             }
-        }
-        let model = vendor.and_then(|v| self.models.get(&v.path).copied().flatten());
-        self.log_once(&collections, vendor, &trace, battery.is_some());
+            let model = vendor.and_then(|v| self.models.get(&v.path).copied().flatten());
+            let product = vendor
+                .and_then(|v| v.product.as_deref())
+                .or_else(|| collections.iter().find_map(|i| i.product.as_deref()));
+            self.log_once((vid, pid), &collections, vendor, product, &trace, battery.is_some());
+            let id = format!("compx:{vid:04x}:{pid:04x}");
+            // Under a shared ID the collection alone doesn't say whose keyboard it is: its first answer does
+            if receiver.shared && !self.proven.check(&id, battery.is_some()) {
+                continue;
+            }
 
-        vec![DeviceReading {
-            online: battery.is_some(),
-            level: battery.map(|b| b.level),
-            charging: battery.is_some_and(|b| b.charging),
-            detail: if battery.is_none() { Some(error.unwrap_or_else(|| t("d.asleep"))) } else { None },
-            ..DeviceReading::new(
-                ID,
-                model.map(str::to_string).unwrap_or_else(|| t("name.fa09Keyboard")),
-                DeviceKind::Keyboard,
-                t("via.24"),
-            )
-        }]
+            result.push(DeviceReading {
+                online: battery.is_some(),
+                level: battery.map(|b| b.level),
+                charging: battery.is_some_and(|b| b.charging),
+                detail: if battery.is_none() { Some(error.unwrap_or_else(|| t("d.asleep"))) } else { None },
+                ..DeviceReading::new(
+                    id,
+                    model.map(str::to_string).unwrap_or_else(|| name(receiver, product)),
+                    DeviceKind::Keyboard,
+                    t("via.24"),
+                )
+            });
+        }
+        result
     }
 
     fn delay(&self, _last: &[DeviceReading]) -> Duration {
@@ -127,14 +195,24 @@ impl Provider for AulaMchoseProvider {
 impl AulaMchoseProvider {
     /// Logs the receiver's HID collections and what was sent and received, the first time the keyboard is found
     /// off and the first time it is found on in a session, as the headsets and mice do.
-    fn log_once(&mut self, collections: &[HidInfo], vendor: Option<&HidInfo>, trace: &[String], online: bool) {
-        if !self.logged.insert(online) {
+    fn log_once(
+        &mut self,
+        id: (u16, u16),
+        collections: &[HidInfo],
+        vendor: Option<&HidInfo>,
+        product: Option<&str>,
+        trace: &[String],
+        online: bool,
+    ) {
+        let key = format!("{:04x}:{:04x}", id.0, id.1);
+        if !self.logged.insert(format!("{key}{online}")) {
             return;
         }
         log::write(&format!(
-            "AULA / MCHOSE {VID:04x}:{PID:04x}: found {}, {} HID collections",
+            "AULA / MCHOSE {key}: found {}, {} HID collections, product \"{}\"",
             if online { "on" } else { "off" },
-            collections.len()
+            collections.len(),
+            product.unwrap_or_default()
         ));
         for info in collections {
             let asked = vendor.is_some_and(|v| v.path == info.path);
@@ -149,13 +227,12 @@ impl AulaMchoseProvider {
 }
 
 /// The collection that takes the requests. A collection that Windows won't open has no usage page to go by, so it is
-/// never the one.
-fn vendor_collection(collections: &[HidInfo]) -> Option<&HidInfo> {
+/// never the one. Under IDs that unrelated devices carry, its reports have to be the frame's 20 bytes exactly: FF02
+/// is a page other firmware has too, with reports of 17 or 64 bytes, and a request must not go there.
+fn vendor_collection<'a>(receiver: &Receiver, collections: &'a [HidInfo]) -> Option<&'a HidInfo> {
+    let fits = |length: usize| if receiver.shared { length == FRAME_LENGTH } else { length >= FRAME_LENGTH };
     collections.iter().find(|i| {
-        i.usage_page == VENDOR_PAGE
-            && i.usage == VENDOR_USAGE
-            && i.output_length >= FRAME_LENGTH
-            && i.input_length >= FRAME_LENGTH
+        i.usage_page == VENDOR_PAGE && i.usage == VENDOR_USAGE && fits(i.output_length) && fits(i.input_length)
     })
 }
 
@@ -236,8 +313,8 @@ mod tests {
     fn collection(usage_page: u16, usage: u16, length: usize, access_denied: bool) -> HidInfo {
         HidInfo {
             path: format!(r"\\?\hid#vid_3554&pid_fa09&mi_01&col{usage_page:04x}{length:02}"),
-            vendor_id: VID,
-            product_id: PID,
+            vendor_id: 0x3554,
+            product_id: 0xFA09,
             usage_page,
             usage,
             input_length: length,
@@ -249,17 +326,59 @@ mod tests {
 
     #[test]
     fn vendor_collection_is_the_one_long_enough() {
+        let fa09 = receiver(0x3554, 0xFA09).unwrap();
         let all =
             [collection(0x0001, 0x0006, 9, false), collection(0xFF02, 2, 8, false), collection(0xFF02, 2, 20, false)];
-        assert_eq!(vendor_collection(&all).map(|i| i.path.as_str()), Some(all[2].path.as_str()));
-        assert!(vendor_collection(&all[..2]).is_none());
+        assert_eq!(vendor_collection(fa09, &all).map(|i| i.path.as_str()), Some(all[2].path.as_str()));
+        assert!(vendor_collection(fa09, &all[..2]).is_none());
         assert_eq!(no_link_reason(&all[..2]), "d.noLink");
+    }
+
+    #[test]
+    fn a_shared_id_needs_the_20_byte_collection() {
+        // A SONiX keyboard and a CompX mouse receiver with IDs this table has too
+        let sonix = [collection(0xFF60, 0x0061, 33, false)];
+        let mouse = [collection(0xFF02, 2, 17, false)];
+        let apple = receiver(0x05AC, 0x024F).unwrap();
+        let fb40 = receiver(0x3554, 0xFB40).unwrap();
+        assert!(apple.shared && vendor_collection(apple, &sonix).is_none());
+        assert!(fb40.shared && vendor_collection(fb40, &mouse).is_none());
+        assert!(!receiver(0x3554, 0xFA09).unwrap().shared);
+    }
+
+    #[test]
+    fn under_a_shared_id_longer_reports_on_the_same_page_are_someone_elses() {
+        // 258A is a chip maker's vendor ID: another device of its with a 64-byte FF02:0002 collection gets nothing
+        let other = [collection(0xFF02, 2, 64, false)];
+        let by = [collection(0xFF02, 2, 20, false)];
+        for r in RECEIVERS.iter().filter(|r| r.shared) {
+            assert!(vendor_collection(r, &other).is_none(), "{:04X}:{:04X}", r.vid, r.pid);
+            assert!(vendor_collection(r, &by).is_some(), "{:04X}:{:04X}", r.vid, r.pid);
+        }
+        // FA09 is this receiver's alone and keeps the rule it had
+        assert!(vendor_collection(receiver(0x3554, 0xFA09).unwrap(), &other).is_some());
+    }
+
+    #[test]
+    fn vgn_v98_pro_v3_on_battery_and_on_the_cable() {
+        // Captured by an owner on 258A:024F: 99%, then the same with the cable in
+        assert_eq!(parse_battery(&h("13 4A 01 00 02 63 00 00 00 00 00 00 00 00 00 00 00 00 00 C3")), b(99, false));
+        assert_eq!(parse_battery(&h("13 4A 01 00 02 63 10 00 00 00 00 00 00 00 00 00 00 00 00 D3")), b(99, true));
+    }
+
+    #[test]
+    fn names_from_the_product_string_or_the_row() {
+        let vgn = receiver(0x258A, 0x027B).unwrap();
+        assert_eq!(name(vgn, Some("2.4G Wireless Receiver")), "VGN V87 V2");
+        assert_eq!(name(receiver(0x41E4, 0x2001).unwrap(), None), "MCHOSE keyboard");
+        assert_eq!(name(receiver(0x3554, 0xFA09).unwrap(), Some("2.4G Wireless Receiver")), t("name.fa09Keyboard"));
+        assert_eq!(name(receiver(0x3554, 0xFB40).unwrap(), Some("AULA F75 Max")), "AULA F75 Max");
     }
 
     #[test]
     fn a_locked_collection_is_never_the_vendor_one() {
         let all = [collection(0x0001, 0x0006, 9, false), collection(0, 0, 0, true)];
-        assert!(vendor_collection(&all).is_none());
+        assert!(vendor_collection(receiver(0x3554, 0xFA09).unwrap(), &all).is_none());
         assert_eq!(no_link_reason(&all), "d.needsAdmin");
     }
 

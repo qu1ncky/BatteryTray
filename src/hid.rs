@@ -32,6 +32,12 @@ impl HidInfo {
     pub fn interface_number(&self) -> i32 {
         interface_number(&self.path)
     }
+
+    /// The collection belongs to a device connected over Bluetooth (classic HID or LE), not over USB.
+    pub fn is_bluetooth(&self) -> bool {
+        let path = self.path.to_ascii_lowercase();
+        path.contains("{00001124-") || path.contains("{00001812-")
+    }
 }
 
 impl fmt::Display for HidInfo {
@@ -277,10 +283,16 @@ impl HidDevice {
     }
 
     pub fn get_feature(&self, report_id: u8) -> Option<Vec<u8>> {
-        if self.info.feature_length == 0 {
+        self.get_feature_of(report_id, self.info.feature_length)
+    }
+
+    /// Reads a feature report into a buffer of `length` bytes: for a report shorter than the collection's longest
+    /// one, on a device that refuses to be asked for more than the report has.
+    pub fn get_feature_of(&self, report_id: u8, length: usize) -> Option<Vec<u8>> {
+        if self.info.feature_length == 0 || length == 0 {
             return None;
         }
-        let mut buf = vec![0u8; self.info.feature_length];
+        let mut buf = vec![0u8; length];
         buf[0] = report_id;
         let ok = unsafe { ffi::HidD_GetFeature(self.handle, buf.as_mut_ptr() as *mut c_void, buf.len() as u32) };
         (ok != 0).then_some(buf)
@@ -597,6 +609,14 @@ mod tests {
         );
         assert_eq!(parse_ids(r"\\?\HID#VID_046D&PID_C539&MI_02&Col01#8&abc#{x}"), Some((0x046D, 0xC539)));
         assert_eq!(parse_ids(r"\\?\hid#acpi0c50#3&1&0#{x}"), None);
+    }
+
+    #[test]
+    fn bluetooth_paths_are_told_from_usb_ones() {
+        let at = |path: &str| HidInfo { path: path.to_string(), ..HidInfo::default() }.is_bluetooth();
+        assert!(at(r"\\?\hid#{00001124-0000-1000-8000-00805f9b34fb}_vid&0002054c_pid&0ce6#9&2&0&0000#{4d1e55b2}"));
+        assert!(at(r"\\?\HID#{00001812-0000-1000-8000-00805F9B34FB}_dev_vid&02045e_pid&0b13_rev&0509#a&1&0&0000#{x}"));
+        assert!(!at(r"\\?\hid#vid_1532&pid_0550&mi_03#7&1a2b&0&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}"));
     }
 
     #[test]

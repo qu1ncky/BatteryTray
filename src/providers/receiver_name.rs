@@ -7,7 +7,7 @@ use crate::loc::{t, tf};
 /// Words that say how a device is connected or what kind it is, not whose it is.
 const PLAIN_WORDS: &[&str] = &[
     "2.4G", "2.4GHz", "1K", "2K", "4K", "8K", "USB", "HID", "Wireless", "Receiver", "Dongle", "Mouse", "Keyboard",
-    "Device", "Gaming", "Optical",
+    "Device", "Gaming", "Optical", "Nano", "NK", "Nearlink", "HS", "3-mode", "Compx", "dongle-L", "dongle-H",
 ];
 
 /// What the product string says besides such words: "AJAZZ 2.4G 8K" -> "AJAZZ", "2.4G Wireless Mouse" -> "".
@@ -67,6 +67,10 @@ mod tests {
         assert_eq!(brand(Some("MonsGeek 2.4G Wireless Keyboard")), "MonsGeek");
         assert_eq!(brand(Some("")), "");
         assert_eq!(brand(None), "");
+        // What receivers of ATK and CompX call themselves
+        assert_eq!(brand(Some("Wireless mouse 8k NANO dongle-L")), "");
+        assert_eq!(brand(Some("Compx 2.4G Wireless 8K")), "");
+        assert_eq!(brand(Some("Nearlink Mouse Dongle")), "");
     }
 
     #[test]

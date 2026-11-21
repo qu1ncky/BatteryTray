@@ -67,7 +67,7 @@ impl Provider for LogitechProvider {
         let mut result = Vec::new();
         let collections: Vec<HidInfo> = hid::enumerate(|v, p| {
             v == LOGITECH_VID && !(0x0800..=0x09FF).contains(&p) // webcams lock up
-                && !super::headset::handled(v, p)
+                && !super::devices::handled(v, p)
         })
         .into_iter()
         // Bluetooth LE devices: Windows reports their battery itself (the Bluetooth provider)

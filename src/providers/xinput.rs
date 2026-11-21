@@ -39,10 +39,12 @@ impl Provider for XInputProvider {
             if b.kind == TYPE_DISCONNECTED || b.kind == TYPE_WIRED {
                 continue;
             }
+            // Bluetooth controllers have their exact level from Windows, and a controller that a row of the device
+            // tables has read has it from its own receiver
             let mut caps = CapabilitiesEx::default();
             if api.capabilities.is_some_and(|get| unsafe { get(1, slot, 0, &mut caps) } == ERROR_SUCCESS)
-                && caps.vendor_id == 0x045E
-                && BLUETOOTH_PIDS.contains(&caps.product_id)
+                && ((caps.vendor_id == 0x045E && BLUETOOTH_PIDS.contains(&caps.product_id))
+                    || super::devices::read_here(caps.vendor_id, caps.product_id))
             {
                 continue;
             }

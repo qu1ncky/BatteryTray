@@ -32,6 +32,7 @@ version and writes the crates' licenses with [cargo-about](https://github.com/Em
 |---|---|
 | `src/hid.rs`, `src/win.rs` | HID enumeration and I/O over hand-declared Win32 calls: overlapped reads with a timeout that cancel what they started, so a late reply is never read as the answer to the next request |
 | `src/providers/` | one module per device family; each says where its protocol facts come from |
+| `src/providers/devices/` | devices that answer one request on one HID collection, as rows of tables: `mod.rs` is the engine (`Spec`, `State`, `Io`, `TableProvider`), the other modules are tables by vendor or platform, some with a provider of their own for what doesn't fit a row (several devices behind one receiver, devices that are only listened to) |
 | `src/monitor.rs` | polls every provider on its own thread and schedule; providers whose devices push changes cut their wait short |
 | `src/state.rs`, `src/settings.rs` | `state.json` and `settings.json` in `%LOCALAPPDATA%\BatteryTray` |
 | `src/app.rs` | startup, single instance, the tray, reminders, the overlay and updates; everything UI runs in Slint's event loop |
