@@ -76,6 +76,17 @@ static MODELS: &[((u16, u16), Model)] = &[
         (0x3554, 0xF58F),
         Model { key: "vxe:r1se", name: "VXE R1 SE / SE+", transport: Transport::Output, wireless: false, step: 1 },
     ),
+    // 373B is ATK's own vendor ID. This receiver calls itself "Wireless mouse 8k NANO dongle-L" (issue #30)
+    (
+        (0x373B, 0x11FE),
+        Model {
+            key: "atk:a9-ultra-max-2",
+            name: "ATK A9 Ultra Max 2.0",
+            transport: Transport::Output,
+            wireless: true,
+            step: 1,
+        },
+    ),
     // Sold under many names (Redragon M693, Fantech Helios Go XD5, ...), so none is shown
     (
         (0x25A7, 0xFA7C),
@@ -195,9 +206,13 @@ impl OemMouseProvider {
 /// no usage page to go by, so it is never one of them.
 fn channels(transport: Transport, collections: &[HidInfo]) -> (Option<&HidInfo>, Option<&HidInfo>) {
     if transport == Transport::Output {
-        let vendor = collections.iter().find(|i| {
-            i.usage_page == COMMAND_PAGE && i.output_length >= FRAME_LENGTH && i.input_length >= FRAME_LENGTH
-        });
+        // Some ATK mice have a second FF02 collection with longer reports of another ID, which doesn't take the frame
+        let takes = |i: &HidInfo, exact: bool| {
+            let fits = |length: usize| if exact { length == FRAME_LENGTH } else { length >= FRAME_LENGTH };
+            i.usage_page == COMMAND_PAGE && fits(i.output_length) && fits(i.input_length)
+        };
+        let vendor =
+            collections.iter().find(|i| takes(i, true)).or_else(|| collections.iter().find(|i| takes(i, false)));
         return (vendor, vendor);
     }
     let send = collections.iter().find(|i| i.usage_page == COMMAND_PAGE && i.feature_length >= FRAME_LENGTH);
@@ -325,6 +340,23 @@ mod tests {
     #[test]
     fn atk_mouse_through_its_dongle() {
         assert_eq!(parse(&h("08 04 00 00 00 02 64 00 10 8E 00 00 00 00 00 00 45"), 1), b(100, false));
+    }
+
+    #[test]
+    fn atk_a9_ultra_max_2_on_its_nano_dongle() {
+        // Posted by an owner (vigil-watt issue 71): 50% on battery, 50% charging, full on the cable
+        assert_eq!(parse(&h("08 04 00 00 00 02 32 00 0F 9B 00 00 00 00 00 00 6B"), 1), b(50, false));
+        assert_eq!(parse(&h("08 04 00 00 00 02 32 01 0F 96 00 00 00 00 00 00 6F"), 1), b(50, true));
+        assert_eq!(parse(&h("08 04 00 00 00 02 64 01 11 2A 00 00 00 00 00 00 A7"), 1), b(100, true));
+        let dongle = model(0x373B, 0x11FE).unwrap();
+        assert!(dongle.wireless && dongle.transport == Transport::Output && dongle.step == 1);
+    }
+
+    #[test]
+    fn the_collection_with_17_byte_reports_is_preferred() {
+        let all = [collection(1, 0xFF02, 19, 19, 0, false), collection(2, 0xFF02, 17, 17, 0, false)];
+        let vendor = Some(all[1].path.as_str());
+        assert_eq!(paths(channels(Transport::Output, &all)), (vendor, vendor));
     }
 
     #[test]
