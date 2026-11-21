@@ -49,9 +49,11 @@ use crate::hid::HidInfo;
 use crate::loc::t;
 use crate::providers::{secs, Provider};
 use crate::reading::DeviceReading;
+use crate::state::StateStore;
 use crate::win;
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicU16, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 /// The mice, asked on every poll with the other mice. Nothing is published about what their receivers answer while
@@ -254,10 +256,11 @@ pub struct KeyboardProvider {
     strangers: bool,
 }
 
-impl Default for KeyboardProvider {
-    fn default() -> Self {
+impl KeyboardProvider {
+    /// `state`: the levels this PC has seen, by which the engine knows a keyboard of a shared row that is asleep.
+    pub fn new(state: Arc<StateStore>) -> Self {
         Self {
-            table: TableProvider::new("Keyboards", TABLES).every(secs(300), secs(60)),
+            table: TableProvider::new("Keyboards", TABLES).every(secs(300), secs(60)).remembering(state),
             answered: HashSet::new(),
             strangers: false,
         }
@@ -1055,7 +1058,7 @@ mod tests {
 
     #[test]
     fn a_keyboard_that_a_request_may_keep_awake_is_left_alone_once_it_has_answered() {
-        let provider = KeyboardProvider::default();
+        let provider = KeyboardProvider::new(Arc::new(StateStore::empty()));
         // HaloBattery's requests kept an ATK V75X from falling asleep
         assert_eq!(provider.delay(&[reading("evision-320f-5088", true)]), KEPT_AWAKE_WAIT);
         assert_eq!(provider.delay(&[reading("cherry-pixiu-75", true), reading("atk-z87", true)]), KEPT_AWAKE_WAIT);
@@ -1073,7 +1076,7 @@ mod tests {
 
     #[test]
     fn a_device_on_shared_ids_that_has_never_answered_is_asked_rarely() {
-        let provider = KeyboardProvider { strangers: true, ..KeyboardProvider::default() };
+        let provider = KeyboardProvider { strangers: true, ..KeyboardProvider::new(Arc::new(StateStore::empty())) };
         assert_eq!(provider.delay(&[]), STRANGER_WAIT);
         // Next to a keyboard that is waited for it is asked as often as that one
         assert_eq!(provider.delay(&[reading("cherry-pixiu-75", false)]), secs(60));

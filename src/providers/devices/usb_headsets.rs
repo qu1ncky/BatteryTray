@@ -139,6 +139,7 @@ pub static SPECS: &[Spec] = &[
     // ---- Poly ----
     Spec {
         key: "poly-bt600",
+        via: "via.adapter",
         name: "Poly Voyager (BT600 adapter)",
         vid: 0x047F,
         pids: &[0x02EE, 0x02F7],
@@ -151,6 +152,7 @@ pub static SPECS: &[Spec] = &[
     // A Link dongle pairs with any Jabra headset, which gives its own name once it answers
     Spec {
         key: "jabra-link-380",
+        via: "via.adapter",
         name: "Jabra headset (Link 380)",
         vid: 0x0B0E,
         pids: &[0x24C7, 0x24C8, 0x24C9, 0x24CA],
@@ -161,6 +163,7 @@ pub static SPECS: &[Spec] = &[
     },
     Spec {
         key: "jabra-link-390",
+        via: "via.adapter",
         name: "Jabra headset (Link 390)",
         vid: 0x0B0E,
         pids: &[0x2E50, 0x2E51, 0x2E56, 0x2E57],

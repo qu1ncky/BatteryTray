@@ -51,13 +51,15 @@ pub fn create(state: &Arc<StateStore>) -> Vec<Box<dyn Provider>> {
         Box::new(aula_mchose::AulaMchoseProvider::default()),
         Box::new(sonix_keyboard::SonixKeyboardProvider::default()),
         Box::new(razer_peripheral::RazerPeripheralProvider),
-        Box::new(devices::TableProvider::headsets()),
+        Box::new(devices::TableProvider::headsets().remembering(state.clone())),
         Box::new(devices::razer_audio::BlackSharkV3Provider::default()),
         Box::new(devices::usb_headsets::Pulse3dProvider::default()),
-        Box::new(devices::TableProvider::peripherals()),
+        Box::new(devices::TableProvider::peripherals().remembering(state.clone())),
+        // After the tables: for an Id both give, the list takes the reading of the later provider, and a device
+        // read behind a shared receiver is to win over its own receiver sitting idle
         Box::new(devices::asus::AsusReceiverProvider::default()),
         Box::new(devices::corsair::CorsairProvider::default()),
-        Box::new(devices::keyboards::KeyboardProvider::default()),
+        Box::new(devices::keyboards::KeyboardProvider::new(state.clone())),
         Box::new(devices::mice_platforms::KeychronLinkProvider::default()),
         Box::new(devices::passive_mice::PassiveMiceProvider::default()),
         Box::new(devices::controllers::SteamControllerProvider::default()),

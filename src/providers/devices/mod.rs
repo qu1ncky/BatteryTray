@@ -20,13 +20,16 @@ pub mod passive_mice;
 pub mod razer_audio;
 pub mod usb_headsets;
 
-use super::{group_by, headset, hex_trimmed as hex, one_per_id, remaining_ms, secs, Provider};
+use super::{group_by, headset, hex_trimmed as hex, remaining_ms, secs, Provider};
 use crate::hid::{self, HidDevice, HidInfo};
 use crate::loc::{t, tf};
 use crate::log;
 use crate::reading::{DeviceKind, DeviceReading};
+use crate::state::StateStore;
 use crate::win::{self, Error};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 /// How long a reply is waited for, unless the query sets its own with `Io::set_timeout`.
@@ -36,6 +39,7 @@ static HEADSETS: &[&[Spec]] =
     &[headset::SPECS, hyperx::SPECS, centurion::SPECS, razer_audio::SPECS, usb_headsets::SPECS];
 
 static PERIPHERALS: &[&[Spec]] = &[
+    hyperx::MICE,
     asus::SPECS,
     corsair::SPECS,
     compx_page::SPECS,
@@ -94,7 +98,9 @@ pub type Query = fn(&mut Io) -> win::Result<State>;
 /// vendor collection (or any collection at all when `interface` is given). `interface`: the USB interface, -1 = any.
 /// `accept`: when the collection can't be told by page and usage alone (by its report lengths, say), the rule that
 /// replaces them; `interface` still counts. `shared`: unrelated devices carry the same IDs, so the device is listed
-/// only while a collection that fits is there, and never as one that couldn't be reached.
+/// only while a collection that fits is there, and only once it has answered (now, or ever before on this PC): what
+/// never answers may be somebody else's device, which is then asked less and less often. `via`: the text key for how
+/// the device is connected, "" = "2.4 GHz", or "cable" for `cable_pids`.
 pub struct Spec {
     pub key: &'static str,
     pub name: &'static str,
@@ -107,6 +113,7 @@ pub struct Spec {
     pub interface: i32,
     pub accept: Option<fn(&HidInfo) -> bool>,
     pub shared: bool,
+    pub via: &'static str,
     pub query: Query,
 }
 
@@ -130,6 +137,7 @@ impl Spec {
             interface: -1,
             accept: None,
             shared: false,
+            via: "",
             query: |_| Ok(off()),
         }
     }
@@ -157,11 +165,50 @@ pub fn handled(vid: u16, pid: u16) -> bool {
     find(HEADSETS, vid, pid).or_else(|| find(PERIPHERALS, vid, pid)).is_some()
 }
 
+/// The USB IDs a table row has had an answer from in this session.
+static READ: Mutex<Vec<(u16, u16)>> = Mutex::new(Vec::new());
+
+/// Whether a table row has read this device in this session. The providers that take any device of a kind (the
+/// standard HID battery, XInput) leave it alone from then on, so it isn't listed twice; until then they go on
+/// showing what they can, in case the row doesn't work on this device.
+pub fn read_here(vid: u16, pid: u16) -> bool {
+    READ.lock().unwrap_or_else(|e| e.into_inner()).contains(&(vid, pid))
+}
+
+fn mark_read(vid: u16, pid: u16) {
+    let mut read = READ.lock().unwrap_or_else(|e| e.into_inner());
+    if !read.contains(&(vid, pid)) {
+        read.push((vid, pid));
+    }
+}
+
+/// How long a `shared` row's device that has never answered is left alone after `tries` unanswered requests in a
+/// row: two minutes, then twice as long each time, up to an hour. It may be somebody else's device with the same
+/// IDs, and a request it doesn't understand is known to wake some keyboards.
+fn stranger_wait(tries: u32) -> Duration {
+    secs((120u64 << tries.min(5)).min(3600))
+}
+
+/// Whether a `shared` row's device goes into the list: once it has answered in this session, or when this PC has
+/// seen its level before.
+fn proven(online: bool, answered: bool, known: bool) -> bool {
+    online || answered || known
+}
+
 pub struct TableProvider {
     name: &'static str,
     tables: &'static [&'static [Spec]],
     /// How long to wait before the next poll: with a device online, and with none.
     delays: (Duration, Duration),
+    /// The levels this PC has seen, for telling a `shared` row's device from somebody else's.
+    state: Option<Arc<StateStore>>,
+    /// The Ids that have answered in this session.
+    answered: HashSet<String>,
+    /// `shared` rows' devices that have never answered, by USB IDs: how many requests went unanswered and when
+    /// the next one may go.
+    strangers: HashMap<(u16, u16), (u32, Instant)>,
+    /// The names devices gave for themselves, by Id: kept for when they are off.
+    names: HashMap<String, String>,
     /// What this session's log already has: see `log_once`.
     logged: HashSet<String>,
 }
@@ -172,18 +219,32 @@ impl TableProvider {
     }
 
     pub fn peripherals() -> Self {
-        Self::new("Devices", PERIPHERALS)
+        Self::new("Devices", PERIPHERALS).every(secs(60), secs(60))
     }
 
     /// A provider over tables of its own, polled every minute, or every half a minute while nothing is online.
     pub fn new(name: &'static str, tables: &'static [&'static [Spec]]) -> Self {
-        Self { name, tables, delays: (secs(60), secs(30)), logged: HashSet::new() }
+        Self {
+            name,
+            tables,
+            delays: (secs(60), secs(30)),
+            state: None,
+            answered: HashSet::new(),
+            strangers: HashMap::new(),
+            names: HashMap::new(),
+            logged: HashSet::new(),
+        }
     }
 
     /// The same with other waits: `online` with a device online, `offline` with none. For devices that a request
     /// may keep awake.
     pub fn every(self, online: Duration, offline: Duration) -> Self {
         Self { delays: (online, offline), ..self }
+    }
+
+    /// With the levels this PC has seen: a `shared` row's device that has had one is listed while it is off too.
+    pub fn remembering(self, state: Arc<StateStore>) -> Self {
+        Self { state: Some(state), ..self }
     }
 
     /// Logs how a device was queried - its HID collections, the requests and the replies - the first time it is
@@ -205,6 +266,23 @@ impl TableProvider {
             log::write(&format!("  mi={} {info}: {trace}", info.interface_number()));
         }
     }
+
+    /// One line, once, about a device with a `shared` row's IDs and no collection its query could be tried on:
+    /// most likely somebody else's device, but if it is the row's, this is all the log would have of it.
+    fn log_unfit(&mut self, spec: &Spec, collections: &[HidInfo]) {
+        let id = format!("{:04x}:{:04x}", collections[0].vendor_id, collections[0].product_id);
+        if !self.logged.insert(format!("{id}unfit")) {
+            return;
+        }
+        let list = collections.iter().map(|i| format!("mi={} {i}", i.interface_number())).collect::<Vec<_>>();
+        log::write(&format!("{} {id}: no collection fits, not listed: {}", t(spec.name), list.join("; ")));
+    }
+
+    /// Whether the device of a `shared` row has shown that it is the row's device.
+    fn is_proven(&self, id: &str, online: bool) -> bool {
+        let known = self.state.as_ref().is_some_and(|s| s.get(id).is_some());
+        proven(online, self.answered.contains(id), known)
+    }
 }
 
 impl Provider for TableProvider {
@@ -213,31 +291,65 @@ impl Provider for TableProvider {
     }
 
     fn poll(&mut self) -> Vec<DeviceReading> {
-        let mut result = Vec::new();
+        let mut result: Vec<(DeviceReading, bool)> = Vec::new();
         let tables = self.tables;
-        let found = hid::enumerate(|v, p| find(tables, v, p).is_some());
+        // A device on Bluetooth has the same IDs in its path, and Windows shows its battery itself
+        let found: Vec<HidInfo> =
+            hid::enumerate(|v, p| find(tables, v, p).is_some()).into_iter().filter(|i| !i.is_bluetooth()).collect();
+        let present: HashSet<(u16, u16)> = found.iter().map(|i| (i.vendor_id, i.product_id)).collect();
+        self.strangers.retain(|ids, _| present.contains(ids));
         for ((vid, pid), collections) in group_by(found, |i| (i.vendor_id, i.product_id)) {
             let Some(spec) = find(tables, vid, pid) else { continue };
-            if spec.shared && !fits(spec, &collections) {
-                continue;
+            let id = spec.id();
+            if spec.shared {
+                if !fits(spec, &collections) {
+                    self.log_unfit(spec, &collections);
+                    continue;
+                }
+                let waiting = self.strangers.get(&(vid, pid)).is_some_and(|s| Instant::now() < s.1);
+                if waiting && !self.is_proven(&id, false) {
+                    continue;
+                }
             }
             let mut asked = Vec::new();
             let state = query(spec, &collections, &mut asked);
             self.log_once(spec, &collections, &asked, state.online);
-            let via = if spec.cable_pids.contains(&pid) { "via.cable" } else { "via.24" };
-            result.push(DeviceReading {
+            if state.online {
+                self.answered.insert(id.clone());
+                self.strangers.remove(&(vid, pid));
+                mark_read(vid, pid);
+            }
+            if spec.shared && !self.is_proven(&id, state.online) {
+                let tries = self.strangers.get(&(vid, pid)).map_or(0, |s| s.0);
+                self.strangers.insert((vid, pid), (tries + 1, Instant::now() + stranger_wait(tries)));
+                continue;
+            }
+            // A device that names itself keeps that name while it is off
+            let name = match state.name {
+                Some(name) => {
+                    self.names.insert(id.clone(), name.clone());
+                    name
+                }
+                None => self.names.get(&id).cloned().unwrap_or_else(|| t(spec.name)),
+            };
+            let cable = spec.cable_pids.contains(&pid);
+            let via = match (cable, spec.via) {
+                (true, _) => "via.cable",
+                (false, "") => "via.24",
+                (false, via) => via,
+            };
+            let reading = DeviceReading {
                 online: state.online,
                 level: state.level,
                 estimate: state.estimate && state.level.is_some(),
                 charging: state.charging,
                 full_on_charger: state.full,
                 detail: state.detail.as_deref().map(t),
-                ..DeviceReading::new(spec.id(), state.name.unwrap_or_else(|| t(spec.name)), spec.kind, t(via))
-            });
+                ..DeviceReading::new(id, name, spec.kind, t(via))
+            };
+            result.push((reading, cable));
         }
-        // A device charging on its cable while its receiver stays plugged in is listed twice under one Id, and the
-        // receiver finds it off: keep the reading that reached the device
-        one_per_id(result, |r| r.online)
+        one_per_device(result)
     }
 
     fn delay(&self, last: &[DeviceReading]) -> Duration {
@@ -247,6 +359,24 @@ impl Provider for TableProvider {
             self.delays.1
         }
     }
+}
+
+/// One reading per Id, in the order the Ids first appear. A device charging on its cable while its receiver stays
+/// plugged in is listed twice under one Id: the reading that reached the device wins, and when both did (a headset
+/// that keeps its radio link on the cable), the cable's.
+fn one_per_device(readings: Vec<(DeviceReading, bool)>) -> Vec<DeviceReading> {
+    let mut result: Vec<(DeviceReading, bool)> = Vec::new();
+    for (reading, cable) in readings {
+        match result.iter_mut().find(|other| other.0.id == reading.id) {
+            Some(other) => {
+                if (reading.online, cable) > (other.0.online, other.1) {
+                    *other = (reading, cable);
+                }
+            }
+            None => result.push((reading, cable)),
+        }
+    }
+    result.into_iter().map(|r| r.0).collect()
 }
 
 /// The collections of a device that the row's query is tried on, the ones that take output reports first. A
@@ -288,7 +418,7 @@ fn query(spec: &Spec, collections: &[HidInfo], asked: &mut Vec<(String, Vec<Stri
     let mut error = off();
     for info in candidates.into_iter().filter(|i| !i.access_denied) {
         let mut trace = Vec::new();
-        let result = HidDevice::open(info).and_then(|dev| (spec.query)(&mut Io::new(dev, &mut trace)));
+        let result = guarded(|| HidDevice::open(info).and_then(|dev| (spec.query)(&mut Io::new(dev, &mut trace))));
         match result {
             Ok(state) if state.online => {
                 asked.push((info.path.clone(), trace));
@@ -305,6 +435,13 @@ fn query(spec: &Spec, collections: &[HidInfo], asked: &mut Vec<(String, Vec<Stri
         asked.push((info.path.clone(), trace));
     }
     clean.unwrap_or(error)
+}
+
+/// Runs the query of one device. A reply shorter or stranger than a query expects must cost that one device its
+/// reading, not every device of the provider, so a panic ends here as an error (the panic hook has logged it).
+fn guarded<T>(query: impl FnOnce() -> win::Result<T>) -> win::Result<T> {
+    catch_unwind(AssertUnwindSafe(query))
+        .unwrap_or_else(|_| Err(Error::with_message(0, "the query failed on a reply it didn't expect")))
 }
 
 /// Request/response helpers over one HID collection, with hidapi's view of input reports.
@@ -550,6 +687,60 @@ mod tests {
         assert!(!fits(&spec, &[collection(1, 0xFF60, 0x0061, 33, false)]));
         // A locked collection may be anyone's
         assert!(!fits(&spec, &[collection(1, 0, 0, 0, true)]));
+    }
+
+    #[test]
+    fn a_shared_rows_device_is_listed_once_it_has_answered() {
+        // Never answered and never seen: it may be somebody else's device
+        assert!(!proven(false, false, false));
+        assert!(proven(true, false, false));
+        // Asleep now, but it answered earlier in this session, or this PC has had its level before
+        assert!(proven(false, true, false));
+        assert!(proven(false, false, true));
+    }
+
+    #[test]
+    fn a_device_that_never_answers_is_asked_less_and_less_often() {
+        let waits: Vec<u64> = (0..8).map(|tries| stranger_wait(tries).as_secs()).collect();
+        assert_eq!(waits, [120, 240, 480, 960, 1920, 3600, 3600, 3600]);
+    }
+
+    #[test]
+    fn the_reading_that_reached_the_device_wins_and_then_the_cables() {
+        let reading = |online: bool, via: &str| DeviceReading {
+            online,
+            ..DeviceReading::new("dev:mouse", "Mouse", DeviceKind::Mouse, via)
+        };
+        let via = |readings: Vec<(DeviceReading, bool)>| {
+            let one = one_per_device(readings);
+            assert_eq!(one.len(), 1);
+            (one[0].online, one[0].via.clone())
+        };
+        assert_eq!(via(vec![(reading(false, "2.4"), false), (reading(true, "cable"), true)]), (true, "cable".into()));
+        assert_eq!(via(vec![(reading(true, "2.4"), false), (reading(false, "cable"), true)]), (true, "2.4".into()));
+        assert_eq!(via(vec![(reading(true, "2.4"), false), (reading(true, "cable"), true)]), (true, "cable".into()));
+        assert_eq!(via(vec![(reading(true, "cable"), true), (reading(true, "2.4"), false)]), (true, "cable".into()));
+        let two = one_per_device(vec![
+            (reading(true, "2.4"), false),
+            (DeviceReading::new("dev:other", "Other", DeviceKind::Mouse, "2.4"), false),
+        ]);
+        assert_eq!(two.len(), 2);
+    }
+
+    #[test]
+    fn a_query_that_panics_costs_one_device_its_reading() {
+        let short: Vec<u8> = vec![0x01];
+        let failed = guarded(|| Ok(short[5]));
+        assert!(failed.is_err_and(|e| e.message.contains("didn't expect")));
+        assert_eq!(guarded(|| Ok(short[0])).ok(), Some(0x01));
+    }
+
+    #[test]
+    fn a_device_counts_as_read_here_once_a_row_has_had_its_answer() {
+        assert!(!read_here(0x1234, 0xFFF1));
+        mark_read(0x1234, 0xFFF1);
+        mark_read(0x1234, 0xFFF1);
+        assert!(read_here(0x1234, 0xFFF1) && !read_here(0x1234, 0xFFF2));
     }
 
     #[test]

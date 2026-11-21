@@ -13,7 +13,7 @@ use std::time::Duration;
 const GENERIC_DEVICE_PAGE: u16 = 0x06;
 const BATTERY_STRENGTH: u16 = 0x20;
 
-/// Vendors read by their own providers.
+/// Vendors read by their own providers. A device that a row of the tables in `devices` has read is left alone too.
 const OWN_PROVIDERS: [u16; 7] = [0x1532, 0x1038, 0x046D, 0x054C, 0x03F0, 0x0951, 0x1B1C];
 
 pub struct StandardHidBatteryProvider;
@@ -25,7 +25,7 @@ impl Provider for StandardHidBatteryProvider {
 
     fn poll(&mut self) -> Vec<DeviceReading> {
         let mut result = Vec::new();
-        for info in hid::enumerate(|v, _| !OWN_PROVIDERS.contains(&v)) {
+        for info in hid::enumerate(|v, p| !OWN_PROVIDERS.contains(&v) && !super::devices::read_here(v, p)) {
             if info.access_denied || info.feature_length == 0 || contains_ignore_case(&info.path, "{00001812-") {
                 continue; // BLE HID: Windows shows those itself
             }

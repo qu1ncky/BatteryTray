@@ -98,7 +98,11 @@ pub static SPECS: &[Spec] = &[
         query: stinger_core,
         ..Spec::HEADSET
     },
-    // ---- Mice ----
+];
+
+/// The mice are a table of their own, asked with the other mice: confirming a Pulsefire Haste 2's level takes
+/// seconds, which no headset should wait for.
+pub static MICE: &[Spec] = &[
     // The mouse on its cable leaves the receiver and shows up under the cable ID; both share a key, and the
     // reading that reaches the mouse wins (see the engine's poll)
     Spec {
@@ -817,7 +821,7 @@ mod tests {
     #[test]
     fn a_mouse_on_its_cable_shares_the_key_of_its_receiver() {
         for (cable, receiver) in [(HASTE_2_CABLE, 0x0F98), (HASTE_CABLE, 0x028E)] {
-            let row = SPECS.iter().find(|s| s.pids.contains(&cable)).unwrap();
+            let row = MICE.iter().find(|s| s.pids.contains(&cable)).unwrap();
             assert!(row.pids.contains(&receiver) && row.cable_pids == [cable], "{}", row.key);
         }
     }
