@@ -38,6 +38,7 @@ See how much battery your wireless headset, mouse, keyboard and controller have 
 | Attack Shark V3 Pro mouse | 2.4 GHz receiver (`1D57:FA60`), charging dock | ✅ tested by a user |
 | Other **Attack Shark** mice on the Xenta receiver: X11, X3 Max, X6 / R1 and others | 2.4 GHz receiver (`1D57:FA60`) or cable | ⚠️ untested |
 | **VXE** mice: R1 PRO MAX, R1 SE / SE+ | 2.4 GHz receiver (`3554:F58A`, `373B:1085`, `3554:F58E`) or cable | ⚠️ untested |
+| **ATK A9 Ultra Max 2.0** mouse | 2.4 GHz receiver (`373B:11FE`) | ⚠️ untested |
 | Mice on the **Areson** receiver `25A7:FA7C` (Redragon M693, Fantech Helios Go XD5 and others under their own names) | 2.4 GHz receiver or cable | ⚠️ untested |
 | **Ardor Renegade** mouse | 2.4 GHz receiver (`25A7:FA4A`) | ✅ level tested by a user; the mouse reports it in steps of 10% |
 | Mice on the receiver `A8A5:2255`: **AJAZZ AJ139 V2 MC**, K-Snake X11, Noir M2-NEX, MCHOSE G7 Pro | 2.4 GHz receiver or cable (`A8A4:2255`) | ⚠️ untested |

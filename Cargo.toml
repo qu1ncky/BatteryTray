@@ -2,7 +2,7 @@
 name = "batterytray"
 # The release version: the updater (this one and the C# one before it) only installs an exe whose FileVersion
 # equals the release's. The C# app ended at 1.8.8; 1.99.x were this app's betas.
-version = "2.1.1"
+version = "2.1.2"
 edition = "2021"
 rust-version = "1.88"
 license = "MIT"
