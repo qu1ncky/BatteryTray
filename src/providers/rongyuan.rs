@@ -4,7 +4,7 @@
 //!   SetFeature [00 F7 00 ...] on interface 2 (vendor page 0xFFFF, usage 2, 64-byte feature report), then
 //!   GetFeature -> [00 canRead kbBattery mouseBattery kbOffline mouseOffline canSend ...] (offline: 0 = connected).
 //! Taken from the official ATTACK SHARK web driver (qmk.top), which sends it every 5 s; verified on the Attack Shark
-//! R3 receiver 3151:402D. A read-only status query.
+//! R3 receiver 3151:402D. Akko's web driver reads its receivers the same way. A read-only status query.
 //! On a USB cable the mouse leaves the receiver (it reports the mouse offline) and shows up as its own USB device,
 //! which charges it but has no battery query, so a mouse on the cable is shown as charging with no level.
 //! A keyboard in 2.4 GHz mode stays on the receiver while its cable charges it; the X82 PRO HE then reports a level
@@ -34,6 +34,7 @@ const RECEIVERS: &[u32] = &[
     0x374AA229, 0x374AA234, 0x374AA237, 0x374AA251, 0x374AA263, 0x374AA268, 0x374AA311, 0x374AA314, 0x374AA319,
     0x374AA322, 0x374AA329, 0x374AA355, 0x379A1804, 0x379A1807, 0x38A90002, 0x38EE0000, 0x38EE0002, 0x38EE0039,
     0x391D1A04, 0x391D1A08, 0x391D1A0E, 0x391D1A13, 0x391D1A25, 0x391D1A2B, 0x391D1A34, 0x391D2017, 0x391D2A05,
+    0x39AB7000, 0x39AB7003, 0x39AB7006, 0x39AB7007, 0x39AB7008, 0x39AB7009, 0x38EE0004,
 ];
 
 /// (vid << 16) | pid of the mice the web driver drives on a USB cable.
@@ -41,7 +42,7 @@ const WIRED_MICE: &[u32] = &[
     0x3151400B, 0x31514026, 0x3151402A, 0x31515032, 0x31515035, 0x3151503A, 0x31515043, 0x31515058, 0x39AB6001,
     0x25AA4005, 0x25AA4006, 0x25AA4007, 0x25AA4019, 0x347AA301, 0x347AA304, 0x374AA310, 0x374AA313, 0x374AA318,
     0x374AA321, 0x374AA328, 0x374AA354, 0x391D1004, 0x391D100F, 0x391D1008, 0x391D103A, 0x391D1015, 0x391D1028,
-    0x391D102F, 0x38A90019, 0x38A90021, 0x379A3357, 0x38EE0038,
+    0x391D102F, 0x38A90019, 0x38A90021, 0x379A3357, 0x38EE0038, 0x39AB6003, 0x39AB6007, 0x39AB6009,
 ];
 
 /// Receivers known to belong to a mouse: their mouse slot is listed even while it's offline. The name is used when

@@ -1,11 +1,12 @@
 //! Razer wireless mice and keyboards, through their receiver or cable, with the protocol OpenRazer uses
 //! (github.com/openrazer/openrazer, driver/razercommon.c, razerchromacommon.c):
-//! a 90-byte feature report (report ID 0) on interface 0 (mice) or 2/3 (keyboards):
+//! a 90-byte feature report (report ID 0) on interface 0 (mice; 3 on the newest ones) or 2/3 (keyboards):
 //!   [0] status  [1] transaction id  [2..3] remaining packets  [4] protocol 0  [5] data size  [6] class  [7] id
 //!   [8..87] arguments  [88] crc = XOR of bytes 2..87  [89] reserved
 //! Battery: class 07 id 80 -> arguments[1] = 0..255; charging: class 07 id 84 -> arguments[1] = 0/1.
 //! Reply status 02 = ok, 01 = busy, 04 = timeout (mouse off), 05 = not supported. The transaction id and the wait
-//! between set and get differ per device; the table is OpenRazer's. Read-only; not yet verified on hardware here.
+//! between set and get differ per device; the table is OpenRazer's, and for the models it has no release for yet,
+//! what the pull requests of their owners use. Read-only; not yet verified on hardware here.
 
 use super::{group_by, one_per_id, secs, sleep_ms, Provider};
 use crate::hid::{self, HidDevice, HidInfo};
@@ -43,6 +44,12 @@ const fn mouse(key: &'static str, name: &'static str, wireless: bool, tid: u8, w
 
 const fn m(key: &'static str, name: &'static str, wireless: bool, tid: u8, wait_us: u64) -> Model {
     mouse(key, name, wireless, tid, wait_us, true)
+}
+
+/// A mouse that takes the report on interface 3, a consumer-control collection, and has none on its mouse
+/// collection: the Viper V4 Pro and the mice that came after it.
+const fn m3(key: &'static str, name: &'static str, wireless: bool, tid: u8, wait_us: u64) -> Model {
+    Model { interface: 3, ..mouse(key, name, wireless, tid, wait_us, true) }
 }
 
 const fn k(key: &'static str, name: &'static str, wireless: bool, tid: u8, interface: i32, wait_us: u64) -> Model {
@@ -127,6 +134,20 @@ static MODELS: &[(u16, Model)] = &[
     (0x00DB, m("cobra-hyperspeed", "Cobra HyperSpeed", true, 0x1F, 31000)),
     (0x00DE, m("viper-v3-pro-se", "Viper V3 Pro SE", false, 0x1F, 31000)),
     (0x00DF, m("viper-v3-pro-se", "Viper V3 Pro SE", true, 0x1F, 59900)),
+    (0x00E0, mouse("orochi-v2", "Orochi V2", true, 0x1F, 400000, false)),
+    (0x00E2, m3("basilisk-v4-pro", "Basilisk V4 Pro", false, 0x1F, 31000)),
+    (0x00E3, m3("basilisk-v4-pro", "Basilisk V4 Pro", true, 0x1F, 31000)),
+    (0x00E5, m3("viper-v4-pro", "Viper V4 Pro", false, 0x1F, 59900)),
+    (0x00E6, m3("viper-v4-pro", "Viper V4 Pro", true, 0x1F, 59900)),
+    // On its cable the Naga V3 Pro answers on the mouse interface, as the older mice do; its receiver needs a
+    // longer wait right after it is plugged in
+    (0x00E7, m("naga-v3-pro", "Naga V3 Pro", false, 0x1F, 31000)),
+    (0x00E8, m3("naga-v3-pro", "Naga V3 Pro", true, 0x1F, 99900)),
+    // With a shorter wait this receiver answers "busy" and no level
+    (0x00EA, m3("basilisk-v4-hyperspeed", "Basilisk V4 HyperSpeed", true, 0x1F, 31000)),
+    (0x00EB, m3("basilisk-v4-hyperspeed", "Basilisk V4 HyperSpeed", false, 0x1F, 31000)),
+    (0x00EF, m("deathadder-v4-pro", "DeathAdder V4 Pro", false, 0x1F, 31000)),
+    (0x00F0, m("deathadder-v4-pro", "DeathAdder V4 Pro", true, 0x1F, 31000)),
     (0x0258, k("blackwidow-v3-mini", "BlackWidow V3 Mini HyperSpeed", false, 0x1F, 3, 600)),
     (0x0271, k("blackwidow-v3-mini", "BlackWidow V3 Mini HyperSpeed", true, 0x9F, 3, 4900)),
     (0x025A, k("blackwidow-v3-pro", "BlackWidow V3 Pro", false, 0x3F, 2, 600)),
@@ -140,6 +161,14 @@ static MODELS: &[(u16, Model)] = &[
     (0x02D7, k("blackwidow-v4-tkl", "BlackWidow V4 TKL HyperSpeed", false, 0x1F, 3, 600)),
     (0x02D5, k("blackwidow-v4-tkl", "BlackWidow V4 TKL HyperSpeed", true, 0x9F, 2, 4900)),
     (0x02CD, k("joro", "Joro", true, 0x1F, 3, 600)),
+    (0x02CC, k("blackwidow-v4-low-profile", "BlackWidow V4 Low-Profile HyperSpeed", false, 0x1F, 3, 600)),
+    (0x02C9, k("blackwidow-v4-low-profile", "BlackWidow V4 Low-Profile HyperSpeed", true, 0x9F, 2, 4900)),
+    (0x02D4, k("blackwidow-v4-low-profile-tkl", "BlackWidow V4 Low-Profile TKL HyperSpeed", false, 0x1F, 3, 600)),
+    (0x02D2, k("blackwidow-v4-low-profile-tkl", "BlackWidow V4 Low-Profile TKL HyperSpeed", true, 0x9F, 2, 4900)),
+    (0x0277, k("pro-type-ultra", "Pro Type Ultra", false, 0x1F, 2, 600)),
+    (0x027B, k("pro-type-ultra", "Pro Type Ultra", true, 0x9F, 2, 4900)),
+    (0x02C4, k("pro-type-ergo", "Pro Type Ergo", false, 0x1F, 3, 600)),
+    (0x02C2, k("pro-type-ergo", "Pro Type Ergo", true, 0x9F, 2, 4900)),
 ];
 
 fn model(pid: u16) -> Option<&'static Model> {

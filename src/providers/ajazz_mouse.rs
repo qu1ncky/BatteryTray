@@ -1,17 +1,20 @@
 //! Mice with the product ID 2255 under the vendor IDs A8A5 (2.4 GHz receiver) and A8A4 (USB cable): the AJAZZ AJ139
-//! V2 MC, the K-Snake X11, the Noir M2-NEX, the MCHOSE G7 Pro and others. They
+//! V2 MC, the K-Snake X11, the Noir M2-NEX, the MCHOSE G7 Pro and others; and the MCHOSE G3 V2 (3837:4245 on its
+//! receiver, 3837:418C on its cable). They
 //! share one configuration protocol on the vendor collection FF01:0010, 64-byte reports with no report ID in both
 //! directions:
 //!   request  55 30 A5 CC 2E 00 ..      30 = battery, CC = the low byte of the sum of the bytes after it
 //!   reply    AA 30 .. [8] level in percent, [9] not 0 on USB power
 //! The mouse also sends reports of its own (AA FA, AA ED), which are skipped. A receiver whose mouse is off or out of
 //! range answers with a level of 0. The vendor's web panel writes the request differently, 55 30 A5 0B 2E 01 01, so
-//! that form is tried when the first one gets no answer, and the one that worked goes first the next time. Only this
-//! read is sent. The IDs don't tell the models apart, so the name comes from the product string (see `receiver_name`).
+//! that form is tried when the first one gets no answer, and the one that worked goes first the next time. The
+//! G3 V2's own monitor sends one more 01, 55 30 A5 0B 2E 01 01 01, which goes first on that mouse. Only this read is
+//! sent. The IDs don't tell the models apart, so the name comes from the product string (see `receiver_name`).
 //! Protocol facts from ajazz-aj139-macos (PROTOCOL.md: checked on an AJ139 V2 MC), OpenMouse (mouse-protocol:
 //! src/ksnake/index.ts, the vendor panel's form of the request, read on a Noir M2-NEX) and
 //! Wireless-Device-Battery-Monitor (src/drivers/misc_mice.cpp: both forms in this order; an AJ139 V2 MC and an MCHOSE
-//! G7 Pro read by users in its issues 40 and 226). Own implementation. Not yet verified on hardware by this project,
+//! G7 Pro read by users in its issues 40 and 226; src/drivers/mchose_g3.cpp) and MCHOSE-Monitor (docs/HID_PROTOCOL.md:
+//! the G3 V2). Own implementation. Not yet verified on hardware by this project,
 //! which is why the first exchange goes to the log.
 
 use super::{group_by, hex_trimmed as hex, no_link_reason, one_per_id, receiver_name, remaining_ms, secs, Provider};
@@ -23,9 +26,36 @@ use crate::win;
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
-const RECEIVER_VID: u16 = 0xA8A5;
-const CABLE_VID: u16 = 0xA8A4;
-const PID: u16 = 0x2255;
+/// Mice of one kind: their receiver and cable IDs, what to call one whose product string names nobody, and the
+/// forms of the request to try, in order (see `request`).
+struct Family {
+    id: &'static str,
+    receiver: (u16, u16),
+    cable: (u16, u16),
+    name: Option<&'static str>,
+    forms: &'static [usize],
+}
+
+static FAMILIES: &[Family] = &[
+    Family { id: "ajazz:2255", receiver: (0xA8A5, 0x2255), cable: (0xA8A4, 0x2255), name: None, forms: &[0, 1] },
+    Family {
+        id: "mchose:g3v2",
+        receiver: (0x3837, 0x4245),
+        cable: (0x3837, 0x418C),
+        name: Some("MCHOSE G3 V2"),
+        forms: &[2, 1],
+    },
+];
+
+/// The family these IDs belong to, and whether they are its cable's.
+fn family(vid: u16, pid: u16) -> Option<(&'static Family, bool)> {
+    FAMILIES.iter().find_map(|f| match (vid, pid) {
+        ids if ids == f.receiver => Some((f, false)),
+        ids if ids == f.cable => Some((f, true)),
+        _ => None,
+    })
+}
+
 const VENDOR_PAGE: u16 = 0xFF01;
 const VENDOR_USAGE: u16 = 0x0010;
 const REQUEST_HEAD: u8 = 0x55;
@@ -35,9 +65,7 @@ const BATTERY_COMMAND: u8 = 0x30;
 const BATTERY_LENGTH: u8 = 0x2E;
 /// The report ID, always 0, and 64 bytes.
 const REPORT_LENGTH: usize = 65;
-const REQUEST_FORMS: usize = 2;
 const TIMEOUT_MS: u64 = 700;
-const ID: &str = "ajazz:2255";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Battery {
@@ -59,9 +87,9 @@ impl Provider for AjazzMouseProvider {
 
     fn poll(&mut self) -> Vec<DeviceReading> {
         let mut result = Vec::new();
-        let found = hid::enumerate(|v, p| p == PID && (v == RECEIVER_VID || v == CABLE_VID));
-        for (vid, collections) in group_by(found, |i| i.vendor_id) {
-            let cable = vid == CABLE_VID;
+        let found = hid::enumerate(|v, p| family(v, p).is_some());
+        for ((vid, pid), collections) in group_by(found, |i| (i.vendor_id, i.product_id)) {
+            let Some((family, cable)) = family(vid, pid) else { continue };
             let vendor = collections.iter().find(|i| {
                 i.usage_page == VENDOR_PAGE
                     && i.usage == VENDOR_USAGE
@@ -73,7 +101,7 @@ impl Provider for AjazzMouseProvider {
             let mut error = None;
             match vendor {
                 None => error = Some(t(no_link_reason(&collections))),
-                Some(v) => match self.query(v, &mut trace) {
+                Some(v) => match self.query(family, v, &mut trace) {
                     Ok(b) => battery = b,
                     Err(e) => {
                         trace.push(format!("error: {e}"));
@@ -84,7 +112,7 @@ impl Provider for AjazzMouseProvider {
             let product = vendor
                 .and_then(|v| v.product.as_deref())
                 .or_else(|| collections.iter().find_map(|i| i.product.as_deref()));
-            self.log_once(vid, &collections, vendor, product, &trace, battery.is_some());
+            self.log_once((vid, pid), &collections, vendor, product, &trace, battery.is_some());
 
             result.push(DeviceReading {
                 online: battery.is_some(),
@@ -92,8 +120,8 @@ impl Provider for AjazzMouseProvider {
                 charging: battery.is_some_and(|b| b.charging),
                 detail: if battery.is_none() { Some(error.unwrap_or_else(|| t("d.asleep"))) } else { None },
                 ..DeviceReading::new(
-                    ID,
-                    receiver_name::mouse(product, None),
+                    family.id,
+                    receiver_name::mouse(product, family.name),
                     DeviceKind::Mouse,
                     t(if cable { "via.cable" } else { "via.24" }),
                 )
@@ -115,11 +143,13 @@ impl Provider for AjazzMouseProvider {
 
 impl AjazzMouseProvider {
     /// Asks for the battery; None when nothing answered or the reply has no level.
-    fn query(&mut self, vendor: &HidInfo, trace: &mut Vec<String>) -> win::Result<Option<Battery>> {
+    fn query(&mut self, family: &Family, vendor: &HidInfo, trace: &mut Vec<String>) -> win::Result<Option<Battery>> {
         let dev = HidDevice::open(vendor)?;
-        let first = self.answered.get(&vendor.path).copied().unwrap_or(0);
-        for i in 0..REQUEST_FORMS {
-            let tried = (first + i) % REQUEST_FORMS;
+        let forms = family.forms;
+        let answered = self.answered.get(&vendor.path);
+        let first = answered.and_then(|form| forms.iter().position(|f| f == form)).unwrap_or(0);
+        for i in 0..forms.len() {
+            let tried = forms[(first + i) % forms.len()];
             if let Some(reply) = ask(&dev, &request(tried), trace)? {
                 self.answered.insert(vendor.path.clone(), tried);
                 return Ok(parse(&reply));
@@ -132,14 +162,14 @@ impl AjazzMouseProvider {
     /// first time it is found on in a session, as the other mice do.
     fn log_once(
         &mut self,
-        vid: u16,
+        id: (u16, u16),
         collections: &[HidInfo],
         vendor: Option<&HidInfo>,
         product: Option<&str>,
         trace: &[String],
         online: bool,
     ) {
-        let key = format!("{vid:04x}:{PID:04x}");
+        let key = format!("{:04x}:{:04x}", id.0, id.1);
         if !self.logged.insert(format!("{key}{online}")) {
             return;
         }
@@ -180,7 +210,7 @@ fn ask(dev: &HidDevice, request: &[u8], trace: &mut Vec<String>) -> win::Result<
 }
 
 /// The battery request, report ID first. Form 0 has the checksum the protocol notes describe, form 1 is what the
-/// vendor's web panel sends.
+/// vendor's web panel sends, form 2 what the MCHOSE G3 V2 is asked with.
 pub fn request(form: usize) -> Vec<u8> {
     let mut r = vec![0u8; REPORT_LENGTH];
     r[1] = REQUEST_HEAD;
@@ -193,6 +223,9 @@ pub fn request(form: usize) -> Vec<u8> {
         r[4] = 0x0B;
         r[6] = 0x01;
         r[7] = 0x01;
+        if form == 2 {
+            r[8] = 0x01;
+        }
     }
     r
 }
@@ -250,9 +283,25 @@ mod tests {
     }
 
     #[test]
+    fn request_of_the_g3_v2() {
+        // MCHOSE-Monitor, docs/HID_PROTOCOL.md: 55 30 A5 0B 2E 01 01 01
+        assert_eq!(request(2), report(&[0x55, 0x30, 0xA5, 0x0B, 0x2E, 0x01, 0x01, 0x01]));
+    }
+
+    #[test]
     fn requests_are_whole_reports() {
         assert_eq!(request(0).len(), 65);
         assert_eq!(request(1).len(), 65);
+        assert_eq!(request(2).len(), 65);
+    }
+
+    #[test]
+    fn ids_name_the_family_and_the_cable() {
+        assert!(family(0xA8A5, 0x2255).is_some_and(|(f, cable)| f.id == "ajazz:2255" && !cable));
+        assert!(family(0xA8A4, 0x2255).is_some_and(|(f, cable)| f.id == "ajazz:2255" && cable));
+        assert!(family(0x3837, 0x4245).is_some_and(|(f, cable)| f.id == "mchose:g3v2" && !cable));
+        assert!(family(0x3837, 0x418C).is_some_and(|(f, cable)| f.forms[0] == 2 && cable));
+        assert!(family(0x3837, 0x2255).is_none());
     }
 
     #[test]
