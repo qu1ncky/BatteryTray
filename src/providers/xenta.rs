@@ -3,7 +3,8 @@
 //! Nothing is ever sent: the mouse pushes a 5-byte input report by itself
 //! about every 2 s on the receiver's collection with usage page 0x000A, and this only reads it, on its own
 //! GENERIC_READ handle:
-//!   03 MM 40 ST LL  -  report ID 3, model code, 0x40 = battery frame (some models send 0x41), state, level.
+//!   03 MM 40 ST LL  -  report ID 3, model code, 0x40 = battery frame (some models send 0x41 or 0x43), state,
+//!   level.
 //! What ST and LL mean depends on the model code, so only known codes are read (MODELS): the ones seen on real mice,
 //! and the model table of these brands' common web driver (bk-gmice.com), which reads every code the same way:
 //!   ST 01 = on battery, LL = percent; 02 and 03 = on external power (cable or dock), when the level they send is
@@ -50,8 +51,9 @@ const STATUS_PAGE: u16 = 0x000A;
 /// Where one firmware of the 8K receiver sends its frames.
 const VENDOR_STATUS: (u16, u16) = (0xFF00, 0x0001);
 const REPORT_ID: u8 = 0x03;
-/// The battery frame; some models (the V6, the IN10 MAX) send 0x41 with the same contents.
-const BATTERY_FRAMES: [u8; 2] = [0x40, 0x41];
+/// The battery frame; some models send 0x41 (the V6, the IN10 MAX) or 0x43 (a FURYCUBE F1 Pro) with the same
+/// contents.
+const BATTERY_FRAMES: [u8; 3] = [0x40, 0x41, 0x43];
 const ON_BATTERY: u8 = 0x01;
 const RECEIVER_ID: &str = "xenta:1d57:fa60";
 const DEVICE_NAME: &str = "Attack Shark";
@@ -78,6 +80,8 @@ const MODELS: &[(u8, &str, bool)] = &[
     (0x73, "Inphic IN10R MAX", false),
     (0x74, "Inphic IN10 MAX", false),
     (0x66, "FURYCUBE G3", false),
+    // An F1 Pro's frames carry the code the web driver has for the F3, not the F1's 0xC2
+    (0x05, "FURYCUBE F1 Pro / F3", false),
     // The web driver's (0x95: INPHIC HUB's, the In9 Pro's own app)
     (0x95, "Inphic In9 Pro", false),
     (0xC2, "FURYCUBE F1", false),
@@ -634,6 +638,13 @@ mod tests {
         assert_eq!(parse(&[3, 0x24, 0x41, 1, 0x64]), Some((0x24, Some(Battery { on_power: false, level: Some(100) }))));
         assert_eq!(parse(&[3, 0x73, 0x41, 1, 0x64]), Some((0x73, Some(Battery { on_power: false, level: Some(100) }))));
         assert_eq!(parse(&[3, 0x55, 0x42, 1, 0x64]), None);
+    }
+
+    #[test]
+    fn a_furycube_f1_pro_sends_43_and_the_f3s_code() {
+        // Its owner's frame, every session: 87% on battery
+        assert_eq!(parse(&[3, 0x05, 0x43, 1, 0x57]), Some((0x05, Some(Battery { on_power: false, level: Some(87) }))));
+        assert_eq!(brand(0x05), Some("FURYCUBE"));
     }
 
     #[test]

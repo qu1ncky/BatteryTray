@@ -254,8 +254,11 @@ impl TableProvider {
         if !self.logged.insert(format!("{id}{online}")) {
             return;
         }
+        // What the device calls itself tells the row's device from another product with the same IDs
+        let product =
+            collections.iter().find_map(|i| i.product.as_deref()).map(|p| format!(" \"{p}\"")).unwrap_or_default();
         log::write(&format!(
-            "{} {id}: found {}, {} HID collections",
+            "{} {id}{product}: found {}, {} HID collections",
             t(spec.name),
             if online { "on" } else { "off" },
             collections.len()
