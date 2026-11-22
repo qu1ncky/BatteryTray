@@ -387,14 +387,16 @@ pub static SPECS: &[Spec] = &[
         ..Spec::HEADSET
     },
     // ---- Others ----
+    // HeadsetControl names FF04:0002, but an H5 dongle on Windows has its 64-byte FF04 collection as FF04:0001
     Spec {
         key: "sony-inzone-h5",
         name: "Sony INZONE H5",
         vid: 0x054C,
         pids: &[0x0EBF],
-        page: 0xFF04,
-        usage: 0x0002,
+        page: 0,
+        usage: 0,
         interface: -1,
+        accept: Some(|i| i.usage_page == 0xFF04 && i.output_length >= 64),
         query: sony_inzone_h5,
         ..Spec::HEADSET
     },
@@ -815,8 +817,20 @@ const STATUS_5565_AWAY: u8 = 0x1A;
 /// The status request several C-Media dongles share: 55 65 01, answered by 55 65 <level> <status>. Other 55 xx
 /// reports come on the same collection (the HT6 says 55 0A when its headset is switched off).
 fn status_5565(io: &mut Io, status: Status5565) -> win::Result<State> {
-    let r = io.ask(&pad(64, &[0x55, 0x65, 0x01]), |d| is_5565_reply(d, status), 32, false)?;
+    let r = io.ask(&request_5565(io.info().output_report_id), |d| is_5565_reply(d, status), 32, false)?;
     Ok(r.map_or_else(off, |r| parse_5565(&r, status)))
+}
+
+/// 55 65 01 as the dongle has to get it. The MCHOSE V9 Pro's collection has 55 for a report ID, so the request goes
+/// as it is; a dongle with the same IDs whose collection has no report IDs (an ARDOR GAMING Hide Wireless) gets the
+/// same bytes only behind a 00, as Windows drops the first byte of such a report.
+pub fn request_5565(output_report_id: u8) -> Vec<u8> {
+    let request = [0x55, 0x65, 0x01];
+    if output_report_id == 0 {
+        [&[0x00][..], &request].concat()
+    } else {
+        request.to_vec()
+    }
 }
 
 /// A "55 65" report that answers the request: one with a status this headset is known to send. HeadsetControl takes
@@ -1147,6 +1161,13 @@ mod tests {
         assert_eq!(parse_5565(&[0x55, 0x65, 0x32, 0x02], v9_pro_status), state(true, Some(50), false));
         assert_eq!(parse_5565(&[0x55, 0x65, 0x32, 0x00], v9_pro_status), state(true, Some(50), true));
         assert_eq!(parse_5565(&[0x55, 0x65, 0x00, 0x00], v9_pro_status), off());
+    }
+
+    #[test]
+    fn the_55_65_request_reaches_a_dongle_without_report_ids_whole() {
+        // The V9 Pro's collection has the report ID 55; an ARDOR GAMING Hide Wireless dongle's FF90 has none
+        assert_eq!(request_5565(0x55), [0x55, 0x65, 0x01]);
+        assert_eq!(request_5565(0x00), [0x00, 0x55, 0x65, 0x01]);
     }
 
     #[test]
