@@ -592,6 +592,7 @@ export component DevicesScreen inherits Rectangle {
     in property <string> banner-text;
     in property <bool> banner-button-visible;
     in property <bool> autostart-banner;
+    in property <bool> admin-banner;
     in-out property <bool> hidden-open;
     // The list's frame in window coordinates: the lifted copy stays inside it
     out property <length> frame-y: scroll.absolute-position.y;
@@ -601,6 +602,8 @@ export component DevicesScreen inherits Rectangle {
     callback install-update();
     callback enable-autostart();
     callback dismiss-autostart-banner();
+    callback grant-admin-asked();
+    callback dismiss-admin-banner();
     callback open-menu(id: string);
     callback rename-done();
     callback drag-started();
@@ -690,6 +693,57 @@ export component DevicesScreen inherits Rectangle {
                                 accent: true;
                                 text: T.t("upd.banner.button");
                                 clicked => { root.install-update(); }
+                            }
+                        }
+                    }
+                }
+                // Windows keeps a device from the app: admin rights would let it in
+                if root.admin-banner: Dimmable {
+                    dimmed: Drag.active;
+                    Card {
+                        border-color: Palette.warn;
+                        VerticalLayout {
+                            padding-top: 13px;
+                            padding-right: 17px;
+                            padding-bottom: 13px;
+                            padding-left: 17px;
+                            spacing: 10px;
+                            HorizontalLayout {
+                                spacing: 10px;
+                                Glyph {
+                                    width: 18px;
+                                    text: "\u{E7EF}";
+                                    font-size: 16px;
+                                    color: Palette.warn;
+                                    horizontal-alignment: center;
+                                }
+                                Text {
+                                    text: T.t("admin.banner");
+                                    color: Palette.text;
+                                    vertical-alignment: center;
+                                    wrap: word-wrap;
+                                    horizontal-stretch: 1;
+                                }
+                            }
+                            HorizontalLayout {
+                                spacing: 8px;
+                                Btn {
+                                    min-width: 0px;
+                                    preferred-width: 0px;
+                                    horizontal-stretch: 1;
+                                    padding-x: 10px;
+                                    accent: true;
+                                    text: T.t("admin.banner.grant");
+                                    clicked => { root.grant-admin-asked(); }
+                                }
+                                Btn {
+                                    min-width: 0px;
+                                    preferred-width: 0px;
+                                    horizontal-stretch: 1;
+                                    padding-x: 10px;
+                                    text: T.t("autostart.banner.dismiss");
+                                    clicked => { root.dismiss-admin-banner(); }
+                                }
                             }
                         }
                     }

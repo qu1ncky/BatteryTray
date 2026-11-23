@@ -178,7 +178,6 @@ fn main() {
         main.set_autostart(true);
 
         main.set_language(language.into());
-        main.set_elevation_text(t("elev.portable").into());
         main.set_update_status(tf("upd.uptodate", &[&version]).into());
         main.set_update_checked_text(tf("upd.checked", &[&now.format("%H:%M")]).into());
         main.set_install_text(tf("upd.install", &[&latest]).into());
@@ -205,6 +204,14 @@ fn main() {
     let (main, window) = open(&rows);
     main.set_banner_visible(false);
     render(&window, scale, size, &folder.join("readme.png"));
+
+    // Windows keeps a device from the app: the banner, and the window its button opens
+    let (main, window) = open(&rows);
+    main.set_banner_visible(false);
+    main.set_admin_banner(true);
+    render(&window, scale, size, &folder.join("main-admin-banner.png"));
+    main.set_admin_dialog(true);
+    render(&window, scale, size, &folder.join("main-admin-dialog.png"));
 
     // The menu of a pinned device with its own levels: the levels and "back to the general ones" are open
     let (main, window) = open(&rows);

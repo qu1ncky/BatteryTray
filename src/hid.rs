@@ -5,11 +5,14 @@
 //! for, so no read is ever left pending to swallow the next reply (hidapi leaves it in flight - which is why this
 //! is not built on hidapi).
 
+use crate::log;
 use crate::win::{self, CloseHandle, Error, Result, INVALID_HANDLE};
 use std::ffi::c_void;
 use std::fmt;
 use std::mem::size_of;
 use std::ptr::{null, null_mut};
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct HidInfo {
@@ -113,6 +116,16 @@ pub fn parse_ids(path: &str) -> Option<(u16, u16)> {
 
 /// Every HID collection of the devices whose IDs `matches` accepts.
 pub fn enumerate(matches: impl Fn(u16, u16) -> bool) -> Vec<HidInfo> {
+    enumerate_with(matches, true)
+}
+
+/// As enumerate(), for the catch-all provider: a collection Windows refuses it may belong to any device at all, not
+/// one the app reads, so it doesn't count towards offering admin rights.
+pub fn enumerate_unclaimed(matches: impl Fn(u16, u16) -> bool) -> Vec<HidInfo> {
+    enumerate_with(matches, false)
+}
+
+fn enumerate_with(matches: impl Fn(u16, u16) -> bool, note_refusals: bool) -> Vec<HidInfo> {
     let mut result = Vec::new();
     unsafe {
         let mut guid = ffi::Guid::default();
@@ -134,6 +147,9 @@ pub fn enumerate(matches: impl Fn(u16, u16) -> bool) -> Vec<HidInfo> {
                 continue;
             }
             if let Some(info) = query(path, vid, pid) {
+                if note_refusals && info.access_denied {
+                    note_refusal(&info.path, vid, pid, false);
+                }
                 result.push(info);
             }
         }
@@ -160,8 +176,131 @@ unsafe fn interface_path(set: isize, data: &ffi::SpDeviceInterfaceData) -> Optio
     Some(win::from_wide(chars))
 }
 
+const ERROR_ACCESS_DENIED: u32 = 5;
+
+/// Devices whose collection Windows refused this process while administrators may open it, with when that last
+/// happened. Some third-party drivers lock a dongle's vendor collection this way (e.g. G-SPY's vkbms.inf gives every
+/// FF00:0001 collection a descriptor with only SYSTEM and administrators in it). Whatever a provider then shows -
+/// "needs administrator rights", another status, or no device at all - the window offers admin rights.
+static REFUSED: Mutex<Vec<(u16, u16, Instant)>> = Mutex::new(Vec::new());
+
+/// How long a refusal counts: longer than any provider waits between polls of a device it can't read.
+const REFUSAL_KEPT: Duration = Duration::from_secs(10 * 60);
+
+/// A collection of a device the app reads was refused (`read_write`: opening it for reading and writing, else even
+/// opening it with no access rights): noted when admin rights would get the app in.
+fn note_refusal(path: &str, vid: u16, pid: u16, read_write: bool) {
+    let security = security_of(path);
+    if !admins_only(security.as_deref(), read_write) {
+        return;
+    }
+    let mut refused = REFUSED.lock().unwrap_or_else(|e| e.into_inner());
+    match refused.iter_mut().find(|(v, p, _)| (*v, *p) == (vid, pid)) {
+        Some(entry) => entry.2 = Instant::now(),
+        None => {
+            log::write(&format!(
+                "{vid:04X}:{pid:04X}: Windows refuses a collection to this process, administrators may open it ({})",
+                security.as_deref().unwrap_or("no security descriptor in the registry")
+            ));
+            refused.push((vid, pid, Instant::now()));
+        }
+    }
+}
+
+/// True when Windows recently kept a device from this process and admin rights would let the app read it.
+pub fn admin_rights_would_help() -> bool {
+    REFUSED.lock().unwrap_or_else(|e| e.into_inner()).iter().any(|(_, _, at)| at.elapsed() < REFUSAL_KEPT)
+}
+
+/// The security descriptor (SDDL) Windows checks when the collection is opened: the device's own when its driver
+/// package sets one, else its device class's. None when neither is in the registry.
+fn security_of(path: &str) -> Option<String> {
+    const SPDRP_SECURITY_SDS: u32 = 0x18; // SPCRP_SECURITY_SDS has the same number
+    unsafe {
+        let set = ffi::SetupDiCreateDeviceInfoList(null(), 0);
+        if set == INVALID_HANDLE {
+            return None;
+        }
+        let name = win::wide(path);
+        let mut interface = ffi::SpDeviceInterfaceData {
+            cb_size: size_of::<ffi::SpDeviceInterfaceData>() as u32,
+            ..Default::default()
+        };
+        let mut device = ffi::SpDevinfoData { cb_size: size_of::<ffi::SpDevinfoData>() as u32, ..Default::default() };
+        let mut text = [0u16; 1024];
+        let size = (text.len() * 2) as u32;
+        let buffer = text.as_mut_ptr() as *mut u8;
+        // Opening the interface puts its device into the list
+        let found = ffi::SetupDiOpenDeviceInterfaceW(set, name.as_ptr(), 0, &mut interface) != 0
+            && ffi::SetupDiEnumDeviceInfo(set, 0, &mut device) != 0
+            && (ffi::SetupDiGetDeviceRegistryPropertyW(
+                set,
+                &device,
+                SPDRP_SECURITY_SDS,
+                null_mut(),
+                buffer,
+                size,
+                null_mut(),
+            ) != 0
+                || ffi::SetupDiGetClassRegistryPropertyW(
+                    &device.class_guid,
+                    SPDRP_SECURITY_SDS,
+                    null_mut(),
+                    buffer,
+                    size,
+                    null_mut(),
+                    null(),
+                    null_mut(),
+                ) != 0);
+        ffi::SetupDiDestroyDeviceInfoList(set);
+        Some(win::from_wide(&text)).filter(|s| found && !s.is_empty())
+    }
+}
+
+/// Whether a security descriptor keeps ordinary users out but lets administrators in, so that a refusal is about
+/// missing admin rights. `read_write`: what was refused was an open for reading and writing; an open with no access
+/// rights is refused only to someone the descriptor doesn't name at all. A refusal the descriptor doesn't explain
+/// comes from elsewhere (a filter driver such as HidHide hides devices from every program it isn't told to let
+/// through, administrators included). Without a descriptor in the registry the driver set its own, which only an
+/// elevated process can find out: admin rights are taken to help.
+fn admins_only(sddl: Option<&str>, read_write: bool) -> bool {
+    let Some(sddl) = sddl else { return true };
+    // The DACL, before the SACL if there is one
+    let dacl = sddl.split_once("D:").map_or("", |(_, d)| d.split("S:").next().unwrap_or(d));
+    let (mut admins, mut users) = (false, false);
+    for ace in dacl.split('(').skip(1) {
+        let fields: Vec<&str> = ace.split(')').next().unwrap_or("").split(';').collect();
+        let [kind, _, rights, _, _, sid] = fields[..] else { continue };
+        if kind != "A" || (read_write && !reads_and_writes(rights)) {
+            continue;
+        }
+        match sid {
+            "BA" | "S-1-5-32-544" => admins = true,
+            "WD" | "BU" | "AU" | "IU" | "S-1-1-0" | "S-1-5-32-545" | "S-1-5-11" | "S-1-5-4" => users = true,
+            _ => {}
+        }
+    }
+    admins && !users
+}
+
+/// Whether an ACE's rights ("GA", "GRGW", "FA", "0x12019f"...) cover reading and writing.
+fn reads_and_writes(rights: &str) -> bool {
+    const FILE_READ_DATA: u32 = 0x1;
+    const FILE_WRITE_DATA: u32 = 0x2;
+    const GENERIC_ALL: u32 = 0x1000_0000;
+    if let Some(hex) = rights.strip_prefix("0x").or_else(|| rights.strip_prefix("0X")) {
+        let mask = u32::from_str_radix(hex, 16).unwrap_or(0);
+        let read = mask & (FILE_READ_DATA | ffi::GENERIC_READ | GENERIC_ALL) != 0;
+        let write = mask & (FILE_WRITE_DATA | ffi::GENERIC_WRITE | GENERIC_ALL) != 0;
+        return read && write;
+    }
+    // Two-letter codes
+    let codes: Vec<&str> = (0..rights.len() / 2).filter_map(|i| rights.get(i * 2..i * 2 + 2)).collect();
+    let has = |code: &str| codes.contains(&code);
+    has("GA") || has("FA") || ((has("GR") || has("FR")) && (has("GW") || has("FW")))
+}
+
 fn query(path: String, vid: u16, pid: u16) -> Option<HidInfo> {
-    const ERROR_ACCESS_DENIED: u32 = 5;
     // Zero access rights: enough to read attributes even for devices opened exclusively
     let h = win::open_path(&path, 0, 0);
     if h == INVALID_HANDLE {
@@ -257,7 +396,11 @@ impl HidDevice {
     fn open_with(info: &HidInfo, access: u32, overlapped: bool) -> Result<Self> {
         let h = win::open_path(&info.path, access, if overlapped { ffi::FILE_FLAG_OVERLAPPED } else { 0 });
         if h == INVALID_HANDLE {
-            return Err(Error::with_message(win::last_error(), format!("Cannot open {}", info.path)));
+            let error = win::last_error();
+            if error == ERROR_ACCESS_DENIED && access != 0 {
+                note_refusal(&info.path, info.vendor_id, info.product_id, true);
+            }
+            return Err(Error::with_message(error, format!("Cannot open {}", info.path)));
         }
         Ok(Self { handle: h, info: info.clone() })
     }
@@ -556,6 +699,32 @@ pub(crate) mod ffi {
             dev_info: *mut c_void,
         ) -> i32;
         pub fn SetupDiDestroyDeviceInfoList(set: isize) -> i32;
+        pub fn SetupDiCreateDeviceInfoList(class_guid: *const Guid, parent: isize) -> isize;
+        pub fn SetupDiOpenDeviceInterfaceW(
+            set: isize,
+            path: *const u16,
+            flags: u32,
+            data: *mut SpDeviceInterfaceData,
+        ) -> i32;
+        pub fn SetupDiGetDeviceRegistryPropertyW(
+            set: isize,
+            data: *const SpDevinfoData,
+            property: u32,
+            kind: *mut u32,
+            buffer: *mut u8,
+            size: u32,
+            required: *mut u32,
+        ) -> i32;
+        pub fn SetupDiGetClassRegistryPropertyW(
+            class_guid: *const Guid,
+            property: u32,
+            kind: *mut u32,
+            buffer: *mut u8,
+            size: u32,
+            required: *mut u32,
+            machine: *const u16,
+            reserved: *mut c_void,
+        ) -> i32;
         pub fn SetupDiEnumDeviceInfo(set: isize, index: u32, data: *mut SpDevinfoData) -> i32;
         pub fn SetupDiGetDeviceInstanceIdW(
             set: isize,
@@ -590,6 +759,32 @@ pub(crate) mod ffi {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_refusal_counts_only_when_the_descriptor_lets_administrators_in_and_users_out() {
+        // G-SPY's vkbms.inf: SYSTEM and administrators only
+        let gspy = "D:P(A;;GA;;;SY)(A;;GA;;;BA)";
+        assert!(admins_only(Some(gspy), false) && admins_only(Some(gspy), true));
+        // Windows' own HID class: everyone reads and writes, so a refusal there is a filter driver's (HidHide)
+        let hid_class = "D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GXGWGR;;;WD)(A;;GXGR;;;RC)";
+        assert!(!admins_only(Some(hid_class), false) && !admins_only(Some(hid_class), true));
+        // Users may only read: a zero-access open goes through, opening for writing too needs admin rights
+        let read_only = "D:(A;;GA;;;BA)(A;;GR;;;BU)";
+        assert!(!admins_only(Some(read_only), false) && admins_only(Some(read_only), true));
+        assert!(!admins_only(Some("D:P(A;;GA;;;SY)"), false), "SYSTEM only: admin rights don't help");
+        assert!(admins_only(Some("D:(A;;0x1f01ff;;;BA)S:(ML;;NW;;;LW)"), true), "a mask, and a SACL after the DACL");
+        assert!(admins_only(None, false), "a descriptor the driver set itself: admin rights may help");
+    }
+
+    #[test]
+    fn rights_that_cover_reading_and_writing() {
+        for rights in ["GA", "FA", "GRGW", "GWGXGR", "FRFW", "0x12019f", "0xC0000000", "0x10000000"] {
+            assert!(reads_and_writes(rights), "{rights}");
+        }
+        for rights in ["GR", "GXGR", "FR", "0x120089", "", "0xzz"] {
+            assert!(!reads_and_writes(rights), "{rights}");
+        }
+    }
 
     #[test]
     fn ids_from_usb_and_bluetooth_paths() {

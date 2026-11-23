@@ -33,6 +33,8 @@ Razer Barracuda X（2.4 GHz 接收器，已测试）、Attack Shark R3 及其他
 
 程序安装到 `C:\Program Files\BatteryTray`，通过名为“BatteryTray”的计划任务在登录时启动。卸载请运行压缩包中的 `uninstall.cmd`。程序未进行代码签名，Windows 可能会提示未知应用：点击“更多信息”→“仍要运行”。
 
+如果直接运行 `BatteryTray.exe` 且没有管理员权限，而 Windows 不允许它读取某个设备，设备列表上方会出现提示。点击“授予权限”即可像 `install.cmd` 一样安装本程序，只需确认一次 UAC，无需下载压缩包。
+
 ## 从源码构建
 
 构建步骤见[英文说明](README.md#build-from-source)。运行测试：`cargo test`。

@@ -128,6 +128,7 @@ Yes, if Windows itself knows it (Settings → Bluetooth & devices shows a percen
 
 **Why does it ask for administrator rights?**
 On some PCs third-party drivers lock a receiver's service channel to administrators — for example the G-SPY driver (`vkbms.inf`) that comes with some cheap keyboards takes every HID collection with usage `FF00:0001`, the Razer dongle included. The installed app therefore starts through a scheduled task with highest privileges (no UAC prompt at each sign-in) and lives in Program Files, where its exe can't be swapped without admin rights. Without that driver, normal rights are enough.
+If the app runs without admin rights and Windows keeps a device from it, a line above the device list says so: "Grant rights" installs the app as `install.cmd` does, with one UAC prompt, no zip needed.
 
 **Why is there no percentage while my device charges?**
 Some devices don't report their level on the cable (or report a number that has nothing to do with the real charge). BatteryTray then shows that it's charging rather than a stale or made-up number.

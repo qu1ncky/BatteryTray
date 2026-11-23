@@ -7,6 +7,7 @@ use crate::app::{level_color, with_app, App};
 use crate::autostart;
 use crate::feedback;
 use crate::gui::{self, DeviceItem, Kind, MainWindow};
+use crate::hid;
 use crate::hotkey::{self, Gesture};
 use crate::list_diff::{self, Step};
 use crate::loc::{self, t, tf};
@@ -114,15 +115,6 @@ impl MainView {
         ui.set_overlay_names(s.overlay_show_names);
         ui.set_language(s.language.clone().into());
         ui.set_autostart_banner_dismissed(s.autostart_banner_dismissed);
-        // With administrator rights every device can be read: nothing to warn about
-        let elevation = if win::is_elevated() {
-            String::new()
-        } else if autostart::is_installed() {
-            t("elev.installed")
-        } else {
-            t("elev.portable")
-        };
-        ui.set_elevation_text(elevation.into());
         self.refresh_overlay_status(s, app.overlay.shortcut_available());
     }
 
@@ -187,6 +179,10 @@ impl MainView {
             }
             sync(model, fresh, &renaming);
         }
+
+        // Windows keeps a device from the app and admin rights would get it in: whatever the device's row says, if the
+        // device is listed at all
+        ui.set_admin_banner(!s.admin_banner_dismissed && !win::is_elevated() && hid::admin_rights_would_help());
 
         let newest = rows.iter().filter_map(|r| r.current.as_ref().map(|c| c.time)).max();
         ui.set_updated_text(
@@ -418,6 +414,12 @@ fn connect(ui: &MainWindow) {
     });
     ui.on_dismiss_autostart_banner(|| {
         with_app(|a| a.dismiss_autostart_banner());
+    });
+    ui.on_dismiss_admin_banner(|| {
+        with_app(|a| a.dismiss_admin_banner());
+    });
+    ui.on_grant_admin(|| {
+        with_app(|a| a.grant_admin());
     });
     ui.on_overlay_reset(|| {
         with_app(|a| {

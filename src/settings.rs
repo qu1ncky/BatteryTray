@@ -82,6 +82,9 @@ pub struct AppSettings {
     /// by hand): it stays away.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub autostart_banner_dismissed: bool,
+    /// The banner that offers admin rights when Windows keeps a device from the app: "don't show again".
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub admin_banner_dismissed: bool,
     /// The devices in the order the user put them in; the list shows the pinned ones of them first. Empty until the
     /// first pin or drag: until then the list goes by kind and name.
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -109,6 +112,7 @@ impl Default for AppSettings {
             last_run_version: None,
             devices: BTreeMap::new(),
             autostart_banner_dismissed: false,
+            admin_banner_dismissed: false,
             device_order: Vec::new(),
             extra: Map::new(),
         }
@@ -207,6 +211,7 @@ impl AppSettings {
                     _ => false,
                 },
                 "AutostartBannerDismissed" => set(&mut s.autostart_banner_dismissed, v.as_bool()),
+                "AdminBannerDismissed" => set(&mut s.admin_banner_dismissed, v.as_bool()),
                 "DeviceOrder" => match v {
                     Value::Array(ids) => {
                         for id in ids {
@@ -592,7 +597,7 @@ mod tests {
         let mut s = AppSettings::default();
         s.device_mut("a");
         let text = serde_json::to_string_pretty(&s).unwrap();
-        for key in ["Pinned", "DeviceOrder", "AutostartBannerDismissed"] {
+        for key in ["Pinned", "DeviceOrder", "AutostartBannerDismissed", "AdminBannerDismissed"] {
             assert!(!text.contains(key), "{text}");
         }
         assert_eq!(AppSettings::from_value(&serde_json::from_str(&text).unwrap()), (s.clone(), true));
@@ -600,11 +605,13 @@ mod tests {
         s.device_mut("a").pinned = true;
         s.device_order = vec!["b".into(), "a".into()];
         s.autostart_banner_dismissed = true;
+        s.admin_banner_dismissed = true;
         let value = serde_json::to_value(&s).unwrap();
         let pinned = serde_json::json!({ "Name": null, "Hidden": false, "Alerts": true, "Pinned": true });
         assert_eq!(value["Devices"]["a"], pinned);
         assert_eq!(value["DeviceOrder"], serde_json::json!(["b", "a"]));
         assert_eq!(value["AutostartBannerDismissed"], serde_json::json!(true));
+        assert_eq!(value["AdminBannerDismissed"], serde_json::json!(true));
         assert_eq!(AppSettings::from_value(&value), (s, true));
     }
 

@@ -1,9 +1,9 @@
 // The main window: the devices screen and the settings screen, stacked and hidden rather than destroyed, and
 // above them the layers of what can be open over everything: the lifted device of a drag, the device menu, a
-// dropdown list, a tooltip. Every text and value comes from Rust; edits go back through the callbacks. The
+// dropdown list, the admin rights window, a tooltip. Every text and value comes from Rust; edits go back through the callbacks. The
 // window's own state (the screen, what is open) is the UI's; Rust resets it through `reset-screen`.
 
-import { Palette, T } from "theme.slint";
+import { Palette, T, Card, Glyph, Btn } from "theme.slint";
 import { Tip, TipLayer, DropdownList, DropdownLayer } from "controls.slint";
 import { DeviceItem, DeviceUi, Drag, DeviceView, DevicesScreen, DeviceMenu } from "devices.slint";
 import { SettingsScreen, GeneralPage, RemindersPage, OverlayPage } from "settings.slint";
@@ -35,10 +35,10 @@ export component MainWindow inherits Window {
     in property <bool> banner-button-visible;
     in property <bool> autostart;
     in property <bool> autostart-banner-dismissed;
+    in property <bool> admin-banner;
 
     // Settings / General
     in property <string> language;
-    in property <string> elevation-text;
     in property <string> update-status;
     in property <string> update-checked-text;
     in property <string> update-notes;
@@ -65,6 +65,8 @@ export component MainWindow inherits Window {
     in-out property <int> screen: 0;
     in-out property <int> settings-tab: 0;
     in-out property <bool> hidden-open: false;
+    // The window that says what granting admin rights does, before Windows asks
+    in-out property <bool> admin-dialog: false;
     // What Rust reads
     out property <string> menu-id: DeviceUi.menu-id;
     out property <string> renaming-id: DeviceUi.renaming-id;
@@ -81,6 +83,8 @@ export component MainWindow inherits Window {
     callback suggest-improvement();
     callback autostart-changed(on: bool);
     callback dismiss-autostart-banner();
+    callback grant-admin();
+    callback dismiss-admin-banner();
     callback auto-update-changed(on: bool);
     callback low-changed(value: int);
     callback critical-changed(value: int);
@@ -105,9 +109,14 @@ export component MainWindow inherits Window {
     // The functions Rust calls. None of the first six raises a callback, also not through a change handler, so Rust
     // may call them while it holds the app's state: typed text is dropped, never applied.
 
-    // Closes or cancels the topmost thing, one per press: tooltip, dropdown list, device menu, rename, drag, shortcut
-    // recording, a settings field being typed into, the settings screen. Returns whether there was something.
+    // Closes or cancels the topmost thing, one per press: the admin rights window, tooltip, dropdown list, device menu,
+    // rename, drag, shortcut recording, a settings field being typed into, the settings screen. Returns whether there
+    // was something.
     public function escape() -> bool {
+        if (root.admin-dialog) {
+            root.admin-dialog = false;
+            return true;
+        }
         if (tips.showing) {
             Tip.cancel();
             return true;
@@ -156,6 +165,7 @@ export component MainWindow inherits Window {
         Drag.cancel();
         reminders.reset-fields();
         root.hidden-open = false;
+        root.admin-dialog = false;
         root.screen = settings ? 1 : 0;
         root.settings-tab = 0;
         keys.focus();
@@ -303,12 +313,19 @@ export component MainWindow inherits Window {
                 banner-text: root.banner-text;
                 banner-button-visible: root.banner-button-visible;
                 autostart-banner: !root.autostart && !root.autostart-banner-dismissed;
+                admin-banner: root.admin-banner;
                 hidden-open <=> root.hidden-open;
                 refresh => { root.refresh(); }
                 open-settings => { root.open-settings(); }
                 install-update => { root.install-update(); }
                 enable-autostart => { root.autostart-changed(true); }
                 dismiss-autostart-banner => { root.dismiss-autostart-banner(); }
+                grant-admin-asked => {
+                    root.end-rename(true);
+                    root.close-popups();
+                    root.admin-dialog = true;
+                }
+                dismiss-admin-banner => { root.dismiss-admin-banner(); }
                 open-menu(id) => { root.open-menu(id); }
                 rename-done => { root.end-rename(true); }
                 drag-started => {
@@ -336,7 +353,6 @@ export component MainWindow inherits Window {
                 GeneralPage {
                     visible: root.settings-tab == 0;
                     autostart: root.autostart;
-                    elevation-text: root.elevation-text;
                     language: root.language;
                     update-status: root.update-status;
                     update-checked-text: root.update-checked-text;
@@ -454,6 +470,69 @@ export component MainWindow inherits Window {
                 }
             }
             DropdownLayer { }
+            // Over everything, the rest of the window out of reach until it is answered
+            if root.admin-dialog: Rectangle {
+                background: #000000A0;
+                TouchArea { }
+                Card {
+                    x: 20px;
+                    width: parent.width - 40px;
+                    height: dialog.preferred-height;
+                    y: (parent.height - self.height) / 2;
+                    background: Palette.popup;
+                    border-color: Palette.popup-stroke;
+                    drop-shadow-offset-y: 8px;
+                    drop-shadow-blur: 24px;
+                    drop-shadow-color: rgba(0, 0, 0, 0.5);
+                    dialog := VerticalLayout {
+                        padding: 20px;
+                        spacing: 12px;
+                        HorizontalLayout {
+                            spacing: 10px;
+                            Glyph {
+                                text: "\u{E7EF}";
+                                font-size: 18px;
+                                color: Palette.warn;
+                            }
+                            Text {
+                                text: T.t("admin.dialog.title");
+                                font-size: 16px;
+                                font-weight: 600;
+                                color: Palette.text;
+                                vertical-alignment: center;
+                                wrap: word-wrap;
+                                horizontal-stretch: 1;
+                            }
+                        }
+                        Text {
+                            text: T.t("admin.dialog.text");
+                            color: Palette.text;
+                            wrap: word-wrap;
+                        }
+                        HorizontalLayout {
+                            padding-top: 4px;
+                            spacing: 8px;
+                            alignment: end;
+                            Btn {
+                                text: T.t("admin.dialog.cancel");
+                                clicked => {
+                                    root.admin-dialog = false;
+                                    keys.focus();
+                                }
+                            }
+                            Btn {
+                                accent: true;
+                                text: T.t("admin.dialog.continue");
+                                clicked => {
+                                    root.admin-dialog = false;
+                                    keys.focus();
+                                    root.grant-admin();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             tips := TipLayer {
                 pointer-inside: pointer.has-hover;
                 pointer-x: pointer.mouse-x;

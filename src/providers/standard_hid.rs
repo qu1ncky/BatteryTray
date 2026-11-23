@@ -25,7 +25,7 @@ impl Provider for StandardHidBatteryProvider {
 
     fn poll(&mut self) -> Vec<DeviceReading> {
         let mut result = Vec::new();
-        for info in hid::enumerate(|v, p| !OWN_PROVIDERS.contains(&v) && !super::devices::read_here(v, p)) {
+        for info in hid::enumerate_unclaimed(|v, p| !OWN_PROVIDERS.contains(&v) && !super::devices::read_here(v, p)) {
             if info.access_denied || info.feature_length == 0 || contains_ignore_case(&info.path, "{00001812-") {
                 continue; // BLE HID: Windows shows those itself
             }

@@ -4,17 +4,19 @@
 //! logon task gets admin rights without a UAC prompt. Anywhere else the task runs with normal rights: an elevated
 //! task must never start an exe that any program could replace. Same task, name and switches as the C# app, so an
 //! install that moves from one to the other keeps working.
+//! A copy started from anywhere else installs itself when the user grants it admin rights in the window (install()),
+//! as install.cmd does: the logon task then starts the copy in Program Files with admin rights.
 //! The task is read and written through the Task Scheduler's own interface, not schtasks.exe: the elevated app never
 //! runs an exe found through the environment, and the task's XML never passes through a file another program could
 //! change between writing and reading it.
 
 use crate::log;
 use crate::win::{self, wide};
-use std::path::PathBuf;
-use windows::core::{BSTR, PCWSTR};
+use std::path::{Path, PathBuf};
+use windows::core::{Interface, BSTR, GUID, PCWSTR};
 use windows::Win32::Foundation::CloseHandle;
 use windows::Win32::System::Com::{
-    CoCreateInstance, CoInitializeEx, CoTaskMemFree, CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED,
+    CoCreateInstance, CoInitializeEx, CoTaskMemFree, IPersistFile, CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED,
 };
 use windows::Win32::System::TaskScheduler::{
     ITaskFolder, ITaskService, TaskScheduler, TASK_CREATE_OR_UPDATE, TASK_LOGON_INTERACTIVE_TOKEN,
@@ -22,8 +24,8 @@ use windows::Win32::System::TaskScheduler::{
 use windows::Win32::System::Threading::{GetExitCodeProcess, WaitForSingleObject, INFINITE};
 use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Shell::{
-    FOLDERID_ProgramFiles, SHGetKnownFolderPath, ShellExecuteExW, KF_FLAG_DEFAULT, SEE_MASK_NOCLOSEPROCESS,
-    SHELLEXECUTEINFOW,
+    FOLDERID_CommonPrograms, FOLDERID_ProgramFiles, IShellLinkW, SHGetKnownFolderPath, ShellExecuteExW, ShellLink,
+    KF_FLAG_DEFAULT, SEE_MASK_NOCLOSEPROCESS, SEE_MASK_NOZONECHECKS, SHELLEXECUTEINFOW,
 };
 use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
 
@@ -35,20 +37,83 @@ fn exe() -> PathBuf {
     std::env::current_exe().unwrap_or_default()
 }
 
-fn program_files() -> Option<String> {
+fn known_folder(id: &GUID) -> Option<PathBuf> {
     unsafe {
-        let p = SHGetKnownFolderPath(&FOLDERID_ProgramFiles, KF_FLAG_DEFAULT, None).ok()?;
+        let p = SHGetKnownFolderPath(id, KF_FLAG_DEFAULT, None).ok()?;
         let text = p.to_string().ok();
         CoTaskMemFree(Some(p.0 as *const _));
-        text
+        text.map(PathBuf::from)
     }
 }
 
-/// True when this exe sits in Program Files, which only administrators can write to.
+/// True when the path is in Program Files, which only administrators can write to.
+fn in_program_files(path: &Path) -> bool {
+    let Some(pf) = known_folder(&FOLDERID_ProgramFiles) else { return false };
+    let path = path.to_string_lossy().to_lowercase();
+    path.starts_with(&format!("{}\\", pf.to_string_lossy().to_lowercase()))
+}
+
+/// True when this exe sits in Program Files.
 pub fn is_installed() -> bool {
-    let Some(pf) = program_files() else { return false };
-    let exe = exe().to_string_lossy().to_lowercase();
-    exe.starts_with(&format!("{}\\", pf.to_lowercase()))
+    in_program_files(&exe())
+}
+
+/// Where install() puts the exe: the same place as install.cmd.
+pub fn installed_exe() -> Option<PathBuf> {
+    Some(known_folder(&FOLDERID_ProgramFiles)?.join("BatteryTray").join("BatteryTray.exe"))
+}
+
+/// Installs this copy as install.cmd does: the exe into Program Files, the logon task that starts it from there with
+/// admin rights, a Start menu shortcut. Without admin rights an elevated copy of this exe does it (UAC prompt). False
+/// when the prompt was declined or the install failed.
+pub fn install() -> bool {
+    if win::is_elevated() {
+        install_here()
+    } else {
+        run_self_elevated("--install")
+    }
+}
+
+/// install()'s work, in a process with admin rights.
+pub fn install_here() -> bool {
+    let (source, Some(target)) = (exe(), installed_exe()) else { return false };
+    if source != target {
+        let copied =
+            target.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|_| std::fs::copy(&source, &target));
+        if let Err(e) = copied {
+            log::write(&format!("install to {}: {e}", target.display()));
+            return false;
+        }
+        // A downloaded exe carries the "from the internet" mark, and the copy keeps it
+        let _ = std::fs::remove_file(format!("{}:Zone.Identifier", target.display()));
+        log::write(&format!("installed to {}", target.display()));
+    }
+    if !register_exe(&target) {
+        return false;
+    }
+    // Only a way to open the window: the app runs without it
+    if let Err(e) = add_shortcut(&target) {
+        log::write(&format!("Start menu shortcut: {}", e.message()));
+    }
+    true
+}
+
+/// The Start menu entry install.cmd makes (uninstall.cmd removes it): launching the exe opens the window of the copy
+/// running in the tray.
+fn add_shortcut(exe: &Path) -> windows::core::Result<()> {
+    let folder = known_folder(&FOLDERID_CommonPrograms).ok_or_else(windows::core::Error::empty)?;
+    let lnk = wide(&folder.join("BatteryTray.lnk").display().to_string());
+    let target = wide(&exe.display().to_string());
+    let dir = wide(&exe.parent().map(|d| d.display().to_string()).unwrap_or_default());
+    let description = wide("Battery level of wireless devices");
+    unsafe {
+        let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+        let link: IShellLinkW = CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER)?;
+        link.SetPath(PCWSTR(target.as_ptr()))?;
+        link.SetWorkingDirectory(PCWSTR(dir.as_ptr()))?;
+        link.SetDescription(PCWSTR(description.as_ptr()))?;
+        link.cast::<IPersistFile>()?.Save(PCWSTR(lnk.as_ptr()), true)
+    }
 }
 
 /// The Task Scheduler's root folder, where the task lives.
@@ -91,9 +156,13 @@ fn escape(text: &str) -> String {
 }
 
 pub fn register() -> bool {
-    let exe = exe();
+    register_exe(&exe())
+}
+
+/// The task for the given exe: with admin rights only when it sits in Program Files.
+fn register_exe(exe: &Path) -> bool {
     let user = user_name();
-    let run_level = if is_installed() { "HighestAvailable" } else { "LeastPrivilege" };
+    let run_level = if in_program_files(exe) { "HighestAvailable" } else { "LeastPrivilege" };
     let dir = exe.parent().map(|d| d.display().to_string()).unwrap_or_default();
     let xml = format!(
         r#"<?xml version="1.0" encoding="UTF-16"?>
@@ -162,14 +231,16 @@ pub fn unregister() -> bool {
     result.is_ok()
 }
 
-/// Runs this exe with admin rights (UAC prompt) and the given switch; true when it exits with 0.
+/// Runs this exe with admin rights (UAC prompt) and the given switch; true when it exits with 0. Without the zone
+/// check: a downloaded exe carries the "from the internet" mark, and SmartScreen would stop its elevated copy with
+/// another "Windows protected your PC" although the user has already let this very file run.
 pub fn run_self_elevated(argument: &str) -> bool {
     let file = wide(&exe().display().to_string());
     let params = wide(argument);
     let verb = wide("runas");
     let mut info = SHELLEXECUTEINFOW {
         cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
-        fMask: SEE_MASK_NOCLOSEPROCESS,
+        fMask: SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NOZONECHECKS,
         lpVerb: PCWSTR(verb.as_ptr()),
         lpFile: PCWSTR(file.as_ptr()),
         lpParameters: PCWSTR(params.as_ptr()),

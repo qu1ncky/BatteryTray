@@ -2,7 +2,7 @@
 #   1. the last C# release, installed from its own zip, updates itself to this build
 #   2. this build updates itself to a newer one
 #   3. uninstall, then a fresh install of this build; its window opens
-#   4. a portable copy registers its logon task and updates itself
+#   4. a portable copy registers its logon task, installs itself (as "Grant rights" has it do) and updates itself
 #   5. the windows drawn with sample data, and the popups opened as the app opens them
 # Nothing in the app is changed for it. The app asks api.github.com for the latest release, so that name is pointed
 # at this machine (hosts) where a small server answers with a release made of the exe under test, over HTTPS with a
@@ -325,6 +325,25 @@ while ($true) {
     Assert-That (Test-Task $portable 'Limited') 'the task starts the portable exe, without admin rights'
     Assert-That ((Invoke-Exe $portable '--unregister-task') -eq 0) '--unregister-task succeeded'
     Assert-That (-not (Get-ScheduledTask -TaskName 'BatteryTray' -ErrorAction SilentlyContinue)) 'the task is gone'
+
+    # "Grant rights" in a downloaded copy installs it: the elevated copy it starts does this. Started without the shell,
+    # which would stop at the "from the internet" warning
+    $download = Join-Path $work 'download\BatteryTray.exe'
+    New-Item -ItemType Directory -Force -Path (Split-Path $download) | Out-Null
+    Copy-Item $Exe $download
+    Set-Content -Path $download -Stream Zone.Identifier -Value "[ZoneTransfer]`r`nZoneId=3"
+    $start = New-Object System.Diagnostics.ProcessStartInfo $download, '--install'
+    $start.UseShellExecute = $false
+    $p = [System.Diagnostics.Process]::Start($start)
+    Assert-That ($p.WaitForExit(30000) -and $p.ExitCode -eq 0) '--install succeeded'
+    Assert-That ((Get-ExeVersion $installed) -eq $thisVersion) "Program Files has $thisVersion"
+    $zone = Get-Item $installed -Stream Zone.Identifier -ErrorAction SilentlyContinue
+    Assert-That (-not $zone) 'the installed exe has no "from the internet" mark'
+    Assert-That (Test-Task $installed 'Highest') 'the logon task starts the installed exe with admin rights'
+    Assert-That (Test-Path $shortcut) 'the Start menu shortcut is there'
+    $code = Invoke-Script (Join-Path $repo 'uninstall.ps1')
+    Assert-That ($code -eq 0 -and -not (Test-Path (Split-Path $installed)) -and -not (Test-Path $shortcut)) 'uninstall.cmd removes it'
+
     Set-Feed $Newer
     $mark = (Get-AppLog).Count
     Start-Process $portable -ArgumentList '--background'

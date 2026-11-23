@@ -160,10 +160,9 @@ component ControlRow inherits HorizontalLayout {
     }
 }
 
-// "General": autostart, the missing administrator rights, language, updates, the log folder, ideas
+// "General": autostart, language, updates, the log folder, ideas
 export component GeneralPage inherits Page {
     in property <bool> autostart;
-    in property <string> elevation-text;
     in property <string> language;
     in property <string> update-status;
     in property <string> update-checked-text;
@@ -194,32 +193,6 @@ export component GeneralPage inherits Page {
                 text: T.t("autostart");
                 checked: root.autostart;
                 toggled(on) => { root.autostart-changed(on); }
-            }
-        }
-    }
-    if root.elevation-text != "": Card {
-        HorizontalLayout {
-            padding-top: 13px;
-            padding-right: 17px;
-            padding-bottom: 13px;
-            padding-left: 17px;
-            spacing: 12px;
-            VerticalLayout {
-                alignment: start;
-                Glyph {
-                    width: 20px;
-                    height: 20px;
-                    text: "\u{E7BA}";
-                    font-size: 18px;
-                    color: Palette.warn;
-                    horizontal-alignment: center;
-                }
-            }
-            Text {
-                text: root.elevation-text;
-                color: Palette.text;
-                wrap: word-wrap;
-                horizontal-stretch: 1;
             }
         }
     }

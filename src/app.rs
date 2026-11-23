@@ -81,11 +81,18 @@ pub fn run(args: &[String]) -> i32 {
     }
     // Launched by hand without admin rights: start the elevated copy through the logon task (no UAC prompt), so the
     // Razer headset can be read, and have it open its window
-    if !win::is_elevated() && autostart::is_registered() && autostart::run_task() {
-        for _ in 0..50 {
-            std::thread::sleep(Duration::from_millis(100));
-            if signal_running() {
-                return 0;
+    // Twice: the task ignores a start while its own instance still runs, and the copy that just installed the app for
+    // admin rights may be that instance, on its way out as this one starts
+    if !win::is_elevated() && autostart::is_registered() {
+        for _ in 0..2 {
+            if !autostart::run_task() {
+                break;
+            }
+            for _ in 0..30 {
+                std::thread::sleep(Duration::from_millis(100));
+                if signal_running() {
+                    return 0;
+                }
             }
         }
         // The task brought nothing up (its exe was moved or deleted): run this copy instead
@@ -97,6 +104,8 @@ pub fn run(args: &[String]) -> i32 {
 
 /// Switches for the installer, the updater and for diagnostics:
 ///   --register-task / --unregister-task   create or remove the elevated logon task (needs admin)
+///   --install                             copy this exe to Program Files, register its logon task and add a Start
+///                                         menu shortcut (needs admin; "Grant rights" in the window runs it)
 ///   --update                              install the latest release over this exe; exit 0 = updated,
 ///                                         2 = already up to date, 1 = failed (the app runs it elevated)
 ///   --dump [file]                         poll every provider once and write the readings to a file
@@ -112,6 +121,13 @@ fn command_line(args: &[String]) -> Option<i32> {
         }
         "--unregister-task" => {
             if autostart::unregister() {
+                0
+            } else {
+                1
+            }
+        }
+        "--install" => {
+            if autostart::install_here() {
                 0
             } else {
                 1
@@ -465,6 +481,20 @@ impl App {
         self.edit(|s| s.autostart_banner_dismissed = true);
     }
 
+    pub fn dismiss_admin_banner(&mut self) {
+        self.edit(|s| s.admin_banner_dismissed = true);
+    }
+
+    /// "Grant rights", confirmed in the window: the app installs itself into Program Files (one UAC prompt), where the
+    /// logon task starts it with admin rights, and the installed copy takes over. Declined, nothing changes.
+    pub fn grant_admin(&mut self) {
+        if autostart::install() {
+            later(|app| app.hand_over_to_installed());
+        } else {
+            log::write("admin rights: the install was declined or failed");
+        }
+    }
+
     /// A language picked in the settings ("auto" follows Windows): everything switches right away.
     pub fn set_language(&mut self, setting: &str) {
         self.settings.language = setting.to_string();
@@ -793,6 +823,19 @@ impl App {
         }
         if let Err(e) = command.spawn() {
             log::write(&format!("cannot start the new version: {e}"));
+        }
+        let _ = slint::quit_event_loop();
+    }
+
+    /// Installed for admin rights: the copy in Program Files takes over, with the window open. Started directly,
+    /// it goes through the new logon task by itself and comes up with admin rights (run() does); an elevated copy
+    /// starts it elevated anyway. Like an update, it can only start once this one has torn down.
+    fn hand_over_to_installed(&mut self) {
+        let Some(exe) = autostart::installed_exe() else { return };
+        log::write("handing over to the installed copy");
+        self.tear_down();
+        if let Err(e) = std::process::Command::new(exe).spawn() {
+            log::write(&format!("cannot start the installed copy: {e}"));
         }
         let _ = slint::quit_event_loop();
     }
