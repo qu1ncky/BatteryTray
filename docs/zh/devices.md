@@ -17,8 +17,7 @@
 
 | 设备 | 连接方式 | 状态 |
 |---|---|---|
-| **Razer Barracuda X**（2022） | USB-C 2.4 GHz 接收器 `1532:0550` | ✅ 已测试 |
-| Razer Barracuda X（2022），接收器 `1532:0552` | USB-C 2.4 GHz 接收器 | 支持 |
+| **Razer Barracuda X**（2022） | USB-C 2.4 GHz 接收器 `1532:0550` 或 `1532:0552` | ✅ 已测试 |
 | **Razer** BlackShark V2 HyperSpeed、BlackShark V2 Pro（2020 和 2023）、BlackShark V3、BlackShark V3 X HyperSpeed、Kraken V4 / V4 Pro、Kraken Kitty V3 Pro、Barracuda Pro | 接收器或数据线 | 支持 |
 | **Logitech G** G533、G535、G633 / G635 / G733 / G933 / G935、G PRO / PRO X Wireless、G PRO X 2 LIGHTSPEED、G PRO X 3 LIGHTSPEED、G522 LIGHTSPEED、G930 | 接收器 | 支持 |
 | **ASTRO** A50（Gen 4、Gen 5）、A50 X、A20 X | 基座、发射器或数据线 | 支持 |

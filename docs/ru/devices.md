@@ -17,8 +17,7 @@
 
 | Устройство | Подключение | Статус |
 |---|---|---|
-| **Razer Barracuda X** (2022) | USB-C донгл 2,4 ГГц `1532:0550` | ✅ Проверено |
-| Razer Barracuda X (2022) с донглом `1532:0552` | USB-C донгл 2,4 ГГц | Поддерживается |
+| **Razer Barracuda X** (2022) | USB-C донгл 2,4 ГГц `1532:0550` или `1532:0552` | ✅ Проверено |
 | **Razer** BlackShark V2 HyperSpeed, BlackShark V2 Pro (2020 и 2023), BlackShark V3, BlackShark V3 X HyperSpeed, Kraken V4 / V4 Pro, Kraken Kitty V3 Pro, Barracuda Pro | приёмник или кабель | Поддерживается |
 | **Logitech G** G533, G535, G633 / G635 / G733 / G933 / G935, G PRO / PRO X Wireless, G PRO X 2 LIGHTSPEED, G PRO X 3 LIGHTSPEED, G522 LIGHTSPEED, G930 | приёмник | Поддерживается |
 | **ASTRO** A50 (Gen 4, Gen 5), A50 X, A20 X | базовая станция, передатчик или кабель | Поддерживается |

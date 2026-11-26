@@ -17,8 +17,7 @@ Contents: [Headsets](#headsets) · [Mice](#mice) · [Keyboards](#keyboards) · [
 
 | Device | Connection | Status |
 |---|---|---|
-| **Razer Barracuda X** (2022) | USB-C 2.4 GHz dongle `1532:0550` | ✅ Tested |
-| Razer Barracuda X (2022) on the dongle `1532:0552` | USB-C 2.4 GHz dongle | Supported |
+| **Razer Barracuda X** (2022) | USB-C 2.4 GHz dongle `1532:0550` or `1532:0552` | ✅ Tested |
 | **Razer** BlackShark V2 HyperSpeed, BlackShark V2 Pro (2020 and 2023), BlackShark V3, BlackShark V3 X HyperSpeed, Kraken V4 / V4 Pro, Kraken Kitty V3 Pro, Barracuda Pro | receiver or cable | Supported |
 | **Logitech G** G533, G535, G633 / G635 / G733 / G933 / G935, G PRO / PRO X Wireless, G PRO X 2 LIGHTSPEED, G PRO X 3 LIGHTSPEED, G522 LIGHTSPEED, G930 | receiver | Supported |
 | **ASTRO** A50 (Gen 4, Gen 5), A50 X, A20 X | base station, transmitter or cable | Supported |
