@@ -289,7 +289,8 @@ pub fn update_view(u: &Status) -> UpdateView {
     }
 }
 
-/// The tray icon: a number in a color, and a line per device. The menu bar item on macOS shows `bar` instead.
+/// The tray icon: a number in a color, and a line per device. The menu bar item on macOS shows `bar` instead, and
+/// so does the taskbar strip on Windows, next to the icon.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TrayView {
     pub label: String,
@@ -298,11 +299,15 @@ pub struct TrayView {
     pub lines: Vec<String>,
     /// The lines joined, or "no data"
     pub tooltip: String,
-    /// macOS: the devices in the menu bar item, as many as the settings say at most
+    /// The devices in the menu bar item on macOS and in the taskbar strip on Windows, as many as the settings say at
+    /// most
     pub bar: Vec<BarSlot>,
+    /// The device the icon's number is of, as the strip shows it when the taskbar has room for one device only
+    pub urgent: Option<BarSlot>,
 }
 
-/// One device in the menu bar item on macOS: its kind's symbol, then its level without "%".
+/// One device in the menu bar item on macOS or in the taskbar strip on Windows: its kind's symbol, then its level
+/// without "%".
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BarSlot {
     pub kind: DeviceKind,
@@ -359,7 +364,8 @@ pub fn tray_view(rows: &[DeviceRow], s: &AppSettings) -> TrayView {
         Some((r, charging, l)) => (l.to_string(), level_tone(Some(*l), *charging, true, &r.id, s)),
     };
     let bar = bar_slots(&shown, s);
-    TrayView { label, tone, lines, tooltip, bar }
+    let urgent = pick.and_then(|(r, _, _)| r.current.as_ref().map(|c| bar_slot(r, c, s)));
+    TrayView { label, tone, lines, tooltip, bar, urgent }
 }
 
 /// The devices in the menu bar item: the first ones of the list that have a level or are charging, at most as many as
@@ -380,18 +386,17 @@ fn bar_slots(shown: &[&DeviceRow], s: &AppSettings) -> Vec<BarSlot> {
         picked.remove(place);
         picked.push(device);
     }
-    picked
-        .into_iter()
-        .map(|(r, c)| {
-            let power = c.charging || c.full_on_charger;
-            BarSlot {
-                kind: r.kind(),
-                level: c.level.map(|l| format!("{}{l}", if c.estimate { "≈" } else { "" })).unwrap_or_default(),
-                tone: level_tone(c.level, power, true, &r.id, s),
-                power,
-            }
-        })
-        .collect()
+    picked.into_iter().map(|(r, c)| bar_slot(r, c, s)).collect()
+}
+
+fn bar_slot(r: &DeviceRow, c: &DeviceReading, s: &AppSettings) -> BarSlot {
+    let power = c.charging || c.full_on_charger;
+    BarSlot {
+        kind: r.kind(),
+        level: c.level.map(|l| format!("{}{l}", if c.estimate { "≈" } else { "" })).unwrap_or_default(),
+        tone: level_tone(c.level, power, true, &r.id, s),
+        power,
+    }
 }
 
 /// A name as the tooltip has room for it.
@@ -562,6 +567,10 @@ mod tests {
         assert_eq!(bar.iter().map(|b| b.level.as_str()).collect::<Vec<_>>(), ["37", "62", "15"]);
         assert_eq!((bar[1].power, bar[1].tone, bar[2].tone), (true, Tone::Charge, Tone::Warn));
         assert_eq!(bar[2].kind, DeviceKind::Phone);
+        // The one the icon's number is of, for a taskbar with room for one device: the phone, the only one running out
+        let urgent = tray_view(&rows, &s).urgent.expect("a device with a level");
+        assert_eq!((urgent.kind, urgent.level.as_str(), urgent.tone), (DeviceKind::Phone, "15", Tone::Warn));
+        assert_eq!(tray_view(&[], &s).urgent, None);
 
         // All five fit; one place shows the one running out
         s.menu_bar_devices = 5;

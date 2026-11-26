@@ -18,7 +18,8 @@ use crate::settings::AppSettings;
 use crate::sound_player::{self, Player};
 use crate::sounds::{self, Choice};
 use crate::state::StateStore;
-use crate::tray::{self, Tray, MENU_EXIT, MENU_OPEN, MENU_REFRESH, MENU_SETTINGS};
+use crate::strip::{self, Strip};
+use crate::tray::{self, Tray, MENU_EXIT, MENU_HIDE_STRIP, MENU_OPEN, MENU_REFRESH, MENU_SETTINGS};
 use crate::update_service::{Event, Status, UpdateService};
 use crate::updater::{self, ReleaseInfo, Version};
 use crate::{diag, gui, log, providers, theme, view, win};
@@ -234,11 +235,15 @@ pub fn with_app<R>(f: impl FnOnce(&mut App) -> R) -> Option<R> {
 }
 
 pub struct App {
+    /// The hidden window the tray icon and its menu belong to
+    window: HWND,
     activator: HWND,
     pub settings: AppSettings,
     state: Arc<StateStore>,
     monitor: Option<Monitor>,
     tray: Option<Tray>,
+    /// The devices' levels on the taskbar, while the settings have them there
+    strip: Option<Strip>,
     tooltip: String,
     charge_done: ChargeDoneWatcher,
     alerts: AlertManager,
@@ -314,11 +319,13 @@ impl App {
             updated_from.as_ref().map(|v| format!(", updated from v{v}")).unwrap_or_default()
         ));
         let app = App {
+            window: hwnd,
             activator,
             settings,
             state,
             monitor: Some(monitor),
             tray: Some(tray),
+            strip: None,
             tooltip: String::new(),
             charge_done: ChargeDoneWatcher::default(),
             alerts: AlertManager::default(),
@@ -422,6 +429,7 @@ impl App {
             gui::show_and_activate(&view.ui);
         }
         self.sync_window_open();
+        self.update_strip();
     }
 
     pub fn close_main(&mut self) {
@@ -433,6 +441,7 @@ impl App {
         }
         self.sound_refused = None;
         self.sync_window_open();
+        self.update_strip();
     }
 
     /// The main window's handle while it is open: the owner of a dialog opened from it.
@@ -900,10 +909,69 @@ impl App {
 
     fn update_tray(&mut self) {
         let tray = view::tray_view(&self.rows(), &self.settings);
-        self.tooltip = tray.tooltip;
+        self.tooltip = tray.tooltip.clone();
         let tooltip = self.tooltip.clone();
         if let Some(tray_icon) = &mut self.tray {
             tray_icon.update(&tray.label, tray.tone.rgb(theme::current().taskbar_light), &tooltip);
+        }
+        self.show_on_strip(&tray);
+    }
+
+    /// The taskbar strip, there while the settings say so: the same devices in the same order as the Mac's menu bar
+    /// item, in the taskbar's mode; pressed in while the app's window is open.
+    fn show_on_strip(&mut self, tray: &view::TrayView) {
+        if !self.settings.taskbar_strip || self.stopping {
+            self.strip = None;
+            return;
+        }
+        if self.strip.is_none() {
+            let window = self.window;
+            self.strip = Strip::new(move |action| match action {
+                strip::Action::Open => later(|app| app.open()),
+                // The menu runs its own loop: the app is told once it has closed
+                strip::Action::Menu => {
+                    let chosen = tray::show_menu(window, true);
+                    later(move |app| app.menu_chosen(chosen));
+                }
+            });
+            if self.strip.is_none() {
+                log::write("taskbar strip: its window couldn't be made");
+            }
+        }
+        if let Some(strip) = &self.strip {
+            let slot = |b: &view::BarSlot| strip::Slot {
+                glyph: crate::main_view::glyph(b.kind),
+                level: b.level.clone(),
+                tone: b.tone,
+                power: b.power,
+            };
+            strip.set(strip::Content {
+                slots: tray.bar.iter().map(slot).collect(),
+                urgent: tray.urgent.as_ref().map(slot),
+                tooltip: tray.tooltip.clone(),
+                light: theme::current().taskbar_light,
+                active: self.main.is_some(),
+            });
+        }
+    }
+
+    /// The app's window opened or closed: the strip shows it.
+    fn update_strip(&mut self) {
+        if self.strip.is_some() {
+            let tray = view::tray_view(&self.rows(), &self.settings);
+            self.show_on_strip(&tray);
+        }
+    }
+
+    /// What was chosen in the tray icon's menu, opened from the icon or from the strip.
+    fn menu_chosen(&mut self, chosen: u32) {
+        match chosen {
+            MENU_OPEN => self.open(),
+            MENU_SETTINGS => self.open_settings(),
+            MENU_REFRESH => self.refresh_now(),
+            MENU_HIDE_STRIP => self.edit(|s| s.taskbar_strip = false),
+            MENU_EXIT => self.exit(),
+            _ => {}
         }
     }
 
@@ -1004,6 +1072,7 @@ impl App {
         self.close_alert();
         self.test_alert = None;
         self.main = None;
+        self.strip = None;
         self.tray = None;
         unsafe {
             let _ = DestroyWindow(self.activator);
@@ -1077,14 +1146,8 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
         WM_APP_TRAY => match lparam.0 as u32 {
             WM_LBUTTONUP => later(|app| app.open()),
             WM_RBUTTONUP | WM_CONTEXTMENU => {
-                let chosen = tray::show_menu(hwnd);
-                later(move |app| match chosen {
-                    MENU_OPEN => app.open(),
-                    MENU_SETTINGS => app.open_settings(),
-                    MENU_REFRESH => app.refresh_now(),
-                    MENU_EXIT => app.exit(),
-                    _ => {}
-                });
+                let chosen = tray::show_menu(hwnd, false);
+                later(move |app| app.menu_chosen(chosen));
             }
             _ => {}
         },

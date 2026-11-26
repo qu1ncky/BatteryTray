@@ -161,7 +161,7 @@ pub fn set_title_bar(window: &slint::Window, light: bool) {
 }
 
 /// Segoe Fluent Icons on Windows 11, Segoe MDL2 Assets on Windows 10.
-fn icon_font() -> &'static str {
+pub(crate) fn icon_font() -> &'static str {
     let fonts = std::env::var_os("SystemRoot").map(std::path::PathBuf::from).unwrap_or_default().join("Fonts");
     if fonts.join("SegoeIcons.ttf").exists() {
         "Segoe Fluent Icons"

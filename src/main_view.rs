@@ -13,7 +13,7 @@ use crate::list_diff::{self, Step};
 use crate::loc::{self, t};
 use crate::reading::DeviceKind;
 use crate::rows::DeviceRow;
-use crate::settings::AppSettings;
+use crate::settings::{AppSettings, MENU_BAR_DEVICES};
 use crate::sounds::{self, Choice, Event};
 use crate::theme;
 use crate::update_service::Status;
@@ -135,6 +135,8 @@ impl MainView {
         ui.set_overlay_names(s.overlay_show_names);
         ui.set_language(s.language.clone().into());
         ui.set_theme(s.theme.clone().into());
+        ui.set_taskbar_strip(s.taskbar_strip);
+        ui.set_taskbar_devices(s.menu_bar_devices);
         ui.set_autostart_banner_dismissed(s.autostart_banner_dismissed);
         self.refresh_overlay_status(s, app.overlay.shortcut_available());
     }
@@ -348,6 +350,12 @@ fn connect(ui: &MainWindow) {
     });
     ui.on_theme_chosen(|setting| {
         with_app(|a| a.set_theme(&setting));
+    });
+    ui.on_taskbar_strip_changed(|on| {
+        with_app(|a| a.edit(|s| s.taskbar_strip = on));
+    });
+    ui.on_taskbar_devices_chosen(|devices| {
+        with_app(|a| a.edit(|s| s.menu_bar_devices = devices.clamp(MENU_BAR_DEVICES.0, MENU_BAR_DEVICES.1)));
     });
     ui.on_test_alert(|| {
         with_app(|a| a.show_test_alert());

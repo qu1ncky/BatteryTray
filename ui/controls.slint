@@ -2,7 +2,7 @@
 // what the app has. Tooltips and dropdown lists are drawn on layers above the whole window (see main.slint), so no
 // scroll view clips them; the small shapes that have no glyph are drawn here too.
 
-import { Palette, T, Glyph } from "theme.slint";
+import { Palette, T, Glyph, Hint } from "theme.slint";
 
 // 40x20 switch that only shows a state: the row it sits in is what gets clicked. The knob slides and the colours
 // cross-fade in 120ms, except for a first value (a switch that appears switched on is on) and while `instant`.
@@ -230,14 +230,17 @@ export component SwitchRow inherits Rectangle {
     // The ⓘ's tooltip ("" = no ⓘ), and what a screen reader calls the ⓘ
     in property <string> hint;
     in property <string> hint-label;
+    // A line under the label, for what the label alone doesn't say ("" = none)
+    in property <string> caption;
     // The row a card of its own is made of: a bigger label, a taller row
     in property <bool> strong;
     in property <string> leading-glyph;
     in property <color> leading-color: Palette.secondary;
     callback toggled(bool);
-    min-height: root.strong ? 56px : 48px;
+    min-height: root.strong || root.caption != "" ? 56px : 48px;
     accessible-role: switch;
     accessible-label: root.text;
+    accessible-description: root.caption;
     accessible-checked: root.checked;
     accessible-action-default => { root.toggled(!root.checked); }
     // Beneath the ⓘ: of two TouchAreas the one declared later is on top, and the ⓘ needs its own hover
@@ -260,13 +263,27 @@ export component SwitchRow inherits Rectangle {
             alignment: start;
             spacing: 6px;
             horizontal-stretch: 1;
-            Text {
+            if root.caption == "": Text {
                 text: root.text;
                 font-size: root.strong ? 14px : 13px;
                 font-weight: root.strong ? 600 : 400;
                 color: Palette.text;
                 vertical-alignment: center;
                 wrap: word-wrap;
+            }
+            if root.caption != "": VerticalLayout {
+                alignment: center;
+                spacing: 2px;
+                Text {
+                    text: root.text;
+                    font-size: root.strong ? 14px : 13px;
+                    font-weight: root.strong ? 600 : 400;
+                    color: Palette.text;
+                    wrap: word-wrap;
+                }
+                Hint {
+                    text: root.caption;
+                }
             }
             if root.hint != "": VerticalLayout {
                 alignment: center;

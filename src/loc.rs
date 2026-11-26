@@ -193,6 +193,10 @@ static STRINGS: &[(&str, &str, &str, &str)] = &[
     ("updates.check", "Проверить", "Check now", "立即检查"),
     ("updates.auto", "Обновлять автоматически", "Install updates automatically", "自动安装更新"),
     ("autostart", "Запускать при входе в Windows", "Start with Windows", "开机自动启动"),
+    ("taskbar.header", "Панель задач", "Taskbar", "任务栏"),
+    ("taskbar.show", "Показывать заряд на панели задач", "Show battery levels on the taskbar", "在任务栏上显示电量"),
+    ("taskbar.where", "Слева от значков у часов", "To the left of the icons by the clock", "显示在时钟旁图标的左侧"),
+    ("taskbar.devices", "Устройств на панели задач", "Devices on the taskbar", "任务栏上显示的设备数"),
     ("open.folder", "Открыть папку с логом и настройками", "Open the log and settings folder", "打开日志和设置文件夹"),
     ("feedback", "Предложить улучшение", "Suggest an improvement", "提出改进建议"),
     ("feedback.browser", "Откроется в браузере", "Opens in the browser", "将在浏览器中打开"),
@@ -262,6 +266,7 @@ static STRINGS: &[(&str, &str, &str, &str)] = &[
     // Tray and notifications
     ("tray.open", "Открыть", "Open", "打开"),
     ("tray.exit", "Выход", "Exit", "退出"),
+    ("tray.hide.strip", "Скрыть с панели задач", "Hide from the taskbar", "从任务栏隐藏"),
     ("tray.nodata", "Заряд устройств: нет данных", "Device Battery: no data", "设备电量：暂无数据"),
     ("tray.charging", "{0}: заряжается ⚡", "{0}: charging ⚡", "{0}：充电中 ⚡"),
     ("notice.updated.title", "BatteryTray обновлён", "BatteryTray updated", "BatteryTray 已更新"),
