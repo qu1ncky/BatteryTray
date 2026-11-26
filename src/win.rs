@@ -51,6 +51,54 @@ pub fn is_elevated() -> bool {
     }
 }
 
+/// The exe name of the process that started this one: "svchost.exe" for the logon task, "explorer.exe" for a launch
+/// by hand or from the Startup folder. None when it has ended since. For the log only: Windows gives the number of a
+/// process that has ended to a new one, so now and then the name is another program's.
+pub fn parent_process() -> Option<String> {
+    const SNAP_PROCESS: u32 = 2;
+    #[repr(C)]
+    struct Entry {
+        size: u32,
+        usage: u32,
+        id: u32,
+        heap: usize,
+        module: u32,
+        threads: u32,
+        parent: u32,
+        priority: i32,
+        flags: u32,
+        exe: [u16; 260],
+    }
+    let mut entry = Entry {
+        size: std::mem::size_of::<Entry>() as u32,
+        usage: 0,
+        id: 0,
+        heap: 0,
+        module: 0,
+        threads: 0,
+        parent: 0,
+        priority: 0,
+        flags: 0,
+        exe: [0; 260],
+    };
+    let mut processes = Vec::new();
+    unsafe {
+        let snapshot = CreateToolhelp32Snapshot(SNAP_PROCESS, 0);
+        if snapshot == INVALID_HANDLE {
+            return None;
+        }
+        let mut more = Process32FirstW(snapshot, &mut entry as *mut Entry as *mut c_void);
+        while more != 0 {
+            processes.push((entry.id, entry.parent, from_wide(&entry.exe)));
+            more = Process32NextW(snapshot, &mut entry as *mut Entry as *mut c_void);
+        }
+        CloseHandle(snapshot);
+    }
+    let me = std::process::id();
+    let parent = processes.iter().find(|p| p.0 == me)?.1;
+    processes.into_iter().find(|p| p.0 == parent).map(|p| p.2)
+}
+
 /// %LOCALAPPDATA%\BatteryTray: settings.json, state.json and the log.
 pub fn app_data_folder() -> PathBuf {
     let base = std::env::var_os("LOCALAPPDATA").map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
@@ -108,6 +156,9 @@ extern "system" {
     ) -> u32;
     fn GetCurrentProcess() -> isize;
     fn GetUserDefaultUILanguage() -> u16;
+    fn CreateToolhelp32Snapshot(flags: u32, process: u32) -> isize;
+    fn Process32FirstW(snapshot: isize, entry: *mut c_void) -> i32;
+    fn Process32NextW(snapshot: isize, entry: *mut c_void) -> i32;
     pub fn CreateFileW(
         name: *const u16,
         access: u32,
@@ -136,4 +187,17 @@ pub fn open_path(path: &str, access: u32, flags: u32) -> isize {
     const OPEN_EXISTING: u32 = 3;
     let name = wide(path);
     unsafe { CreateFileW(name.as_ptr(), access, SHARE_READ_WRITE, null_mut(), OPEN_EXISTING, flags, 0) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The tests are started by cargo or by a test runner: an exe that is still there.
+    #[test]
+    fn the_process_that_started_this_one_has_a_name() {
+        let parent = parent_process();
+        println!("started by {parent:?}");
+        assert!(parent.is_some_and(|p| p.to_lowercase().ends_with(".exe")));
+    }
 }
