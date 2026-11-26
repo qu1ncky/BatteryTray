@@ -100,11 +100,17 @@ does nothing for a target other than Windows.
   to PNG files, off screen, in the dark theme unless told otherwise (the overlay is dark in both), to check a layout without
   running the app: the device list (with the update banner, and without it for the README; a device's menu, a smaller
   one, a name being edited, the hidden devices shown, and the empty list with the autostart banner), each settings tab
-  (and the update card with a newer version), the reminder and the overlay. A drag, a tooltip and an open dropdown need
+  (the general one also with the taskbar strip switched on, and with the update card of a newer version), the reminder and the overlay. A drag, a tooltip and an open dropdown need
   a real pointer and are not drawn.
 - `cargo run --example popup_probe` (Windows) - opens the reminder and the overlay as the app does and prints where their windows
   are every 5 ms, with their extended styles: for catching a popup that jumps, can be clicked, takes focus or doesn't
   follow its contents' size.
+- `cargo run --example strip_probe -- [folder] [seconds] [light|dark]` (Windows) - puts the taskbar strip (Settings > General >
+  Taskbar, `src/strip.rs`) on the real taskbar with the demo's devices for 10 seconds, with no app around it, and prints
+  every second where its window is, where the notification area starts and whether the mouse would reach the strip; first,
+  where the apps' buttons end, as the accessibility tree says. With a folder it also draws the strip to PNG files, at rest
+  and under the pointer, for a dark and a light taskbar. The strip is a window of the app's own laid over the taskbar, so
+  this is how to see it on a taskbar the app has never run on: another scale, the taskbar at the top, Windows 10.
 
 ## Checked on a real desktop
 

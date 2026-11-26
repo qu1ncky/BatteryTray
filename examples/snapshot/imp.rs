@@ -187,6 +187,8 @@ pub fn main() {
 
         main.set_language(language.into());
         main.set_theme(settings.theme.clone().into());
+        main.set_taskbar_strip(settings.taskbar_strip);
+        main.set_taskbar_devices(settings.menu_bar_devices);
         main.set_update_status(tf("upd.uptodate", &[&version]).into());
         main.set_update_checked_text(tf("upd.checked", &[&now.format("%H:%M")]).into());
         main.set_install_text(tf("upd.install", &[&latest]).into());
@@ -262,6 +264,13 @@ pub fn main() {
     main.set_screen(1);
     main.set_settings_tab(0);
     render(&window, scale, size, &folder.join("main-settings-general.png"));
+
+    // The taskbar strip switched on: how many devices it shows comes with it
+    let (main, window) = open(&rows);
+    main.set_screen(1);
+    main.set_settings_tab(0);
+    main.set_taskbar_strip(true);
+    render(&window, scale, size, &folder.join("main-settings-taskbar.png"));
 
     let (main, window) = open(&rows);
     main.set_screen(1);
