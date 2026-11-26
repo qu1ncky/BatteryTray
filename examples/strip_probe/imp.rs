@@ -39,6 +39,51 @@ fn demo(light: bool) -> Content {
     }
 }
 
+/// The README's taskbar: a headset and a mouse that keep their levels, and a keyboard that runs down past its reminder
+/// and critical levels (20% and 10%, the defaults), is put on its cable (`true`) and charges back. The Mac's menu bar
+/// frames have the same levels (macos/BatteryTray/Snapshot.swift).
+const README_KEYBOARD: [(i32, bool); 16] = [
+    (24, false),
+    (22, false),
+    (20, false),
+    (18, false),
+    (16, false),
+    (14, false),
+    (12, false),
+    (10, false),
+    (8, false),
+    (6, false),
+    (6, true),
+    (9, true),
+    (12, true),
+    (15, true),
+    (18, true),
+    (21, true),
+];
+
+fn readme_frame(level: i32, power: bool) -> Content {
+    let tone = if power {
+        Tone::Charge
+    } else if level <= 10 {
+        Tone::Bad
+    } else if level <= 20 {
+        Tone::Warn
+    } else {
+        Tone::Good
+    };
+    Content {
+        slots: vec![
+            slot(DeviceKind::Headset, "64", Tone::Good, false),
+            slot(DeviceKind::Mouse, "47", Tone::Good, false),
+            slot(DeviceKind::Keyboard, &level.to_string(), tone, power),
+        ],
+        urgent: None,
+        tooltip: String::new(),
+        light: false,
+        active: false,
+    }
+}
+
 fn save(folder: &Path, name: &str, content: &Content, scale: f32, hover: bool) {
     let Some((w, h, pixels)) = strip::picture(content, scale, hover) else {
         eprintln!("{name}: not drawn");
@@ -90,6 +135,10 @@ pub fn main() {
         // The same row at 100% and 200%, to see the sizes hold
         save(folder, "strip-dark-100.png", &demo(false), 1.0, true);
         save(folder, "strip-dark-200.png", &demo(false), 2.0, true);
+        // The README's frames at 400% (macos/readme-pictures.sh)
+        for (i, (level, power)) in README_KEYBOARD.iter().enumerate() {
+            save(folder, &format!("readme-{i:02}.png"), &readme_frame(*level, *power), 4.0, false);
+        }
     }
     if seconds == 0 {
         return;

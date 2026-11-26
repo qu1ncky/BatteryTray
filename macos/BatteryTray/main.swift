@@ -7,7 +7,8 @@ import AppKit
 //   --update       install the latest release over this app; exit 0 = updated, 2 = up to date, 1 = failed
 //   --dump [file]  poll every device once and write what was read
 //   --demo         the devices of the README's pictures instead of the real ones, with settings of their own
-//   --snapshot <folder> [ru|en|zh] [light|dark]   with the demo's devices, draw each window to a PNG file and quit
+//   --snapshot <folder> [ru|en|zh] [light|dark] [frames]   with the demo's devices, draw each window to a PNG file
+//                  and quit; `frames` adds the README's animations (macos/readme-pictures.sh)
 
 let arguments = Array(CommandLine.arguments.dropFirst())
 

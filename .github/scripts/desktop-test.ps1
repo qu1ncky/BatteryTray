@@ -374,6 +374,9 @@ while ($true) {
         Assert-That ($p.WaitForExit(30000)) 'the popups were opened and closed'
         Get-Content $probe | Select-Object -First 4 | ForEach-Object { Write-Host "  | $_" }
         Get-Content $probe | Select-Object -Last 3 | ForEach-Object { Write-Host "  | $_" }
+        # The taskbar strip drawn to PNG files, the README's frames among them (macos/readme-pictures.sh)
+        & (Join-Path $Examples 'strip_probe.exe') (Join-Path $Out 'strip') 0 | Out-Null
+        Assert-That ($LASTEXITCODE -eq 0) 'the taskbar strip drawn'
     }
 
     Write-Step 'All of it worked'
