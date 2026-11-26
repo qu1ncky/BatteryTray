@@ -87,7 +87,7 @@ Windows: в `%LOCALAPPDATA%\BatteryTray` лежат `settings.json`, `state.json
 ## Что-то не работает
 
 **Моего устройства нет в списке.**
-Новые устройства появляются через несколько секунд после подключения, а «Обновить заряд» ищет сразу. Если вашего всё равно нет, см. [Устройства нет в списке?](devices.md#устройства-нет-в-списке): две команды, по которым видно, что это за устройство, — их результат нужно прислать в [Issues](https://github.com/qu1ncky/BatteryTray/issues).
+Новые устройства появляются через несколько секунд после подключения, а «Обновить заряд» ищет сразу. Если вашего всё равно нет, см. [Устройства нет в списке?](devices.md#устройства-нет-в-списке): команды для Windows и macOS покажут USB ID и название его приёмника — пришлите их вывод в [Issues](https://github.com/qu1ncky/BatteryTray/issues) вместе с логом.
 
 **Куда сообщить о проблеме?**
 В [Issues](https://github.com/qu1ncky/BatteryTray/issues), с логом: `%LOCALAPPDATA%\BatteryTray\log.txt` в Windows, `~/Library/Application Support/BatteryTray/log.txt` на Mac.

@@ -84,7 +84,7 @@
 
 [支持的设备](docs/zh/devices.md) · [全部功能](docs/zh/features.md) · [常见问题](docs/zh/faq.md) · [工作原理](docs/zh/how-it-works.md) · [从源码构建](docs/development.md) · [更新说明](https://github.com/qu1ncky/BatteryTray/releases)
 
-没有找到你的设备，或遇到问题？请[提交 issue](https://github.com/qu1ncky/BatteryTray/issues) 并附上日志：Windows 上为 `%LOCALAPPDATA%\BatteryTray\log.txt`，Mac 上为 `~/Library/Application Support/BatteryTray/log.txt`。
+没有找到你的设备，或遇到问题？请[提交 issue](https://github.com/qu1ncky/BatteryTray/issues) 并附上日志：Windows 上为 `%LOCALAPPDATA%\BatteryTray\log.txt`，Mac 上为 `~/Library/Application Support/BatteryTray/log.txt`。如需添加新设备，还请在设备连接时附上[这条命令](docs/zh/devices.md#设备不在列表中)的输出，它会显示设备接收器的 USB ID。
 
 ## 许可证
 

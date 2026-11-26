@@ -84,7 +84,7 @@
 
 [Поддерживаемые устройства](docs/ru/devices.md) · [Все возможности](docs/ru/features.md) · [Частые вопросы](docs/ru/faq.md) · [Как это работает](docs/ru/how-it-works.md) · [Сборка из исходников](docs/development.md) · [Что нового](https://github.com/qu1ncky/BatteryTray/releases)
 
-Нет вашего устройства или что-то не так? [Создайте issue](https://github.com/qu1ncky/BatteryTray/issues) и приложите лог: `%LOCALAPPDATA%\BatteryTray\log.txt` в Windows, `~/Library/Application Support/BatteryTray/log.txt` на Mac.
+Нет вашего устройства или что-то не так? [Создайте issue](https://github.com/qu1ncky/BatteryTray/issues) и приложите лог: `%LOCALAPPDATA%\BatteryTray\log.txt` в Windows, `~/Library/Application Support/BatteryTray/log.txt` на Mac. Чтобы добавили новое устройство, приложите ещё вывод [этой команды](docs/ru/devices.md#устройства-нет-в-списке), пока оно подключено: она покажет USB ID его приёмника.
 
 ## Лицензия
 

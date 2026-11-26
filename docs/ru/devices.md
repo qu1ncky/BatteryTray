@@ -133,14 +133,22 @@
 
 ## Устройства нет в списке?
 
-Новые устройства появляются через несколько секунд после подключения, а «Обновить заряд» ищет сразу. Если вашего нет, выполните в PowerShell, пока устройство подключено, и пришлите результат в [Issues](https://github.com/qu1ncky/BatteryTray/issues):
+Новые устройства появляются через несколько секунд после подключения, а «Обновить заряд» ищет сразу. Если вашего нет, [создайте issue](https://github.com/qu1ncky/BatteryTray/issues) и приложите то, что выведет команда ниже, пока устройство подключено (USB ID и название его приёмника), и лог.
+
+**Windows**, в PowerShell:
 
 ```powershell
 Get-PnpDevice -PresentOnly | ? InstanceId -match '^USB\\VID_\w{4}&PID_\w{4}\\' | % { "{0}  {1}" -f $_.InstanceId.Substring(4,17), (Get-PnpDeviceProperty -InstanceId $_.InstanceId -KeyName DEVPKEY_Device_BusReportedDeviceDesc).Data }
 ```
 
-Пригодится и диагностика: `"C:\Program Files\BatteryTray\BatteryTray.exe" --dump "%USERPROFILE%\Desktop\battery.txt"` — один опрос всех устройств в файл, — и лог `%LOCALAPPDATA%\BatteryTray\log.txt`.
+Лог — `%LOCALAPPDATA%\BatteryTray\log.txt`. Пригодится и диагностика — один опрос всех устройств в файл: `"C:\Program Files\BatteryTray\BatteryTray.exe" --dump "%USERPROFILE%\Desktop\battery.txt"`.
 
-На Mac: `system_profiler SPUSBDataType` покажет USB-устройства с их ID, `/Applications/BatteryTray.app/Contents/MacOS/BatteryTray --dump ~/Desktop/battery.txt` опросит все устройства один раз, а лог лежит в `~/Library/Application Support/BatteryTray/log.txt`.
+**macOS**, в Терминале:
+
+```sh
+ioreg -p IOUSB -l -w0 | awk -F' = ' '/"idVendor"/{v=$2} /"idProduct"/{p=$2} /"USB Product Name"|"kUSBProductString"/{if(n=="")n=$2} /^[ |]*}[ ]*$/{if(v!=""){gsub(/"/,"",n);printf "%04X:%04X  %s\n",v,p,n}; v=p=n=""}'
+```
+
+Лог — `~/Library/Application Support/BatteryTray/log.txt`. Пригодится и диагностика — один опрос всех устройств в файл: `/Applications/BatteryTray.app/Contents/MacOS/BatteryTray --dump ~/Desktop/battery.txt`.
 
 Как добавляется новое устройство: [Как это работает](how-it-works.md#как-добавить-устройство).

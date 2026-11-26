@@ -84,7 +84,7 @@ Permissions: Bluetooth, and Input Monitoring only when a keyboard is connected (
 
 [Supported devices](docs/en/devices.md) · [All features](docs/en/features.md) · [FAQ](docs/en/faq.md) · [How it works](docs/en/how-it-works.md) · [Build from source](docs/development.md) · [Release notes](https://github.com/qu1ncky/BatteryTray/releases)
 
-A device is missing or something is wrong? [Open an issue](https://github.com/qu1ncky/BatteryTray/issues) and attach the log: `%LOCALAPPDATA%\BatteryTray\log.txt` on Windows, `~/Library/Application Support/BatteryTray/log.txt` on a Mac.
+A device is missing or something is wrong? [Open an issue](https://github.com/qu1ncky/BatteryTray/issues) and attach the log: `%LOCALAPPDATA%\BatteryTray\log.txt` on Windows, `~/Library/Application Support/BatteryTray/log.txt` on a Mac. To get a new device added, also attach what [this command](docs/en/devices.md#device-not-listed) prints while it is connected: its receiver's USB IDs.
 
 ## License
 

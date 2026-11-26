@@ -133,14 +133,22 @@ Contents: [Headsets](#headsets) · [Mice](#mice) · [Keyboards](#keyboards) · [
 
 ## Device not listed?
 
-New devices show up within seconds of being connected; "Refresh battery levels" looks right away. If yours doesn't appear, run this in PowerShell while the device is connected and post the output in [Issues](https://github.com/qu1ncky/BatteryTray/issues):
+New devices show up within seconds of being connected; "Refresh battery levels" looks right away. If yours doesn't appear, [open an issue](https://github.com/qu1ncky/BatteryTray/issues) with what the command below prints while the device is connected (its receiver's USB IDs and name), and the log.
+
+**Windows**, in PowerShell:
 
 ```powershell
 Get-PnpDevice -PresentOnly | ? InstanceId -match '^USB\\VID_\w{4}&PID_\w{4}\\' | % { "{0}  {1}" -f $_.InstanceId.Substring(4,17), (Get-PnpDeviceProperty -InstanceId $_.InstanceId -KeyName DEVPKEY_Device_BusReportedDeviceDesc).Data }
 ```
 
-A diagnostic poll helps too: `"C:\Program Files\BatteryTray\BatteryTray.exe" --dump "%USERPROFILE%\Desktop\battery.txt"`, plus the log in `%LOCALAPPDATA%\BatteryTray\log.txt`.
+The log is `%LOCALAPPDATA%\BatteryTray\log.txt`. A diagnostic poll helps too: `"C:\Program Files\BatteryTray\BatteryTray.exe" --dump "%USERPROFILE%\Desktop\battery.txt"`.
 
-On a Mac: `system_profiler SPUSBDataType` lists the USB devices with their IDs, `/Applications/BatteryTray.app/Contents/MacOS/BatteryTray --dump ~/Desktop/battery.txt` polls every device once, and the log is `~/Library/Application Support/BatteryTray/log.txt`.
+**macOS**, in Terminal:
+
+```sh
+ioreg -p IOUSB -l -w0 | awk -F' = ' '/"idVendor"/{v=$2} /"idProduct"/{p=$2} /"USB Product Name"|"kUSBProductString"/{if(n=="")n=$2} /^[ |]*}[ ]*$/{if(v!=""){gsub(/"/,"",n);printf "%04X:%04X  %s\n",v,p,n}; v=p=n=""}'
+```
+
+The log is `~/Library/Application Support/BatteryTray/log.txt`. A diagnostic poll helps too: `/Applications/BatteryTray.app/Contents/MacOS/BatteryTray --dump ~/Desktop/battery.txt`.
 
 How a new device gets added: [How it works](how-it-works.md#adding-a-device).

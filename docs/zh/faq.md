@@ -87,7 +87,7 @@ Windows：`%LOCALAPPDATA%\BatteryTray` 中有 `settings.json`、`state.json`（�
 ## 遇到问题
 
 **我的设备不在列表中。**
-新设备连接后几秒内就会出现，“刷新电量”会立即查找。如果仍然没有，请参阅[设备不在列表中？](devices.md#设备不在列表中)：两条命令可以查出这是什么设备，把结果发到 [Issues](https://github.com/qu1ncky/BatteryTray/issues) 即可。
+新设备连接后几秒内就会出现，“刷新电量”会立即查找。如果仍然没有，请参阅[设备不在列表中？](devices.md#设备不在列表中)：Windows 和 macOS 各有一条命令可以显示设备接收器的 USB ID 和名称，把输出连同日志发到 [Issues](https://github.com/qu1ncky/BatteryTray/issues) 即可。
 
 **在哪里报告问题？**
 在 [Issues](https://github.com/qu1ncky/BatteryTray/issues) 中，并附上日志：Windows 上为 `%LOCALAPPDATA%\BatteryTray\log.txt`，Mac 上为 `~/Library/Application Support/BatteryTray/log.txt`。

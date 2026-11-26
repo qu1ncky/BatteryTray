@@ -87,7 +87,7 @@ Windows: `%LOCALAPPDATA%\BatteryTray` holds `settings.json`, `state.json` (last 
 ## Something doesn't work
 
 **My device isn't listed.**
-New devices show up within seconds of being connected, and "Refresh battery levels" looks right away. If yours still isn't there, see [Device not listed?](devices.md#device-not-listed): two commands that tell which device it is, to post in [Issues](https://github.com/qu1ncky/BatteryTray/issues).
+New devices show up within seconds of being connected, and "Refresh battery levels" looks right away. If yours still isn't there, see [Device not listed?](devices.md#device-not-listed): a command for Windows and one for macOS that show its receiver's USB IDs and name; post their output in [Issues](https://github.com/qu1ncky/BatteryTray/issues) with the log.
 
 **Where do I report a problem?**
 In [Issues](https://github.com/qu1ncky/BatteryTray/issues), with the log: `%LOCALAPPDATA%\BatteryTray\log.txt` on Windows, `~/Library/Application Support/BatteryTray/log.txt` on a Mac.

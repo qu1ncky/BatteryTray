@@ -133,14 +133,22 @@
 
 ## 设备不在列表中？
 
-新设备连接后几秒内就会出现，“刷新电量”会立即查找。如果你的设备没有出现，请在设备连接时于 PowerShell 中运行以下命令，并把输出发到 [Issues](https://github.com/qu1ncky/BatteryTray/issues)：
+新设备连接后几秒内就会出现，“刷新电量”会立即查找。如果你的设备没有出现，请[提交 issue](https://github.com/qu1ncky/BatteryTray/issues)，附上设备连接时下面这条命令的输出（设备接收器的 USB ID 和名称）以及日志。
+
+**Windows**，在 PowerShell 中：
 
 ```powershell
 Get-PnpDevice -PresentOnly | ? InstanceId -match '^USB\\VID_\w{4}&PID_\w{4}\\' | % { "{0}  {1}" -f $_.InstanceId.Substring(4,17), (Get-PnpDeviceProperty -InstanceId $_.InstanceId -KeyName DEVPKEY_Device_BusReportedDeviceDesc).Data }
 ```
 
-诊断轮询也有帮助：`"C:\Program Files\BatteryTray\BatteryTray.exe" --dump "%USERPROFILE%\Desktop\battery.txt"`（把所有设备轮询一次并写入文件），以及日志 `%LOCALAPPDATA%\BatteryTray\log.txt`。
+日志位于 `%LOCALAPPDATA%\BatteryTray\log.txt`。诊断轮询也有帮助（把所有设备轮询一次并写入文件）：`"C:\Program Files\BatteryTray\BatteryTray.exe" --dump "%USERPROFILE%\Desktop\battery.txt"`。
 
-在 Mac 上：`system_profiler SPUSBDataType` 会列出 USB 设备及其 ID，`/Applications/BatteryTray.app/Contents/MacOS/BatteryTray --dump ~/Desktop/battery.txt` 会把所有设备轮询一次，日志位于 `~/Library/Application Support/BatteryTray/log.txt`。
+**macOS**，在“终端”中：
+
+```sh
+ioreg -p IOUSB -l -w0 | awk -F' = ' '/"idVendor"/{v=$2} /"idProduct"/{p=$2} /"USB Product Name"|"kUSBProductString"/{if(n=="")n=$2} /^[ |]*}[ ]*$/{if(v!=""){gsub(/"/,"",n);printf "%04X:%04X  %s\n",v,p,n}; v=p=n=""}'
+```
+
+日志位于 `~/Library/Application Support/BatteryTray/log.txt`。诊断轮询也有帮助：`/Applications/BatteryTray.app/Contents/MacOS/BatteryTray --dump ~/Desktop/battery.txt`。
 
 如何添加新设备：[工作原理](how-it-works.md#添加设备)。
