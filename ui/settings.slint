@@ -241,7 +241,6 @@ export component GeneralPage inherits Page {
             }
         }
     }
-    // The taskbar strip is new in 2.4.1: the badge goes in the next version
     HorizontalLayout {
         padding-top: 14px;
         padding-left: 2px;
@@ -677,11 +676,19 @@ export component RemindersPage inherits Page {
             }
         }
     }
-    VerticalLayout {
+    // The sounds are new in 2.4.0: the badge goes in the next version
+    HorizontalLayout {
         padding-top: 14px;
         padding-left: 2px;
+        spacing: 8px;
+        alignment: start;
         SectionHeader {
             text: T.t("sounds.header");
+            vertical-alignment: center;
+        }
+        VerticalLayout {
+            alignment: center;
+            NewBadge { }
         }
     }
     Card {

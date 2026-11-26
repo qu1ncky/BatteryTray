@@ -309,7 +309,10 @@ struct GeneralSettings: View {
                         Label(model.t("menubar.devices"), systemImage: "menubar.rectangle")
                     }
                 } header: {
-                    Text(model.t("menubar.header"))
+                    HStack(spacing: 8) {
+                        Text(model.t("menubar.header"))
+                        NewBadge()
+                    }
                 }
                 Section(model.t("updates.header")) {
                     VStack(alignment: .leading, spacing: 4) {
@@ -420,7 +423,10 @@ struct ReminderSettings: View {
                         SoundSetting(event: "charged", title: model.t("sounds.charged"), chosen: s.soundCharged)
                     }
                 } header: {
-                    Text(model.t("sounds.header"))
+                    HStack(spacing: 8) {
+                        Text(model.t("sounds.header"))
+                        NewBadge()
+                    }
                 } footer: {
                     // What there is to say about a chosen file: that only its beginning will sound
                     let shown = s.notifyCharged ? s.soundNotes : Array(s.soundNotes.prefix(2))
