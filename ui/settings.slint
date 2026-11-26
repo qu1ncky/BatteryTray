@@ -167,12 +167,15 @@ component ControlRow inherits HorizontalLayout {
     }
 }
 
-// "General": autostart, language and theme, updates, the log folder, ideas
+// "General": autostart, language and theme, the taskbar strip, updates, the log folder, ideas
 export component GeneralPage inherits Page {
     in property <bool> autostart;
     in property <string> language;
     // "light", "dark", or "auto" to follow Windows
     in property <string> theme;
+    // The devices' levels on the taskbar (strip.rs), and how many devices of them
+    in property <bool> taskbar-strip;
+    in property <int> taskbar-devices;
     in property <string> update-status;
     in property <string> update-checked-text;
     in property <string> update-notes;
@@ -183,6 +186,8 @@ export component GeneralPage inherits Page {
     callback autostart-changed(bool);
     callback language-chosen(string);
     callback theme-chosen(string);
+    callback taskbar-strip-changed(bool);
+    callback taskbar-devices-chosen(int);
     callback install-update();
     callback check-updates();
     callback auto-update-changed(bool);
@@ -232,6 +237,45 @@ export component GeneralPage inherits Page {
                     options: [T.t("theme.auto"), T.t("theme.light"), T.t("theme.dark")];
                     current: root.theme == "light" ? 1 : root.theme == "dark" ? 2 : 0;
                     selected(i) => { root.theme-chosen(["auto", "light", "dark"][i]); }
+                }
+            }
+        }
+    }
+    HorizontalLayout {
+        padding-top: 14px;
+        padding-left: 2px;
+        spacing: 8px;
+        alignment: start;
+        SectionHeader {
+            text: T.t("taskbar.header");
+            vertical-alignment: center;
+        }
+        VerticalLayout {
+            alignment: center;
+            NewBadge { }
+        }
+    }
+    Card {
+        VerticalLayout {
+            padding: 1px;
+            SwitchRow {
+                leading-glyph: "\u{E90E}";
+                text: T.t("taskbar.show");
+                caption: T.t("taskbar.where");
+                checked: root.taskbar-strip;
+                toggled(on) => { root.taskbar-strip-changed(on); }
+            }
+            // How many, only while they are shown; under the switch's label, not under its glyph
+            if root.taskbar-strip: Divider { }
+            if root.taskbar-strip: ControlRow {
+                padding-left: 48px;
+                text: T.t("taskbar.devices");
+                Dropdown {
+                    min-width: 72px;
+                    label: T.t("taskbar.devices");
+                    options: ["1", "2", "3", "4", "5"];
+                    current: root.taskbar-devices - 1;
+                    selected(i) => { root.taskbar-devices-chosen(i + 1); }
                 }
             }
         }

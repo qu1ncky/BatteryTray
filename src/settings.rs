@@ -30,7 +30,8 @@ pub const DEFAULT_HOTKEY: (i32, i32) = (0x56, MOD_ALT | MOD_CONTROL);
 pub const LEVEL_PERCENT: (i32, i32) = (1, 100);
 pub const REPEAT_MINUTES: (i32, i32) = (1, 99_999);
 pub const AUTO_CLOSE_SECONDS: (i32, i32) = (1, 99_999);
-/// How many devices the menu bar item on macOS may show (Settings > General > Menu bar).
+/// How many devices the menu bar item on macOS (Settings > General > Menu bar) and the taskbar strip on Windows
+/// (Settings > General > Taskbar) may show.
 pub const MENU_BAR_DEVICES: (i32, i32) = (1, 5);
 /// A sound setting's default: the system's own sound, as the app always had.
 const SYSTEM_SOUND: &str = "system";
@@ -115,8 +116,13 @@ pub struct AppSettings {
     /// 0 top left, 1 top right, 2 bottom left, 3 bottom right.
     pub overlay_corner: i32,
     pub overlay_show_names: bool,
-    /// macOS: how many devices the menu bar item shows (MENU_BAR_DEVICES); fewer when fewer are on the air.
+    /// How many devices the menu bar item shows on macOS, and the taskbar strip on Windows (MENU_BAR_DEVICES); fewer
+    /// when fewer are on the air.
     pub menu_bar_devices: i32,
+    /// Windows: the devices' levels on the taskbar, left of the notification area (strip.rs). Off unless turned on:
+    /// it is a window of the app's laid over the taskbar, which nobody should find there unasked.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub taskbar_strip: bool,
     /// Version that ran last time; a different one means the app was just updated.
     pub last_run_version: Option<String>,
     pub devices: BTreeMap<String, DeviceSettings>,
@@ -158,6 +164,7 @@ impl Default for AppSettings {
             overlay_corner: 1,
             overlay_show_names: false,
             menu_bar_devices: 3,
+            taskbar_strip: false,
             last_run_version: None,
             devices: BTreeMap::new(),
             autostart_banner_dismissed: false,
@@ -271,6 +278,7 @@ impl AppSettings {
                 "OverlayCorner" => set(&mut s.overlay_corner, int(v)),
                 "OverlayShowNames" => set(&mut s.overlay_show_names, v.as_bool()),
                 "MenuBarDevices" => set(&mut s.menu_bar_devices, int(v)),
+                "TaskbarStrip" => set(&mut s.taskbar_strip, v.as_bool()),
                 "LastRunVersion" => match v {
                     Value::Null => true,
                     _ => set(&mut s.last_run_version, v.as_str().map(|t| Some(t.to_string()))),
@@ -709,6 +717,17 @@ mod tests {
             assert!(clean);
             assert_eq!(s.menu_bar_devices, read);
         }
+    }
+
+    #[test]
+    fn the_taskbar_strip_is_off_until_turned_on() {
+        let s = AppSettings::default();
+        assert!(!s.taskbar_strip);
+        // Off, it isn't written: the file of someone who never turned it on stays as it was
+        assert!(!serde_json::to_string(&s).unwrap().contains("TaskbarStrip"));
+        let (on, clean) = AppSettings::from_value(&serde_json::json!({ "TaskbarStrip": true }));
+        assert!(clean && on.taskbar_strip);
+        assert!(serde_json::to_string(&on).unwrap().contains("\"TaskbarStrip\":true"));
     }
 
     #[test]

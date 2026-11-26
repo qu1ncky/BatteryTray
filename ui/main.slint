@@ -40,6 +40,8 @@ export component MainWindow inherits Window {
     // Settings / General
     in property <string> language;
     in property <string> theme;
+    in property <bool> taskbar-strip;
+    in property <int> taskbar-devices;
     in property <string> update-status;
     in property <string> update-checked-text;
     in property <string> update-notes;
@@ -93,6 +95,8 @@ export component MainWindow inherits Window {
     callback check-updates();
     callback language-chosen(language: string);
     callback theme-chosen(theme: string);
+    callback taskbar-strip-changed(on: bool);
+    callback taskbar-devices-chosen(devices: int);
     callback test-alert();
     callback open-folder();
     callback suggest-improvement();
@@ -376,6 +380,8 @@ export component MainWindow inherits Window {
                     autostart: root.autostart;
                     language: root.language;
                     theme: root.theme;
+                    taskbar-strip: root.taskbar-strip;
+                    taskbar-devices: root.taskbar-devices;
                     update-status: root.update-status;
                     update-checked-text: root.update-checked-text;
                     update-notes: root.update-notes;
@@ -386,6 +392,8 @@ export component MainWindow inherits Window {
                     autostart-changed(on) => { root.autostart-changed(on); }
                     language-chosen(language) => { root.language-chosen(language); }
                     theme-chosen(theme) => { root.theme-chosen(theme); }
+                    taskbar-strip-changed(on) => { root.taskbar-strip-changed(on); }
+                    taskbar-devices-chosen(devices) => { root.taskbar-devices-chosen(devices); }
                     install-update => { root.install-update(); }
                     check-updates => { root.check-updates(); }
                     auto-update-changed(on) => { root.auto-update-changed(on); }
