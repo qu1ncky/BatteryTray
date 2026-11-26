@@ -77,31 +77,47 @@ pub fn run(args: &[String]) -> i32 {
         remove_dotnet_leftovers();
     }
 
-    // Launched by hand while the app already runs in the tray: open its window instead of starting again
-    if signal_running() {
-        return 0;
-    }
-    // Launched by hand without admin rights: start the elevated copy through the logon task (no UAC prompt), so the
-    // Razer headset can be read, and have it open its window
-    // Twice: the task ignores a start while its own instance still runs, and the copy that just installed the app for
-    // admin rights may be that instance, on its way out as this one starts
-    if !win::is_elevated() && autostart::is_registered() {
-        for _ in 0..2 {
-            if !autostart::run_task() {
-                break;
-            }
-            for _ in 0..30 {
-                std::thread::sleep(Duration::from_millis(100));
-                if signal_running() {
-                    return 0;
+    // Who started this copy, and how: what tells a start at sign-in from a launch by hand when a window opens that
+    // nobody asked for
+    log::write(&format!(
+        "launched by {}{}",
+        win::parent_process().unwrap_or_else(|| "a process that has ended".into()),
+        if args.is_empty() { String::new() } else { format!(": {}", args.join(" ")) }
+    ));
+
+    // Started for the tray (the logon task at sign-in, the restart after an update): no window is to open, so a copy
+    // that already runs is left as it is, and the logon task isn't asked for one either. At sign-in this copy is the
+    // task's own. And after an update the task did start a second copy, which found this one in the tray and had it
+    // open its window: every automatic update of a copy without admin rights ended with the window on the screen.
+    let background = args.iter().any(|a| a == BACKGROUND_SWITCH);
+    if !background {
+        // Launched by hand while the app already runs in the tray: open its window instead of starting again
+        if signal_running() {
+            return 0;
+        }
+        // Launched by hand without admin rights: start the elevated copy through the logon task (no UAC prompt), so
+        // the Razer headset can be read, and have it open its window
+        // Twice: the task ignores a start while its own instance still runs, and the copy that just installed the app
+        // for admin rights may be that instance, on its way out as this one starts
+        if !win::is_elevated() && autostart::is_registered() {
+            for _ in 0..2 {
+                if !autostart::run_task() {
+                    break;
+                }
+                for _ in 0..30 {
+                    std::thread::sleep(Duration::from_millis(100));
+                    if signal_running() {
+                        return 0;
+                    }
                 }
             }
+            // The task brought nothing up (its exe was moved or deleted): run this copy instead
         }
-        // The task brought nothing up (its exe was moved or deleted): run this copy instead
     }
 
+    // None: a copy already runs, and stays as it is
     let Some(single) = SingleInstance::acquire() else { return 0 };
-    App::run(single, args.iter().any(|a| a == BACKGROUND_SWITCH))
+    App::run(single, background)
 }
 
 /// Switches for the installer, the updater and for diagnostics:
@@ -167,6 +183,7 @@ fn signal_running() -> bool {
         let Ok(target) = FindWindowExW(Some(HWND_MESSAGE), None, PCWSTR::null(), ACTIVATOR_TITLE) else { return false };
         // The running instance may bring its window to the front
         let _ = AllowSetForegroundWindow(ASFW_ANY);
+        log::write("a copy already runs: asked it for its window");
         PostMessageW(Some(target), open_message(), WPARAM(0), LPARAM(0)).is_ok()
     }
 }
@@ -936,10 +953,11 @@ impl App {
         let reopen = self.main.is_some();
         let exe = std::env::current_exe().unwrap_or_default();
         self.tear_down();
-        // Started directly, with this copy's rights: an elevated copy comes back elevated, and one without admin rights
-        // goes through the logon task by itself if it can (run() does). Running the task from here would not do: when
-        // this copy is the task's own instance - always for a user without admin rights - the task ignores a second
-        // start while this process is still alive, and nothing would come back until the next sign-in.
+        // Started directly, with this copy's rights: an elevated copy comes back elevated. One without admin rights
+        // comes back into the tray as it is, and goes through the logon task by itself when its window is to open
+        // again (run() does). Running the task from here would not do: when this copy is the task's own instance -
+        // always for a user without admin rights - the task ignores a second start while this process is still alive,
+        // and nothing would come back until the next sign-in.
         let mut command = std::process::Command::new(exe);
         if !reopen {
             command.arg(BACKGROUND_SWITCH);
