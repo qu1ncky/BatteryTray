@@ -3,7 +3,9 @@
 //! [seconds] [light|dark]`. With a folder ("-" for none), it first draws the strip to PNG files there, at rest and
 //! under the pointer, in both modes of the taskbar and at its scale. The strip stays for 10 seconds unless told
 //! otherwise; a click on it and its menu are only printed. For looking at the strip's place, size and colors on a
-//! taskbar, and at how it gives way to full-screen apps and to the apps' buttons, with nothing installed.
+//! taskbar, and at how it goes with the taskbar (under a full-screen app, in front with Start open) and gives way to
+//! the apps' buttons, with nothing installed. While the app itself runs with its strip on, the two are at one place:
+//! an app of before the strip became the taskbar's child covers this one, except while Start is open.
 
 use batterytray::main_view::glyph;
 use batterytray::reading::DeviceKind;
@@ -12,9 +14,7 @@ use batterytray::view::Tone;
 use std::path::Path;
 use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{HWND, POINT, RECT};
-use windows::Win32::UI::HiDpi::{
-    GetDpiForWindow, SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
-};
+use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::WindowsAndMessaging::{
     DispatchMessageW, FindWindowExW, FindWindowW, GetMessageW, GetWindowRect, IsWindowVisible, PostQuitMessage,
     SetTimer, TranslateMessage, WindowFromPoint, MSG, WM_TIMER,
@@ -113,10 +113,8 @@ pub fn main() {
     let folder = args.first().filter(|a| !a.is_empty() && *a != "-");
     let seconds: u32 = args.get(1).and_then(|a| a.parse().ok()).unwrap_or(10);
     let light = args.get(2).is_some_and(|a| a == "light");
-    unsafe {
-        // The app has this from its manifest
-        let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
-    }
+    // The scale of the screen and the right to a layered child window come from the app's manifest, which build.rs
+    // gives the examples too
     let taskbar = unsafe { FindWindowW(w!("Shell_TrayWnd"), PCWSTR::null()) }.unwrap_or_default();
     let dpi = unsafe { GetDpiForWindow(taskbar) };
     let scale = if dpi == 0 { 1.0 } else { dpi as f32 / 96.0 };
@@ -156,7 +154,9 @@ pub fn main() {
         while GetMessageW(&mut message, None, 0, 0).as_bool() {
             // The loop's own timer: the strip's go to its window
             if message.message == WM_TIMER && message.hwnd.is_invalid() {
-                let window = FindWindowW(w!("BatteryTray.Strip"), PCWSTR::null()).unwrap_or_default();
+                // The strip is a child of the taskbar
+                let window =
+                    FindWindowExW(Some(taskbar), None, w!("BatteryTray.Strip"), PCWSTR::null()).unwrap_or_default();
                 let tray = FindWindowExW(Some(taskbar), None, w!("TrayNotifyWnd"), PCWSTR::null()).unwrap_or_default();
                 let (at, shown) = (rect_of(window), IsWindowVisible(window).as_bool());
                 // What the mouse would reach: the strip in its padding, where nothing is drawn, and whatever is

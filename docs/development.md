@@ -119,8 +119,10 @@ does nothing for a target other than Windows.
   every second where its window is, where the notification area starts and whether the mouse would reach the strip; first,
   where the apps' buttons end, as the accessibility tree says. With a folder it also draws the strip to PNG files, at rest
   and under the pointer, for a dark and a light taskbar, and the README's frames of it (`readme-NN.png`, 400%); 0 seconds
-  only draws them, as the Desktop workflow does. The strip is a window of the app's own laid over the taskbar, so
-  this is how to see it on a taskbar the app has never run on: another scale, the taskbar at the top, Windows 10.
+  only draws them, as the Desktop workflow does. The strip is a window of the app's own made a child of the taskbar's
+  window (so it is under a full-screen app and in front with Start open, as the taskbar is), and this is how to see it
+  on a taskbar the app has never run on: another scale, the taskbar at the top, Windows 10. A layered child window needs
+  the app's manifest, which `build.rs` gives the examples too; a test binary has none.
 
 ## Checked on a real desktop
 

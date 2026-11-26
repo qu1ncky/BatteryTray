@@ -2,31 +2,39 @@
 //! taskbar to the left of the notification area, in sight without a click.
 //!
 //! Windows gives an app no place of its own on the taskbar but its notification icon, and Windows 11 keeps a new icon
-//! under the arrow until the user drags it out. So the strip is a window of the app's own, laid over the taskbar and
-//! drawn to look like a part of it: the tray's glyph and text sizes, the taskbar's text color, one hover target for
-//! the whole of it. The window is layered with an alpha of its own for every pixel (the taskbar shows through), never
-//! takes the focus, and is off unless the user turns it on.
+//! under the arrow until the user drags it out. So the strip is a window of the app's own, made a child of the
+//! taskbar's window and drawn to look like a part of it: the tray's glyph and text sizes, the taskbar's text color,
+//! one hover target for the whole of it. The window is layered with an alpha of its own for every pixel (the taskbar
+//! shows through), never takes the focus, and is off unless the user turns it on.
 //!
-//! Laid over the taskbar rather than made a part of it, it does by itself what a part of the taskbar gets for free:
-//! it follows the taskbar (its place and scale, Explorer starting again), leaves while the taskbar is out of sight
-//! (hidden by itself, or under a full-screen app), comes back above the taskbar after a click on the taskbar put that
-//! in front, and gives way when the apps' buttons reach it: first down to the one device that needs charging most,
-//! then away. Where the buttons end only the accessibility tree says (Windows 11 draws them in XAML), and that is
-//! asked on a thread of its own, so a busy Explorer never holds up the app.
+//! A child of the taskbar, not a window kept on top of it, because only a child is wherever the taskbar is: under a
+//! full-screen app (a game, a video: Windows drops the taskbar below it, however the app got that big), out of sight
+//! with a taskbar that hides by itself, and in front while Start or the search is open. For those Explorer lifts the
+//! taskbar into a band of windows no app's window can enter, and a window merely kept on top is left under it; and
+//! guessing from outside which app is full-screen put the strip over a video or a game whenever the guess was wrong.
+//!
+//! What the strip still does by itself: it follows the notification area (an icon came or went) and the taskbar's
+//! scale, moves to the new taskbar when Explorer starts again (the old one takes the strip's window with it), and
+//! gives way when the apps' buttons reach it: first down to the one device that needs charging most, then away.
+//!
+//! A child window ties its thread's input to its parent's: while one of the two threads is busy, the other gets no
+//! mouse. So the strip lives on a thread of its own that does nothing else, and neither the app's windows nor the
+//! taskbar ever wait for the other. Where the apps' buttons end only the accessibility tree says (Windows 11 draws
+//! them in XAML), and that is asked on one more thread, so a busy Explorer holds up nothing here either.
 
 use crate::view::Tone;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
-use std::sync::mpsc::{channel, Sender};
+use std::sync::mpsc::{channel, Receiver, Sender};
 use windows::core::{w, PCWSTR, PWSTR};
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, POINT, RECT, SIZE, WPARAM};
 use windows::Win32::Graphics::Gdi::{
-    CreateCompatibleDC, CreateDIBSection, CreateFontW, DeleteDC, DeleteObject, DrawTextW, GdiFlush, GetMonitorInfoW,
-    GetSysColor, GetTextExtentPoint32W, MonitorFromWindow, SelectObject, SetBkMode, SetTextColor, AC_SRC_ALPHA,
-    AC_SRC_OVER, ANTIALIASED_QUALITY, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, BLENDFUNCTION, CLIP_DEFAULT_PRECIS,
-    COLOR_HIGHLIGHT, COLOR_HIGHLIGHTTEXT, COLOR_WINDOWTEXT, DEFAULT_CHARSET, DIB_RGB_COLORS, DT_LEFT, DT_NOCLIP,
-    DT_NOPREFIX, DT_SINGLELINE, DT_VCENTER, FF_SWISS, FW_NORMAL, HBITMAP, HDC, HFONT, HGDIOBJ, MONITORINFO,
-    MONITOR_DEFAULTTONEAREST, OUT_TT_PRECIS, SYS_COLOR_INDEX, TRANSPARENT, VARIABLE_PITCH,
+    CreateCompatibleDC, CreateDIBSection, CreateFontW, DeleteDC, DeleteObject, DrawTextW, GdiFlush, GetSysColor,
+    GetTextExtentPoint32W, MapWindowPoints, SelectObject, SetBkMode, SetTextColor, AC_SRC_ALPHA, AC_SRC_OVER,
+    ANTIALIASED_QUALITY, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, BLENDFUNCTION, CLIP_DEFAULT_PRECIS, COLOR_HIGHLIGHT,
+    COLOR_HIGHLIGHTTEXT, COLOR_WINDOWTEXT, DEFAULT_CHARSET, DIB_RGB_COLORS, DT_LEFT, DT_NOCLIP, DT_NOPREFIX,
+    DT_SINGLELINE, DT_VCENTER, FF_SWISS, FW_NORMAL, HBITMAP, HDC, HFONT, HGDIOBJ, OUT_TT_PRECIS, SYS_COLOR_INDEX,
+    TRANSPARENT, VARIABLE_PITCH,
 };
 use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -42,16 +50,15 @@ use windows::Win32::UI::Controls::{
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::Input::KeyboardAndMouse::{TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DeregisterShellHookWindow, DestroyWindow, FindWindowExW, FindWindowW,
-    GetClassNameW, GetForegroundWindow, GetWindow, GetWindowLongPtrW, GetWindowRect, GetWindowThreadProcessId,
-    KillTimer, LoadCursorW, PostMessageW, RegisterClassExW, RegisterShellHookWindow, RegisterWindowMessageW,
-    SendMessageW, SetTimer, SetWindowPos, SetWindowTextW, ShowWindow, SystemParametersInfoW, UpdateLayeredWindow,
-    CW_USEDEFAULT, EVENT_OBJECT_LOCATIONCHANGE, EVENT_SYSTEM_FOREGROUND, GWL_STYLE, GW_HWNDPREV, HWND_TOPMOST,
-    IDC_ARROW, MA_NOACTIVATE, SPI_GETHIGHCONTRAST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SW_HIDE, SW_SHOWNOACTIVATE,
-    SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, ULW_ALPHA, WINDOW_STYLE, WINEVENT_OUTOFCONTEXT, WINEVENT_SKIPOWNPROCESS,
-    WM_APP, WM_DISPLAYCHANGE, WM_DPICHANGED, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE,
-    WM_RBUTTONUP, WM_SETTINGCHANGE, WM_SYSCOLORCHANGE, WM_THEMECHANGED, WM_TIMER, WNDCLASSEXW, WS_EX_LAYERED,
-    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_MAXIMIZE, WS_POPUP,
+    CreateWindowExW, DefWindowProcW, DeregisterShellHookWindow, DestroyWindow, DispatchMessageW, FindWindowExW,
+    FindWindowW, GetMessageW, GetTopWindow, GetWindowRect, GetWindowThreadProcessId, IsWindow, KillTimer, LoadCursorW,
+    PostMessageW, PostQuitMessage, RegisterClassExW, RegisterShellHookWindow, RegisterWindowMessageW, SendMessageW,
+    SetTimer, SetWindowPos, SetWindowTextW, ShowWindow, SystemParametersInfoW, UpdateLayeredWindow, CW_USEDEFAULT,
+    EVENT_OBJECT_LOCATIONCHANGE, HWND_TOP, IDC_ARROW, MA_NOACTIVATE, MSG, SPI_GETHIGHCONTRAST, SWP_NOACTIVATE,
+    SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, SW_SHOWNA, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, ULW_ALPHA,
+    WINDOW_STYLE, WINEVENT_OUTOFCONTEXT, WM_APP, WM_DISPLAYCHANGE, WM_DPICHANGED, WM_LBUTTONDOWN, WM_LBUTTONUP,
+    WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_NCDESTROY, WM_RBUTTONUP, WM_SETTINGCHANGE, WM_SYSCOLORCHANGE, WM_THEMECHANGED,
+    WM_TIMER, WNDCLASSEXW, WS_CHILD, WS_EX_LAYERED, WS_EX_NOPARENTNOTIFY, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
 
 /// Sizes in Windows' own pixels at 100%, a taskbar item's: on a 48 px taskbar its hover target is 40 px high with
@@ -78,12 +85,18 @@ const NO_DEVICES: &str = "\u{E850}";
 
 const TICK: usize = 1;
 const ROOM_SOON: usize = 2;
-/// The taskbar or the app in front changed: look again
+/// The taskbar changed: look again
 const WM_STRIP_CHECK: u32 = WM_APP + 0x51;
 /// The room thread's answer: wparam 1 and the edge in lparam, or wparam 0 when it couldn't tell
 const WM_STRIP_ROOM: u32 = WM_APP + 0x52;
+/// From the app: something new to show is waiting, and the strip is no longer wanted
+const WM_STRIP_SET: u32 = WM_APP + 0x53;
+const WM_STRIP_END: u32 = WM_APP + 0x54;
 const WM_MOUSELEAVE: u32 = 0x02A3;
+/// The strip on the taskbar, and the window of its thread that is never seen: the timers', the hooks', the system's
+/// and the app's messages come to that one, whatever becomes of the taskbar
 const CLASS: PCWSTR = w!("BatteryTray.Strip");
+const WATCHER: PCWSTR = w!("BatteryTray.StripWatcher");
 
 type Rgb = (u8, u8, u8);
 type Rgba = (u8, u8, u8, u8);
@@ -122,12 +135,11 @@ pub enum Action {
     Menu,
 }
 
-/// The taskbar as Windows has it, in physical pixels: its window, the notification area in it, and its monitor.
+/// The taskbar as Windows has it, in physical pixels of the screen: its window and the notification area in it.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Bar {
     pub bar: RECT,
     pub tray: RECT,
-    pub screen: RECT,
     /// 1.25 at 125%
     pub scale: f32,
 }
@@ -149,12 +161,6 @@ impl Bar {
     /// Along the bottom or the top of the screen. On Windows 10 it can stand at a side, where there is no row to add to.
     pub fn horizontal(&self) -> bool {
         self.bar.right - self.bar.left > self.bar.bottom - self.bar.top
-    }
-
-    /// Wholly on its monitor: a taskbar that hides by itself slides out past the screen's edge.
-    pub fn at_rest(&self) -> bool {
-        let (b, s) = (self.bar, self.screen);
-        b.left >= s.left - 1 && b.top >= s.top - 1 && b.right <= s.right + 1 && b.bottom <= s.bottom + 1
     }
 
     /// The notification area is at the taskbar's right end; at its left where Windows runs right to left.
@@ -215,14 +221,6 @@ pub fn nearest(buttons: &[RECT], bar: &Bar) -> Option<i32> {
     } else {
         real.filter(|b| b.left >= bar.tray.right - 1).map(|b| b.left).min()
     }
-}
-
-/// A window that takes the whole of a monitor.
-pub fn covers(window: RECT, screen: RECT) -> bool {
-    window.left <= screen.left
-        && window.top <= screen.top
-        && window.right >= screen.right
-        && window.bottom >= screen.bottom
 }
 
 /// The fonts a piece of the strip is drawn in.
@@ -593,14 +591,22 @@ struct Rows {
 }
 
 struct State {
+    /// The thread's own window, never seen
     hwnd: HWND,
+    /// The strip: a child of `taskbar`, with its tooltip. Neither is there until a taskbar is found, and the taskbar
+    /// takes the strip with it when Explorer ends
+    face: HWND,
     tip: HWND,
     on_action: Rc<dyn Fn(Action)>,
+    /// What the app wants shown, the newest last
+    contents: Receiver<Content>,
     content: Content,
     hover: bool,
     pressed: bool,
-    /// The taskbar the hooks are on
+    /// The taskbar the strip is on and the hook watches
     taskbar: HWND,
+    /// A taskbar that wouldn't take the strip's window: written to the log once
+    refused: HWND,
     hooks: Vec<HWINEVENTHOOK>,
     /// Where the apps' buttons end, as the room thread last said
     taken: Option<i32>,
@@ -616,37 +622,79 @@ struct State {
 
 thread_local! {
     static STATE: RefCell<Option<State>> = const { RefCell::new(None) };
-    /// The strip's window, and the taskbar and its notification area it watches, for the event hook; and whether a
+    /// The thread's window, and the taskbar and its notification area it watches, for the event hook; and whether a
     /// look is already on its way
     static WATCH: Cell<(isize, isize, isize)> = const { Cell::new((0, 0, 0)) };
     static CHECK_POSTED: Cell<bool> = const { Cell::new(false) };
 }
 
-/// The strip. One at a time: its window belongs to the thread that made it, the app's UI thread.
-pub struct Strip(());
+/// The strip, for the app: what to show goes to the strip's thread, which ends when this is dropped.
+pub struct Strip {
+    /// The window of the strip's thread
+    watcher: isize,
+    contents: Sender<Content>,
+}
 
 impl Strip {
-    /// Makes the strip's window, still unseen: it shows up once it has something to show and a taskbar to stand on.
-    /// `on_action` is called from the window's own message handler, with nothing of the strip in use.
-    pub fn new(on_action: impl Fn(Action) + 'static) -> Option<Self> {
-        if STATE.with(|s| s.borrow().is_some()) {
+    /// Starts the strip's thread. The strip itself shows up once it has something to show and a taskbar to be on.
+    /// `on_action` is called on that thread: what it starts in the app, it hands over to the app's own.
+    pub fn new(on_action: impl Fn(Action) + Send + 'static) -> Option<Self> {
+        let (contents, queue) = channel();
+        let (made, answer) = channel();
+        let spawned = std::thread::Builder::new().name("strip".into()).spawn(move || run(on_action, queue, made));
+        if let Err(e) = spawned {
+            crate::log::write(&format!("taskbar strip: {e}"));
             return None;
         }
+        let watcher = answer.recv().ok()??;
+        Some(Strip { watcher, contents })
+    }
+
+    /// New levels, another mode of the taskbar, the app's window opened or closed.
+    pub fn set(&self, content: Content) {
+        if self.contents.send(content).is_ok() {
+            self.post(WM_STRIP_SET);
+        }
+    }
+
+    fn post(&self, message: u32) {
         unsafe {
-            let instance = GetModuleHandleW(None).ok()?;
-            let class = WNDCLASSEXW {
-                cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
-                lpfnWndProc: Some(window_proc),
-                hInstance: instance.into(),
-                hCursor: LoadCursorW(None, IDC_ARROW).unwrap_or_default(),
-                lpszClassName: CLASS,
-                ..Default::default()
-            };
-            // Fails the second time, with the class already there
-            RegisterClassExW(&class);
-            let hwnd = CreateWindowExW(
-                WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TOPMOST,
-                CLASS,
+            let _ = PostMessageW(Some(HWND(self.watcher as *mut _)), message, WPARAM(0), LPARAM(0));
+        }
+    }
+}
+
+impl Drop for Strip {
+    /// Not waited for: the thread takes its windows off the taskbar and ends by itself.
+    fn drop(&mut self) {
+        self.post(WM_STRIP_END);
+    }
+}
+
+/// The strip's thread: its unseen window, then the messages of both windows until the app is done with the strip.
+/// `made` gets the unseen window, or nothing when it couldn't be made.
+fn run(on_action: impl Fn(Action) + 'static, contents: Receiver<Content>, made: Sender<Option<isize>>) {
+    unsafe {
+        let hwnd = GetModuleHandleW(None).ok().and_then(|instance| {
+            for (name, cursor) in
+                [(CLASS, LoadCursorW(None, IDC_ARROW).unwrap_or_default()), (WATCHER, Default::default())]
+            {
+                let class = WNDCLASSEXW {
+                    cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
+                    lpfnWndProc: Some(window_proc),
+                    hInstance: instance.into(),
+                    hCursor: cursor,
+                    lpszClassName: name,
+                    ..Default::default()
+                };
+                // Fails the second time, with the class already there
+                RegisterClassExW(&class);
+            }
+            // A window of the desktop rather than a message-only one: those the system's news (another scale, another
+            // theme) doesn't reach
+            CreateWindowExW(
+                WS_EX_TOOLWINDOW,
+                WATCHER,
                 w!("BatteryTray"),
                 WS_POPUP,
                 0,
@@ -658,83 +706,126 @@ impl Strip {
                 Some(instance.into()),
                 None,
             )
-            .ok()?;
-            let tip = CreateWindowExW(
-                WS_EX_TOPMOST,
-                TOOLTIPS_CLASSW,
-                PCWSTR::null(),
-                WINDOW_STYLE(WS_POPUP.0 | TTS_ALWAYSTIP | TTS_NOPREFIX),
-                CW_USEDEFAULT,
-                CW_USEDEFAULT,
-                CW_USEDEFAULT,
-                CW_USEDEFAULT,
-                Some(hwnd),
-                None,
-                Some(instance.into()),
-                None,
-            )
-            .unwrap_or_default();
-            if !tip.is_invalid() {
-                // A width to wrap at makes the tooltip take line breaks: a line per device
-                SendMessageW(tip, TTM_SETMAXTIPWIDTH, None, Some(LPARAM(1200)));
-                let mut empty = [0u16; 1];
-                let tool = tool(hwnd, &mut empty);
-                SendMessageW(tip, TTM_ADDTOOLW, None, Some(LPARAM(&tool as *const _ as isize)));
-            }
-            // Windows opening and closing: the apps' buttons moved
-            let _ = RegisterShellHookWindow(hwnd);
-            let state = State {
-                hwnd,
-                tip,
-                on_action: Rc::new(on_action),
-                content: Content::default(),
-                hover: false,
-                pressed: false,
-                taskbar: HWND::default(),
-                hooks: Vec::new(),
-                taken: None,
-                room: room_thread(hwnd.0 as isize),
-                fonts: None,
-                rows: None,
-                frame: None,
-                told: None,
-                ticks: 0,
-            };
-            STATE.with(|s| *s.borrow_mut() = Some(state));
-            SetTimer(Some(hwnd), TICK, 1000, None);
-        }
-        Some(Strip(()))
-    }
-
-    /// New levels, another mode of the taskbar, the app's window opened or closed.
-    pub fn set(&self, content: Content) {
-        with(|state| {
-            if state.content != content {
-                state.content = content;
-                refresh(state);
-            }
+            .ok()
         });
+        let Some(hwnd) = hwnd else {
+            let _ = made.send(None);
+            return;
+        };
+        // Windows opening and closing: the apps' buttons moved
+        let _ = RegisterShellHookWindow(hwnd);
+        let state = State {
+            hwnd,
+            face: HWND::default(),
+            tip: HWND::default(),
+            on_action: Rc::new(on_action),
+            contents,
+            content: Content::default(),
+            hover: false,
+            pressed: false,
+            taskbar: HWND::default(),
+            refused: HWND::default(),
+            hooks: Vec::new(),
+            taken: None,
+            room: room_thread(hwnd.0 as isize),
+            fonts: None,
+            rows: None,
+            frame: None,
+            told: None,
+            ticks: 0,
+        };
+        STATE.with(|s| *s.borrow_mut() = Some(state));
+        SetTimer(Some(hwnd), TICK, 1000, None);
+        let _ = made.send(Some(hwnd.0 as isize));
+        let mut message = MSG::default();
+        while GetMessageW(&mut message, None, 0, 0).0 > 0 {
+            DispatchMessageW(&message);
+        }
     }
 }
 
-impl Drop for Strip {
-    fn drop(&mut self) {
-        let Some(state) = STATE.with(|s| s.borrow_mut().take()) else { return };
-        WATCH.with(|w| w.set((0, 0, 0)));
-        unsafe {
-            let _ = KillTimer(Some(state.hwnd), TICK);
-            let _ = KillTimer(Some(state.hwnd), ROOM_SOON);
-            for hook in &state.hooks {
-                let _ = UnhookWinEvent(*hook);
-            }
-            let _ = DeregisterShellHookWindow(state.hwnd);
-            if !state.tip.is_invalid() {
-                let _ = DestroyWindow(state.tip);
-            }
-            let _ = DestroyWindow(state.hwnd);
-        }
-        // The room thread ends with its channel, the fonts with the state
+/// The app is done with the strip: its windows, hooks and timers go, and the thread's loop ends.
+unsafe fn end() {
+    let Some(mut state) = STATE.with(|s| s.borrow_mut().take()) else { return };
+    WATCH.with(|w| w.set((0, 0, 0)));
+    let _ = KillTimer(Some(state.hwnd), TICK);
+    let _ = KillTimer(Some(state.hwnd), ROOM_SOON);
+    for hook in &state.hooks {
+        let _ = UnhookWinEvent(*hook);
     }
+    let _ = DeregisterShellHookWindow(state.hwnd);
+    leave(&mut state);
+    let _ = DestroyWindow(state.hwnd);
+    // The room thread ends with its channel, the fonts with the state
+    PostQuitMessage(0);
+}
+
+/// Puts the strip's window on a taskbar, as its child and still unseen, with the tooltip. False when the taskbar
+/// wouldn't take it.
+unsafe fn settle(state: &mut State, taskbar: HWND) -> bool {
+    let instance = GetModuleHandleW(None).unwrap_or_default();
+    // No word to the parent about the child's making, end and clicks: those would be waited for in Explorer
+    let made = CreateWindowExW(
+        WS_EX_LAYERED | WS_EX_NOPARENTNOTIFY,
+        CLASS,
+        w!("BatteryTray"),
+        WS_CHILD,
+        0,
+        0,
+        0,
+        0,
+        Some(taskbar),
+        None,
+        Some(instance.into()),
+        None,
+    );
+    let face = match made {
+        Ok(face) => face,
+        Err(e) => {
+            if state.refused != taskbar {
+                state.refused = taskbar;
+                crate::log::write(&format!("taskbar strip: no window on the taskbar: {e}"));
+            }
+            return false;
+        }
+    };
+    // The tooltip is the thread's own window's, not the taskbar's: it stays the app's to end
+    let tip = CreateWindowExW(
+        WS_EX_TOPMOST,
+        TOOLTIPS_CLASSW,
+        PCWSTR::null(),
+        WINDOW_STYLE(WS_POPUP.0 | TTS_ALWAYSTIP | TTS_NOPREFIX),
+        CW_USEDEFAULT,
+        CW_USEDEFAULT,
+        CW_USEDEFAULT,
+        CW_USEDEFAULT,
+        Some(state.hwnd),
+        None,
+        Some(instance.into()),
+        None,
+    )
+    .unwrap_or_default();
+    if !tip.is_invalid() {
+        // A width to wrap at makes the tooltip take line breaks: a line per device
+        SendMessageW(tip, TTM_SETMAXTIPWIDTH, None, Some(LPARAM(1200)));
+        let mut empty = [0u16; 1];
+        let tool = tool(face, &mut empty);
+        SendMessageW(tip, TTM_ADDTOOLW, None, Some(LPARAM(&tool as *const _ as isize)));
+    }
+    (state.face, state.tip) = (face, tip);
+    true
+}
+
+/// Takes the strip's window off its taskbar, or forgets one that went with its taskbar; the tooltip goes with it.
+unsafe fn leave(state: &mut State) {
+    for window in [state.tip, state.face] {
+        if !window.is_invalid() && IsWindow(Some(window)).as_bool() {
+            let _ = DestroyWindow(window);
+        }
+    }
+    (state.tip, state.face) = (HWND::default(), HWND::default());
+    (state.frame, state.told) = (None, None);
+    (state.hover, state.pressed) = (false, false);
 }
 
 /// The tooltip's one tool: the whole strip, its text above the strip's middle.
@@ -774,16 +865,15 @@ fn post_check(hwnd: HWND) {
     }
 }
 
-/// The taskbar moved (it hides and comes back, the screen changed), its notification area got wider or narrower (an
-/// icon came or went), or another app came to the front (a full-screen one, or the taskbar itself, which then stands
-/// above the strip).
-unsafe extern "system" fn on_event(_: HWINEVENTHOOK, event: u32, hwnd: HWND, object: i32, child: i32, _: u32, _: u32) {
-    let (strip, taskbar, tray) = WATCH.with(|w| w.get());
+/// The taskbar got another size (the screen or its scale changed), or its notification area got wider or narrower
+/// (an icon came or went).
+unsafe extern "system" fn on_event(_: HWINEVENTHOOK, _: u32, hwnd: HWND, object: i32, child: i32, _: u32, _: u32) {
+    let (watcher, taskbar, tray) = WATCH.with(|w| w.get());
     let theirs = hwnd.0 as isize == taskbar || hwnd.0 as isize == tray;
-    if strip == 0 || (event == EVENT_OBJECT_LOCATIONCHANGE && (object != 0 || child != 0 || !theirs)) {
+    if watcher == 0 || object != 0 || child != 0 || !theirs {
         return;
     }
-    post_check(HWND(strip as *mut _));
+    post_check(HWND(watcher as *mut _));
 }
 
 unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
@@ -847,6 +937,26 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
             CHECK_POSTED.with(|c| c.set(false));
             with(refresh);
         }
+        WM_STRIP_SET => {
+            with(|state| {
+                // Only the last of several
+                if let Some(content) = state.contents.try_iter().last().filter(|c| *c != state.content) {
+                    state.content = content;
+                    refresh(state);
+                }
+            });
+        }
+        WM_STRIP_END => end(),
+        // Explorer ended, and the taskbar took the strip's window with it
+        WM_NCDESTROY => {
+            with(|state| {
+                if state.face == hwnd {
+                    state.face = HWND::default();
+                    leave(state);
+                }
+            });
+            return DefWindowProcW(hwnd, msg, wparam, lparam);
+        }
         WM_STRIP_ROOM => {
             with(|state| {
                 let taken = (wparam.0 != 0).then_some(lparam.0 as i32);
@@ -875,17 +985,11 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
     LRESULT(0)
 }
 
-/// Tells the app what the user did, with the strip's state free: the menu runs a loop of its own.
+/// Tells the app what the user did, with the strip's state free.
 fn act(action: Action) {
     if let Some(on_action) = with(|state| state.on_action.clone()) {
         on_action(action);
     }
-}
-
-fn class_of(hwnd: HWND) -> String {
-    let mut name = [0u16; 96];
-    let n = unsafe { GetClassNameW(hwnd, &mut name) };
-    String::from_utf16_lossy(&name[..n.max(0) as usize])
 }
 
 /// The taskbar of the main screen, where the notification area is.
@@ -895,41 +999,9 @@ unsafe fn find_taskbar() -> Option<(HWND, Bar)> {
     let (mut bar, mut tray) = (RECT::default(), RECT::default());
     GetWindowRect(taskbar, &mut bar).ok()?;
     GetWindowRect(tray_window, &mut tray).ok()?;
-    let mut info = MONITORINFO { cbSize: std::mem::size_of::<MONITORINFO>() as u32, ..Default::default() };
-    if !GetMonitorInfoW(MonitorFromWindow(taskbar, MONITOR_DEFAULTTONEAREST), &mut info).as_bool() {
-        return None;
-    }
     let dpi = GetDpiForWindow(taskbar);
     let scale = if dpi == 0 { 1.0 } else { dpi as f32 / 96.0 };
-    Some((taskbar, Bar { bar, tray, screen: info.rcMonitor, scale }))
-}
-
-/// The windows Explorer itself puts in front without the taskbar leaving: the desktop, the taskbar, the Start menu and
-/// the search, the views of all windows.
-const SHELL: [&str; 7] = [
-    "Progman",
-    "WorkerW",
-    "Shell_TrayWnd",
-    "Shell_SecondaryTrayWnd",
-    "Windows.UI.Core.CoreWindow",
-    "XamlExplorerHostIslandWindow",
-    "MultitaskingViewFrame",
-];
-
-/// An app in front takes the whole of the taskbar's screen (a game, a video, a presentation): the taskbar is under it,
-/// and so the strip leaves. A maximized window isn't one: where it reaches the screen's edge, the taskbar hides by
-/// itself and comes over it.
-unsafe fn full_screen_app(screen: RECT, own: HWND, taskbar: HWND) -> bool {
-    let front = GetForegroundWindow();
-    if front.is_invalid() || front == own || front == taskbar {
-        return false;
-    }
-    let mut rect = RECT::default();
-    if GetWindowRect(front, &mut rect).is_err() || !covers(rect, screen) {
-        return false;
-    }
-    let maximized = GetWindowLongPtrW(front, GWL_STYLE) as u32 & WS_MAXIMIZE.0 != 0;
-    !maximized && !SHELL.contains(&class_of(front).as_str())
+    Some((taskbar, Bar { bar, tray, scale }))
 }
 
 /// A contrast theme's own colors: its text, and the plate and text of what is marked.
@@ -951,24 +1023,12 @@ unsafe fn contrast_colors() -> Option<(Rgb, Rgb, Rgb)> {
     Some((color(COLOR_WINDOWTEXT), color(COLOR_HIGHLIGHT), color(COLOR_HIGHLIGHTTEXT)))
 }
 
-/// Whether the taskbar stands above the strip: a click on the taskbar brings it in front of everything.
-unsafe fn under(hwnd: HWND, taskbar: HWND) -> bool {
-    let mut at = hwnd;
-    for _ in 0..200 {
-        match GetWindow(at, GW_HWNDPREV) {
-            Ok(above) if above == taskbar => return true,
-            Ok(above) => at = above,
-            Err(_) => return false,
-        }
-    }
-    false
-}
-
-/// Watches another taskbar: Explorer started again, or the strip was just made.
+/// Goes over to another taskbar: Explorer started again, or the strip was just made.
 unsafe fn watch(state: &mut State, taskbar: HWND) {
     for hook in state.hooks.drain(..) {
         let _ = UnhookWinEvent(hook);
     }
+    leave(state);
     state.taskbar = taskbar;
     state.taken = None;
     let tray = if taskbar.is_invalid() {
@@ -991,16 +1051,7 @@ unsafe fn watch(state: &mut State, taskbar: HWND) {
         thread,
         WINEVENT_OUTOFCONTEXT,
     );
-    let front = SetWinEventHook(
-        EVENT_SYSTEM_FOREGROUND,
-        EVENT_SYSTEM_FOREGROUND,
-        None,
-        Some(on_event),
-        0,
-        0,
-        WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS,
-    );
-    state.hooks.extend([moved, front].into_iter().filter(|h| !h.is_invalid()));
+    state.hooks.extend(Some(moved).filter(|h| !h.is_invalid()));
 }
 
 fn ask_room(state: &mut State) {
@@ -1012,31 +1063,39 @@ fn ask_room(state: &mut State) {
     }
 }
 
+/// Nothing to show, or nowhere to: the strip's window stays on its taskbar, unseen.
 fn hide(state: &mut State) {
-    if state.frame.take().is_some() {
+    state.frame = None;
+    if !state.face.is_invalid() {
         unsafe {
-            let _ = ShowWindow(state.hwnd, SW_HIDE);
+            let _ = ShowWindow(state.face, SW_HIDE);
         }
     }
 }
 
-/// Looks at the taskbar and puts on screen what belongs there now: the strip at its place, or nothing.
+/// Looks at the taskbar and puts on it what belongs there now: the strip at its place, or nothing.
 fn refresh(state: &mut State) {
     unsafe {
+        // Gone with its taskbar, and nobody was there to hear of it
+        if !state.face.is_invalid() && !IsWindow(Some(state.face)).as_bool() {
+            leave(state);
+        }
         let Some((taskbar, bar)) = find_taskbar() else {
             // Explorer is starting again
             if !state.taskbar.is_invalid() {
                 watch(state, HWND::default());
             }
-            hide(state);
             return;
         };
         if taskbar != state.taskbar {
             watch(state, taskbar);
             ask_room(state);
         }
+        if state.face.is_invalid() && !settle(state, taskbar) {
+            return;
+        }
         let height = bar.height();
-        if !bar.horizontal() || !bar.at_rest() || height == 0 || full_screen_app(bar.screen, state.hwnd, taskbar) {
+        if !bar.horizontal() || height == 0 {
             hide(state);
             return;
         }
@@ -1072,7 +1131,12 @@ fn refresh(state: &mut State) {
             hide(state);
             return;
         };
+        // The strip's place on the screen, then in the taskbar's own coordinates, which a child's place is given in
+        // (as a rectangle: mirrored where Windows runs right to left)
         let (x, y) = bar.origin(width, height);
+        let mut corners = [POINT { x, y }, POINT { x: x + width, y: y + height }];
+        MapWindowPoints(None, Some(taskbar), &mut corners);
+        let (x, y) = (corners[0].x.min(corners[1].x), corners[0].y.min(corners[1].y));
         let look = match (state.pressed || state.content.active, state.hover) {
             (true, _) => Look::Pressed,
             (false, true) => Look::Hover,
@@ -1087,11 +1151,12 @@ fn refresh(state: &mut State) {
                 SourceConstantAlpha: 255,
                 AlphaFormat: AC_SRC_ALPHA as u8,
             };
-            let (to, size, from) = (POINT { x, y }, SIZE { cx: width, cy: height }, POINT::default());
+            let (size, from) = (SIZE { cx: width, cy: height }, POINT::default());
+            let _ = SetWindowPos(state.face, None, x, y, width, height, SWP_NOZORDER | SWP_NOACTIVATE);
             let put = UpdateLayeredWindow(
-                state.hwnd,
+                state.face,
                 None,
-                Some(&to),
+                None,
                 Some(&size),
                 Some(drawn.dc),
                 Some(&from),
@@ -1103,12 +1168,14 @@ fn refresh(state: &mut State) {
                 return;
             }
             if state.frame.is_none() {
-                let _ = ShowWindow(state.hwnd, SW_SHOWNOACTIVATE);
+                let _ = ShowWindow(state.face, SW_SHOWNA);
             }
             state.frame = Some(frame);
         }
-        if under(state.hwnd, taskbar) {
-            let _ = SetWindowPos(state.hwnd, Some(HWND_TOPMOST), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        // In front of the taskbar's own children: Explorer makes them anew now and then, and a new one is in front.
+        // (With Start open nobody is told the taskbar's children; the strip is where it was.)
+        if GetTopWindow(Some(taskbar)).is_ok_and(|first| first != state.face) {
+            let _ = SetWindowPos(state.face, Some(HWND_TOP), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
         }
         tell(state);
     }
@@ -1123,13 +1190,13 @@ unsafe fn tell(state: &mut State) {
     let (text, light) = (now.0.clone(), now.1);
     state.told = Some(now);
     let name = crate::win::wide(&format!("BatteryTray\n{text}"));
-    let _ = SetWindowTextW(state.hwnd, PCWSTR(name.as_ptr()));
+    let _ = SetWindowTextW(state.face, PCWSTR(name.as_ptr()));
     if state.tip.is_invalid() {
         return;
     }
     let _ = SetWindowTheme(state.tip, if light { w!("Explorer") } else { w!("DarkMode_Explorer") }, PCWSTR::null());
     let mut text = crate::win::wide(&text.replace('\n', "\r\n"));
-    let tool = tool(state.hwnd, &mut text);
+    let tool = tool(state.face, &mut text);
     SendMessageW(state.tip, TTM_UPDATETIPTEXTW, None, Some(LPARAM(&tool as *const _ as isize)));
 }
 
@@ -1171,7 +1238,7 @@ pub fn buttons_end() -> Option<i32> {
 /// when the strip does.
 fn room_thread(strip: isize) -> Sender<(isize, Bar)> {
     let (ask, asked) = channel::<(isize, Bar)>();
-    let spawned = std::thread::Builder::new().name("strip".into()).spawn(move || unsafe {
+    let spawned = std::thread::Builder::new().name("strip-room".into()).spawn(move || unsafe {
         let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
         let automation: Option<IUIAutomation> = CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER).ok();
         while let Ok(mut request) = asked.recv() {
@@ -1208,12 +1275,7 @@ mod tests {
 
     /// A 2560 x 1440 screen at 125%: the taskbar along the bottom, the notification area at its right end.
     fn bottom() -> Bar {
-        Bar {
-            bar: rect(0, 1380, 2560, 1440),
-            tray: rect(2200, 1380, 2560, 1440),
-            screen: rect(0, 0, 2560, 1440),
-            scale: 1.25,
-        }
+        Bar { bar: rect(0, 1380, 2560, 1440), tray: rect(2200, 1380, 2560, 1440), scale: 1.25 }
     }
 
     fn slot(glyph: &'static str, level: &str, tone: Tone, power: bool) -> Slot {
@@ -1235,22 +1297,19 @@ mod tests {
     }
 
     #[test]
-    fn a_taskbar_out_of_sight_or_at_a_side_has_no_strip() {
+    fn a_taskbar_at_a_side_or_too_low_has_no_strip() {
         let bar = bottom();
-        assert!(bar.horizontal() && bar.at_rest());
-        // Hidden by itself: all but two pixels of it are below the screen
-        assert!(!Bar { bar: rect(0, 1438, 2560, 1498), ..bar }.at_rest());
+        assert!(bar.horizontal());
+        // Hidden by itself, all but two pixels of it below the screen: the strip is its child and goes with it, at
+        // the same place in it
+        let hidden = Bar { bar: rect(0, 1438, 2560, 1498), tray: rect(2200, 1438, 2560, 1498), ..bar };
+        assert_eq!((hidden.height(), hidden.origin(200, 50)), (50, (2200 - 5 - 200, 1385 + 58)));
         // Windows 10, at the left side
         assert!(!Bar { bar: rect(0, 0, 62, 1440), tray: rect(0, 1300, 62, 1440), ..bar }.horizontal());
         // The low taskbar of a tablet: no room for an item's height
         assert_eq!(Bar { bar: rect(0, 1420, 2560, 1440), ..bar }.height(), 0);
         // Windows 10's 40 px taskbar at 100%: an item is what the 4 px above and below leave
-        let ten = Bar {
-            bar: rect(0, 1040, 1920, 1080),
-            tray: rect(1700, 1040, 1920, 1080),
-            screen: rect(0, 0, 1920, 1080),
-            scale: 1.0,
-        };
+        let ten = Bar { bar: rect(0, 1040, 1920, 1080), tray: rect(1700, 1040, 1920, 1080), scale: 1.0 };
         assert_eq!(ten.height(), 32);
     }
 
@@ -1279,17 +1338,6 @@ mod tests {
         let mirrored = Bar { tray: rect(0, 1380, 360, 1440), ..bar };
         assert_eq!(nearest(&found, &mirrored), Some(1004));
         assert_eq!(mirrored.room(Some(1004)), 1004 - 360 - 15);
-    }
-
-    #[test]
-    fn a_window_over_the_whole_screen_covers_the_taskbar() {
-        let screen = rect(0, 0, 2560, 1440);
-        assert!(covers(rect(0, 0, 2560, 1440), screen));
-        assert!(covers(rect(-8, -8, 2568, 1448), screen));
-        // A maximized window ends where the taskbar starts
-        assert!(!covers(rect(-8, -8, 2568, 1388), screen));
-        // On the other screen
-        assert!(!covers(rect(2560, 0, 4480, 1080), screen));
     }
 
     #[test]
