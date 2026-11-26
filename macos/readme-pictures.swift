@@ -30,9 +30,14 @@ func rgb(_ hex: Int, _ alpha: CGFloat = 1) -> CGColor {
             blue: CGFloat(hex & 255) / 255, alpha: alpha)
 }
 
+/// The frames `<prefix><number>.png` of a folder, in order (reminder-low.png, say, isn't one).
 func frames(_ dir: String, _ prefix: String) -> [String] {
     let names = (try? FileManager.default.contentsOfDirectory(atPath: dir)) ?? []
-    let found = names.filter { $0.hasPrefix(prefix) && $0.hasSuffix(".png") }.sorted().map { dir + "/" + $0 }
+    let found = names.filter {
+        guard $0.hasPrefix(prefix), $0.hasSuffix(".png") else { return false }
+        let number = $0.dropFirst(prefix.count).dropLast(4)
+        return !number.isEmpty && number.allSatisfy(\.isNumber)
+    }.sorted().map { dir + "/" + $0 }
     guard !found.isEmpty else { fatalError("no \(prefix)*.png in \(dir)") }
     return found
 }
@@ -279,6 +284,23 @@ func hero(_ windows: String, _ mac: String, _ output: String) {
     save(c.result(), output)
 }
 
+/// How long the reminder's line of the time left is (the accent-blue run along its bottom rows), in pixels.
+func lineLength(_ image: CGImage) -> Int {
+    let rep = NSBitmapImageRep(cgImage: image)
+    var longest = 0
+    for y in max(0, image.height - 8)..<image.height {
+        var run = 0
+        for x in 0..<image.width {
+            if let c = rep.colorAt(x: x, y: y)?.usingColorSpace(.sRGB), c.alphaComponent > 0.5, c.blueComponent > 0.7,
+               c.redComponent < 0.4 {
+                run += 1
+            }
+        }
+        longest = max(longest, run)
+    }
+    return longest
+}
+
 /// The reminder in the top right corner under the menu bar, one scene per frame and an empty one after them. Only the
 /// line of the time left moves: each frame is the first one with its own bottom rows, so the GIF stays small.
 func reminderScenes(_ dir: String, _ lang: String, _ outDir: String) {
@@ -294,6 +316,16 @@ func reminderScenes(_ dir: String, _ lang: String, _ outDir: String) {
                        blur: 22, drop: 8, alpha: 0.55)
         }
         return c.result()
+    }
+    // Each frame's line must be there and shorter than the one before: a frame taken while the panel redrew would
+    // make it flicker
+    var last = Int.max
+    for (i, path) in paths.enumerated() {
+        let length = lineLength(load(path))
+        guard length <= last, length > 0 || i == paths.count - 1 else {
+            fatalError("\(path): the line of the time left is \(length) px after \(last); draw the frames again")
+        }
+        last = length
     }
     let first = load(paths[0])
     for (i, path) in paths.enumerated() {

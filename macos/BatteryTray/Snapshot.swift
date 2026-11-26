@@ -98,7 +98,11 @@ final class Snapshots {
             return
         }
         reminder.picture(1 - Double(i) / Double(count))
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+        // Drawn before it is taken: a picture taken while the panel redraws may lack the line
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            MainActor.assumeIsolated { self.floating(clickThrough: false)?.displayIfNeeded() }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
             MainActor.assumeIsolated {
                 if let number = self.floating(clickThrough: false)?.windowNumber {
                     self.draw(number, String(format: "reminder-%03d", i))
