@@ -64,6 +64,9 @@ END
     let out = PathBuf::from(env::var("OUT_DIR").unwrap()).join("app.rc");
     fs::write(&out, rc).unwrap();
     embed_resource::compile_for(&out, ["BatteryTray"], embed_resource::NONE).manifest_required().unwrap();
+    // The examples stand in for the app, so they get the same: without the manifest Windows takes an exe for an app
+    // of before Windows 8, which may not have a layered child window - what the taskbar strip is
+    embed_resource::compile_for_examples(&out, embed_resource::NONE).manifest_required().unwrap();
 
     // The windows; the std widgets used (the scroll view) in their Windows 11 dark style
     let config = slint_build::CompilerConfiguration::new().with_style("fluent-dark".into());
