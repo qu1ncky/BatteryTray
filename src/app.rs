@@ -925,13 +925,16 @@ impl App {
             return;
         }
         if self.strip.is_none() {
-            let window = self.window;
+            // The strip says it from its own thread: both are done on this one
+            let window = self.window.0 as isize;
             self.strip = Strip::new(move |action| match action {
                 strip::Action::Open => later(|app| app.open()),
-                // The menu runs its own loop: the app is told once it has closed
+                // The menu runs its own loop, with the app's state free: the app is told once it has closed
                 strip::Action::Menu => {
-                    let chosen = tray::show_menu(window, true);
-                    later(move |app| app.menu_chosen(chosen));
+                    let _ = slint::invoke_from_event_loop(move || {
+                        let chosen = tray::show_menu(HWND(window as *mut _), true);
+                        with_app(|app| app.menu_chosen(chosen));
+                    });
                 }
             });
             if self.strip.is_none() {
