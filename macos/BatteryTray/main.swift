@@ -8,7 +8,7 @@ import AppKit
 //   --dump [file]  poll every device once and write what was read
 //   --demo         the devices of the README's pictures instead of the real ones, with settings of their own
 //   --snapshot <folder> [ru|en|zh] [light|dark] [frames]   with the demo's devices, draw each window to a PNG file
-//                  and quit; `frames` adds the README's animations (macos/readme-pictures.sh)
+//                  and quit; `frames` adds the README's pictures (macos/readme-pictures.sh)
 
 let arguments = Array(CommandLine.arguments.dropFirst())
 

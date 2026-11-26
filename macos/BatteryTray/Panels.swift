@@ -51,8 +51,6 @@ final class ReminderController {
     private static let tick: TimeInterval = 1.0 / 30
     /// The README's pictures: the line stands still at this share of the time
     static var pictureRemaining: Double?
-    /// The reminder on the screen, whose line the README's frames move (`--snapshot … frames`)
-    static weak var shown: ReminderController?
 
     private let test: Bool
     private var panel: FloatingPanel?
@@ -78,7 +76,6 @@ final class ReminderController {
     }
 
     func show(_ effect: [String: Any]) {
-        Self.shown = self
         let items = effect["items"] as? [[String: Any]] ?? []
         let keys = Set(items.map { "\($0["id"] as? String ?? "")|\($0["critical"] as? Bool ?? false)" })
         let autoClose = (effect["auto_close"] as? NSNumber)?.doubleValue
@@ -116,11 +113,6 @@ final class ReminderController {
                 self?.place()
             }
         }
-    }
-
-    /// The README's frames: the line of the time left at this share.
-    func picture(_ remaining: Double) {
-        state.remaining = remaining
     }
 
     func close() {

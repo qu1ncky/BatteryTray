@@ -38,7 +38,7 @@
 
 <table>
 <tr>
-<td width="50%"><img src="docs/readme/reminder-ru.gif" alt="Напоминание о низком заряде: AirPods Pro — 18%, Razer Barracuda X — 14%, кнопки «Напомнить через 10 мин» и «Не напоминать до зарядки»; полоска внизу заканчивается, и напоминание закрывается" width="100%"></td>
+<td width="50%"><img src="docs/readme/reminder-ru.png" alt="Напоминание о низком заряде: AirPods Pro — 18%, Razer Barracuda X — 14%, кнопки «Напомнить через 10 мин» и «Не напоминать до зарядки»; полоска внизу показывает, сколько осталось до того, как оно закроется само" width="100%"></td>
 <td width="50%"><img src="docs/readme/overlay-ru.png" alt="Оверлей поверх игры: гарнитура — 37%, мышь Attack Shark R3 заряжается, мышь VXE R1 — 82%; показывается по Ctrl+Alt+V" width="100%"></td>
 </tr>
 <tr>

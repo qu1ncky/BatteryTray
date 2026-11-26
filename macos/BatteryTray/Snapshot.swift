@@ -4,8 +4,8 @@ import AppKit
 /// file and quits - the device list, a device's menu, a name being edited, the menu bar item and its menu, each settings
 /// tab, the reminder and the overlay - in that appearance (the system's without it), for the README's pictures and for
 /// checking a layout. An app may always take pictures of its own windows, so no Screen Recording permission is needed.
-/// With `frames` after them, also the README's animations (macos/readme-pictures.sh): the menu bar item as a keyboard
-/// runs down and charges back (bar-NN.png), and the reminder as its time runs out (reminder-NNN.png).
+/// With `frames` after them, also the README's pictures (macos/readme-pictures.sh): the menu bar item as a keyboard
+/// runs down and charges back (bar-NN.png), and the reminder with 70% of its time left (reminder-70.png).
 @MainActor
 final class Snapshots {
     private let folder: URL
@@ -53,9 +53,12 @@ final class Snapshots {
             steps.removeLast()
             steps += [
                 { self.drawMenuBarFrames() },
-                { model.send(["cmd": "test_alert"]) },
-                // The last step: it quits once its frames are drawn
-                { self.drawReminderFrames(0) },
+                {
+                    ReminderController.pictureRemaining = 0.7
+                    model.send(["cmd": "test_alert"])
+                },
+                { self.take(self.floating(clickThrough: false), "reminder-70") },
+                { NSApp.terminate(nil) },
             ]
         }
         next()
@@ -87,28 +90,6 @@ final class Snapshots {
             NSGraphicsContext.restoreGraphicsState()
             try? bitmap.representation(using: .png, properties: [:])?
                 .write(to: folder.appendingPathComponent(String(format: "bar-%02d.png", i)))
-        }
-    }
-
-    /// The README's reminder: its line of the time left from full to empty in 60 steps, then the app quits.
-    private func drawReminderFrames(_ i: Int) {
-        let count = 60
-        guard i <= count, let reminder = ReminderController.shown else {
-            NSApp.terminate(nil)
-            return
-        }
-        reminder.picture(1 - Double(i) / Double(count))
-        // Drawn before it is taken: a picture taken while the panel redraws may lack the line
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            MainActor.assumeIsolated { self.floating(clickThrough: false)?.displayIfNeeded() }
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-            MainActor.assumeIsolated {
-                if let number = self.floating(clickThrough: false)?.windowNumber {
-                    self.draw(number, String(format: "reminder-%03d", i))
-                }
-                self.drawReminderFrames(i + 1)
-            }
         }
     }
 

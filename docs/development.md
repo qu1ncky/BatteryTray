@@ -98,7 +98,7 @@ does nothing for a target other than Windows.
   menu bar item (drawn on a plain bar: its window belongs to the system) and its menu, each settings tab, the reminder
   and the overlay (an app may take pictures of its own windows, no Screen Recording permission needed). `--demo` runs the app with those devices, with settings of its own in the
   temporary folder. The site's Mac pictures (`docs/macos-*.png`) come from `--snapshot`. With `frames` it also draws the README's
-  animations: the menu bar item as a keyboard runs down and charges back, and the reminder as its time runs out.
+  pictures: the menu bar item as a keyboard runs down and charges back, and the reminder with 70% of its time left.
 - `cargo run --example snapshot -- <folder> [ru|en|zh] [scale] [light|dark]` (Windows) - renders the windows with sample data
   to PNG files, off screen, in the dark theme unless told otherwise (the overlay is dark in both), to check a layout without
   running the app: the device list (with the update banner, and without it for the README; a device's menu, a smaller

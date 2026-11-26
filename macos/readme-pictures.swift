@@ -3,7 +3,7 @@
 //   hero <windows main.png> <mac main.png> <out.png>      the device window on Windows (150%) and on a Mac (200%)
 //   menubar <frames dir> <lang> <out dir>                 the Mac menu bar with the item's bar-NN.png (400%)
 //   taskbar <frames dir> <lang> <out dir>                 the Windows taskbar with the strip's readme-NN.png (400%)
-//   reminder <frames dir> <lang> <out dir>                the reminder's reminder-NNN.png (200%) in the screen's corner
+//   reminder <reminder-70.png> <lang> <out.png>           the reminder (200%) in the screen's corner
 //   overlay <windows overlay.png> <out.png>               the Windows overlay (150%) over a game
 //   install <lang> <out dir>                              where to click on the first start, Windows and macOS
 import AppKit
@@ -284,62 +284,16 @@ func hero(_ windows: String, _ mac: String, _ output: String) {
     save(c.result(), output)
 }
 
-/// How long the reminder's line of the time left is (the accent-blue run along its bottom rows), in pixels.
-func lineLength(_ image: CGImage) -> Int {
-    let rep = NSBitmapImageRep(cgImage: image)
-    var longest = 0
-    for y in max(0, image.height - 8)..<image.height {
-        var run = 0
-        for x in 0..<image.width {
-            if let c = rep.colorAt(x: x, y: y)?.usingColorSpace(.sRGB), c.alphaComponent > 0.5, c.blueComponent > 0.7,
-               c.redComponent < 0.4 {
-                run += 1
-            }
-        }
-        longest = max(longest, run)
-    }
-    return longest
-}
-
-/// The reminder in the top right corner under the menu bar, one scene per frame and an empty one after them. Only the
-/// line of the time left moves: each frame is the first one with its own bottom rows, so the GIF stays small.
-func reminderScenes(_ dir: String, _ lang: String, _ outDir: String) {
-    folder(outDir)
-    let paths = frames(dir, "reminder-")
-    func scene(_ panel: CGImage?) -> CGImage {
-        let c = Canvas(390, 290, scale: 2)
-        wallpaper(c, seed: 1)
-        menuBar(c, lang: lang, right: 390 - 12)
-        if let panel {
-            let size = CGSize(width: CGFloat(panel.width) / 2, height: CGFloat(panel.height) / 2)
-            c.shadowed(panel, CGRect(x: 390 - 12 - size.width, y: 24 + 10, width: size.width, height: size.height),
-                       blur: 22, drop: 8, alpha: 0.55)
-        }
-        return c.result()
-    }
-    // Each frame's line must be there and shorter than the one before: a frame taken while the panel redrew would
-    // make it flicker
-    var last = Int.max
-    for (i, path) in paths.enumerated() {
-        let length = lineLength(load(path))
-        guard length <= last, length > 0 || i == paths.count - 1 else {
-            fatalError("\(path): the line of the time left is \(length) px after \(last); draw the frames again")
-        }
-        last = length
-    }
-    let first = load(paths[0])
-    for (i, path) in paths.enumerated() {
-        let frame = load(path)
-        let rows = 12
-        let ctx = CGContext(data: nil, width: first.width, height: first.height, bitsPerComponent: 8, bytesPerRow: 0,
-                            space: sRGB, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
-        ctx.draw(first, in: CGRect(x: 0, y: 0, width: first.width, height: first.height))
-        ctx.clear(CGRect(x: 0, y: 0, width: first.width, height: rows))
-        ctx.draw(frame.cropping(to: CGRect(x: 0, y: frame.height - rows, width: frame.width, height: rows))!,
-                 in: CGRect(x: 0, y: 0, width: first.width, height: rows))
-        save(scene(ctx.makeImage()!), outDir + String(format: "/f%03d.png", i))
-    }
-    save(scene(nil), outDir + String(format: "/f%03d.png", paths.count))
+/// The reminder in the top right corner under the menu bar (`reminder-70.png`: 70% of its time left).
+func reminderScene(_ input: String, _ lang: String, _ output: String) {
+    let panel = load(input)
+    let c = Canvas(390, 290, scale: 2)
+    wallpaper(c, seed: 1)
+    menuBar(c, lang: lang, right: 390 - 12)
+    let size = CGSize(width: CGFloat(panel.width) / 2, height: CGFloat(panel.height) / 2)
+    c.shadowed(panel, CGRect(x: 390 - 12 - size.width, y: 24 + 10, width: size.width, height: size.height),
+               blur: 22, drop: 8, alpha: 0.55)
+    save(c.result(), output)
 }
 
 /// The overlay in the top left corner of a game, with its shortcut below.
@@ -551,7 +505,7 @@ switch args.count > 1 ? args[1] : "" {
 case "hero": hero(args[2], args[3], args[4])
 case "menubar": menubarScenes(args[2], args[3], args[4])
 case "taskbar": taskbarScenes(args[2], args[3], args[4])
-case "reminder": reminderScenes(args[2], args[3], args[4])
+case "reminder": reminderScene(args[2], args[3], args[4])
 case "overlay": overlayScene(args[2], args[3])
 case "install":
     folder(args[3])

@@ -38,7 +38,7 @@
 
 <table>
 <tr>
-<td width="50%"><img src="docs/readme/reminder-zh.gif" alt="低电量提醒：AirPods Pro 18%，Razer Barracuda X 14%，以及“10 分钟后提醒”和“充电前不再提醒”按钮；底部的进度条走完后提醒自动关闭" width="100%"></td>
+<td width="50%"><img src="docs/readme/reminder-zh.png" alt="低电量提醒：AirPods Pro 18%，Razer Barracuda X 14%，以及“10 分钟后提醒”和“充电前不再提醒”按钮；底部的进度条显示距离自动关闭还剩多少时间" width="100%"></td>
 <td width="50%"><img src="docs/readme/overlay-zh.png" alt="游戏画面上的悬浮窗：耳机 37%，Attack Shark R3 鼠标正在充电，VXE R1 鼠标 82%；按 Ctrl+Alt+V 显示" width="100%"></td>
 </tr>
 <tr>

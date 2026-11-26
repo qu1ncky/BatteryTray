@@ -3,7 +3,7 @@
 #   hero-<lang>.png             the device window on Windows and on a Mac
 #   menubar-<lang>.gif          the Mac menu bar: a keyboard runs down, turns orange, then red, and charges back
 #   taskbar-<lang>.gif          the same on the Windows taskbar
-#   reminder-<lang>.gif         the reminder as its time runs out
+#   reminder-<lang>.png         the reminder, its line of the time left at 70%
 #   overlay-<lang>.png          the overlay over a game
 #   install-windows-<lang>.png, install-macos-<lang>.png   where to click on the first start
 #
@@ -46,8 +46,7 @@ APP="$ROOT/target/macos/BatteryTray.app/Contents/MacOS/BatteryTray"
 swiftc -O "$ROOT/macos/readme-pictures.swift" -o "$WORK/compose"
 
 # One GIF from a folder of frames (f000.png, …): every frame shares one palette, and only what changes is redrawn.
-# The menu bar and the taskbar step every 0.45 s, rest at the critical level and charge faster; the reminder's line
-# runs out in 6 s and the empty corner stays for a moment before it starts again.
+# The menu bar and the taskbar step every 0.45 s, rest at the critical level and charge faster.
 gif() {
   local dir=$1 out=$2 kind=$3 list="$WORK/frames.txt"
   local frames=("$dir"/f*.png)
@@ -56,7 +55,6 @@ gif() {
   for i in "${!frames[@]}"; do
     case $kind in
       bar) d=0.45; [ "$i" -eq 9 ] && d=1.4; [ "$i" -gt 9 ] && d=0.35; [ "$i" -eq $((n - 1)) ] && d=1.1 ;;
-      reminder) d=0.1; [ "$i" -eq 0 ] && d=0.9; [ "$i" -eq $((n - 1)) ] && d=1.3 ;;
     esac
     printf "file '%s'\nduration %s\n" "${frames[$i]}" "$d" >> "$list"
   done
@@ -76,8 +74,7 @@ for lang in en ru zh; do
   gif "$WORK/menubar-$lang" "$OUT/menubar-$lang.gif" bar
   "$WORK/compose" taskbar "$WORK/windows/strip" "$lang" "$WORK/taskbar-$lang"
   gif "$WORK/taskbar-$lang" "$OUT/taskbar-$lang.gif" bar
-  "$WORK/compose" reminder "$WORK/mac-$lang" "$lang" "$WORK/reminder-$lang"
-  gif "$WORK/reminder-$lang" "$OUT/reminder-$lang.gif" reminder
+  "$WORK/compose" reminder "$WORK/mac-$lang/reminder-70.png" "$lang" "$OUT/reminder-$lang.png"
   "$WORK/compose" overlay "$WORK/windows/windows-$lang-150/overlay.png" "$OUT/overlay-$lang.png"
   "$WORK/compose" install "$lang" "$OUT"
 done

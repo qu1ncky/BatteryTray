@@ -38,7 +38,7 @@
 
 <table>
 <tr>
-<td width="50%"><img src="docs/readme/reminder-en.gif" alt="The low battery reminder for AirPods Pro at 18% and a Razer Barracuda X at 14%, with Remind me in 10 min and Don't remind me until it's charged; the line along its bottom edge runs out and the reminder closes" width="100%"></td>
+<td width="50%"><img src="docs/readme/reminder-en.png" alt="The low battery reminder for AirPods Pro at 18% and a Razer Barracuda X at 14%, with Remind me in 10 min and Don't remind me until it's charged; the line along its bottom edge shows the time until it closes by itself" width="100%"></td>
 <td width="50%"><img src="docs/readme/overlay-en.png" alt="The overlay over a game: a headset at 37%, an Attack Shark R3 mouse charging and a VXE R1 mouse at 82%, shown by Ctrl+Alt+V" width="100%"></td>
 </tr>
 <tr>
