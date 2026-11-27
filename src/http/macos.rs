@@ -49,15 +49,16 @@ impl<T> Answer<T> {
     }
 }
 
-fn session() -> Retained<NSURLSession> {
+/// A session whose every wait for data may last `step` seconds.
+fn session(step: f64) -> Retained<NSURLSession> {
     let config = NSURLSessionConfiguration::ephemeralSessionConfiguration();
-    config.setTimeoutIntervalForRequest(STEP);
+    config.setTimeoutIntervalForRequest(step);
     config.setTimeoutIntervalForResource(WHOLE.as_secs_f64());
     config.setRequestCachePolicy(NSURLRequestCachePolicy::ReloadIgnoringLocalCacheData);
     NSURLSession::sessionWithConfiguration(&config)
 }
 
-fn request(url: &str, user_agent: &str, accept: Option<&str>) -> Result<Retained<NSMutableURLRequest>> {
+fn request(url: &str, user_agent: &str, headers: &[(&str, &str)]) -> Result<Retained<NSMutableURLRequest>> {
     if !url.starts_with("https://") {
         return Err(Error::other(format!("not an https URL: {url}")));
     }
@@ -65,8 +66,8 @@ fn request(url: &str, user_agent: &str, accept: Option<&str>) -> Result<Retained
         NSURL::URLWithString(&NSString::from_str(url)).ok_or_else(|| Error::other(format!("bad URL: {url}")))?;
     let request = NSMutableURLRequest::requestWithURL(&address);
     request.setValue_forHTTPHeaderField(Some(&NSString::from_str(user_agent)), &NSString::from_str("User-Agent"));
-    if let Some(accept) = accept {
-        request.setValue_forHTTPHeaderField(Some(&NSString::from_str(accept)), &NSString::from_str("Accept"));
+    for (name, value) in headers {
+        request.setValue_forHTTPHeaderField(Some(&NSString::from_str(value)), &NSString::from_str(name));
     }
     Ok(request)
 }
@@ -92,17 +93,24 @@ fn timed_out() -> Error {
 
 /// The body of a GET as text.
 pub fn get_text(url: &str, user_agent: &str, accept: Option<&str>) -> Result<String> {
-    let request = request(url, user_agent, accept)?;
+    let headers: Vec<(&str, &str)> = accept.map(|a| ("Accept", a)).into_iter().collect();
+    get_text_with(url, user_agent, &headers, Duration::from_secs_f64(STEP))
+}
+
+/// The body of a GET with headers of its own, given up when a wait for data lasts `step` or the whole three times
+/// that.
+pub fn get_text_with(url: &str, user_agent: &str, headers: &[(&str, &str)], step: Duration) -> Result<String> {
+    let request = request(url, user_agent, headers)?;
     let answer = Answer::<Vec<u8>>::new();
     let given = answer.clone();
     let done = RcBlock::new(move |data: *mut NSData, response: *mut NSURLResponse, error: *mut NSError| {
         let body = unsafe { data.as_ref() }.map(|d| d.to_vec()).unwrap_or_default();
         given.give(outcome(response, error).map(|_| body));
     });
-    let session = session();
+    let session = session(step.as_secs_f64());
     let task = unsafe { session.dataTaskWithRequest_completionHandler(&request, &done) };
     task.resume();
-    let deadline = Instant::now() + Duration::from_secs_f64(STEP * 3.0);
+    let deadline = Instant::now() + step * 3;
     let body = answer.wait(deadline, Duration::from_secs(1), || {}).unwrap_or_else(|| {
         task.cancel();
         Err(timed_out())
@@ -114,7 +122,7 @@ pub fn get_text(url: &str, user_agent: &str, accept: Option<&str>) -> Result<Str
 
 /// Downloads a file of `size` bytes into `path`, telling `progress` each new percentage.
 pub fn download(url: &str, user_agent: &str, path: &Path, size: u64, progress: &dyn Fn(i32)) -> Result<()> {
-    let request = request(url, user_agent, None)?;
+    let request = request(url, user_agent, &[])?;
     let answer = Answer::<()>::new();
     let given = answer.clone();
     let target = path.to_path_buf();
@@ -129,7 +137,7 @@ pub fn download(url: &str, user_agent: &str, path: &Path, size: u64, progress: &
         });
         given.give(moved);
     });
-    let session = session();
+    let session = session(STEP);
     let task = unsafe { session.downloadTaskWithRequest_completionHandler(&request, &done) };
     task.resume();
     let last = std::cell::Cell::new(-1);
@@ -170,6 +178,18 @@ mod tests {
     #[test]
     fn only_https() {
         assert!(get_text("http://example.com", "BatteryTray/test", None).is_err());
+    }
+
+    /// A server that doesn't answer is given up after a few of its steps, as the update check gives up the update
+    /// server for GitHub. `cargo test -- --ignored`.
+    #[test]
+    #[ignore]
+    fn a_server_that_doesnt_answer_is_given_up() {
+        let started = Instant::now();
+        let headers = [("Accept", "application/json"), ("BatteryTray-Install", "0123456789abcdef0123456789abcdef")];
+        assert!(get_text_with("https://10.255.255.1/v1/latest", "BatteryTray/test", &headers, Duration::from_secs(2))
+            .is_err());
+        assert!(started.elapsed() < Duration::from_secs(8), "{:?}", started.elapsed());
     }
 
     /// The real thing: GitHub's API answers, and a 404 is an error. `cargo test -- --ignored`.

@@ -9,6 +9,6 @@ mod macos;
 mod windows;
 
 #[cfg(target_os = "macos")]
-pub use macos::{download, get_text};
+pub use macos::{download, get_text, get_text_with};
 #[cfg(windows)]
-pub use windows::{download, get, get_text, Response};
+pub use windows::{download, get, get_text, get_text_with, Response};

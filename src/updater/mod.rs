@@ -1,5 +1,6 @@
 //! Updates from GitHub Releases: the latest release's asset for this system replaces the running app - the exe on
-//! Windows, the app bundle (from a zip) on macOS. The new copy is downloaded straight next to the running one, so an
+//! Windows, the app bundle (from a zip) on macOS. Which release is the latest, the update server says (`get_latest`),
+//! or GitHub's API when the server can't; the download always comes from GitHub. The new copy is downloaded straight next to the running one, so an
 //! install that only administrators can write to never passes through a folder other programs can write to. It must
 //! match the SHA-256 digest GitHub publishes for the asset and carry the release's version (a mislabeled asset would
 //! otherwise update forever). The old copy is swapped out under another name and deleted on the next start.
@@ -18,11 +19,24 @@ pub use windows::{can_install_in_place, clean_up, file_version, install, install
 
 use crate::http;
 use crate::loc::tf;
+use crate::log;
 use crate::sys::{Error, Result};
 use std::fmt;
 use std::path::Path;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 pub const REPOSITORY: &str = "qu1ncky/BatteryTray";
+
+/// The update server (server/; docs/development.md, "The update server"): the latest release as GitHub's API gives
+/// it, passed on by a Cloudflare Worker, which counts the copies in use by the random number each one sends along
+/// (`install_id`). Whatever it can't answer well, GitHub answers, as before there was a server.
+const SERVER: &str = "https://updates.batterytray.workers.dev/v1/latest";
+/// The server is given up for GitHub when a step of the request (connecting, a wait for data) takes longer.
+const SERVER_STEP: Duration = Duration::from_secs(8);
+/// While the server answers, GitHub is still asked at the first check of a run and then once a day, so that a server
+/// giving an old release can't hold an update back for longer than that.
+const GITHUB_EVERY: Duration = Duration::from_secs(24 * 3600);
 /// Major.minor.build, as the C# app compares versions.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Version(pub u32, pub u32, pub u32);
@@ -67,12 +81,127 @@ pub struct ReleaseInfo {
     pub sha256: String,
 }
 
+/// "BatteryTray/2.5.0 (Windows 10.0.26100; x64)", "BatteryTray/2.5.0 (macOS 26.6; arm64)": GitHub's API requires a
+/// User-Agent, and the update server counts the copies by version and system from it.
 pub(crate) fn user_agent() -> String {
-    format!("BatteryTray/{}", Version::current()) // GitHub's API requires one
+    let arch = match std::env::consts::ARCH {
+        "x86_64" => "x64",
+        "aarch64" => "arm64",
+        other => other,
+    };
+    format!("BatteryTray/{} ({}; {arch})", Version::current(), system())
 }
 
-/// The latest non-prerelease release, or None when it has no usable asset for this system.
+#[cfg(windows)]
+fn system() -> String {
+    format!("Windows 10.0.{}", crate::win::windows_build())
+}
+
+#[cfg(target_os = "macos")]
+fn system() -> String {
+    let version = crate::mac::macos_version();
+    format!("macOS {}", if version.is_empty() { "0" } else { &version })
+}
+
+/// The random number this copy sends to the update server, so that it is counted once however often it asks: made up
+/// on the first check from the system's random source and kept in the app's folder, in `install-id`. It says nothing
+/// about the computer or its user. Empty when it can't be kept: the check is then answered but not counted.
+pub fn install_id() -> String {
+    install_id_in(&crate::sys::app_data_folder())
+}
+
+fn install_id_in(folder: &Path) -> String {
+    let file = folder.join("install-id");
+    if let Ok(text) = std::fs::read_to_string(&file) {
+        let id = text.trim();
+        if id.len() == 32 && id.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)) {
+            return id.to_string();
+        }
+    }
+    let mut bytes = [0u8; 16];
+    if getrandom::fill(&mut bytes).is_err() {
+        return String::new();
+    }
+    let id = hex(&bytes);
+    let kept = std::fs::create_dir_all(folder).and_then(|_| std::fs::write(&file, &id));
+    if kept.is_err() {
+        return String::new();
+    }
+    id
+}
+
+/// The latest non-prerelease release, or None when it has no usable asset for this system: the update server's, or
+/// GitHub's when the server gives nothing usable. GitHub is asked as well at the first check and once a day, and the
+/// newer of the two answers wins.
 pub fn get_latest() -> Result<Option<ReleaseInfo>> {
+    static GITHUB_ASKED: Mutex<Option<Instant>> = Mutex::new(None);
+    let asked = |at: Option<Instant>| *GITHUB_ASKED.lock().unwrap_or_else(|e| e.into_inner()) = at;
+    let due = GITHUB_ASKED.lock().unwrap_or_else(|e| e.into_inner()).is_none_or(|at| at.elapsed() >= GITHUB_EVERY);
+    let id = install_id();
+    choose(
+        || {
+            let mut headers = vec![("Accept", "application/json")];
+            if !id.is_empty() {
+                headers.push(("BatteryTray-Install", id.as_str()));
+            }
+            from_server(&http::get_text_with(SERVER, &user_agent(), &headers, SERVER_STEP)?)
+        },
+        || {
+            let latest = from_github()?;
+            asked(Some(Instant::now()));
+            Ok(latest)
+        },
+        due,
+    )
+}
+
+/// The server's release when it gives one for this system; GitHub's otherwise, and GitHub's too when `github_due`,
+/// the newer of the two winning. When neither answers, the check fails with GitHub's error.
+fn choose(
+    server: impl FnOnce() -> Result<Option<ReleaseInfo>>,
+    github: impl FnOnce() -> Result<Option<ReleaseInfo>>,
+    github_due: bool,
+) -> Result<Option<ReleaseInfo>> {
+    let release = match server() {
+        Ok(Some(release)) => release,
+        Ok(None) => {
+            log::write("update server: no release for this system; asking GitHub");
+            return github();
+        }
+        Err(e) => {
+            log::write(&format!("update server: {e}; asking GitHub"));
+            return github();
+        }
+    };
+    if !github_due {
+        return Ok(Some(release));
+    }
+    match github() {
+        Ok(Some(newer)) if newer.version > release.version => Ok(Some(newer)),
+        Ok(_) => Ok(Some(release)),
+        Err(e) => {
+            log::write(&format!("update check on GitHub failed: {e}; the update server's answer stands"));
+            Ok(Some(release))
+        }
+    }
+}
+
+/// The update server's answer, used only when the release's page and download are this repository's on GitHub: the
+/// download is checked against the digest that comes with it, so a server pointing elsewhere could hand out anything.
+fn from_server(text: &str) -> Result<Option<ReleaseInfo>> {
+    let root: serde_json::Value = serde_json::from_str(text).map_err(|e| Error::other(e.to_string()))?;
+    let Some(release) = parse_release(&root) else {
+        return Ok(None);
+    };
+    let releases = format!("https://github.com/{REPOSITORY}/releases/");
+    if !release.exe_url.starts_with(&format!("{releases}download/")) || !release.page_url.starts_with(&releases) {
+        return Err(Error::other("its release isn't this repository's on GitHub"));
+    }
+    Ok(Some(release))
+}
+
+/// The latest release straight from GitHub's API.
+fn from_github() -> Result<Option<ReleaseInfo>> {
     let url = format!("https://api.github.com/repos/{REPOSITORY}/releases/latest");
     let text = http::get_text(&url, &user_agent(), Some("application/vnd.github+json"))?;
     let root: serde_json::Value = serde_json::from_str(&text).map_err(|e| Error::other(e.to_string()))?;
@@ -154,6 +283,111 @@ mod tests {
         let mut no_digest = json.clone();
         no_digest["assets"][1]["digest"] = serde_json::Value::Null;
         assert_eq!(parse_release_for(&no_digest, "BatteryTray.exe"), None, "no digest, no update");
+    }
+
+    fn release(version: u32) -> ReleaseInfo {
+        let tag = format!("v2.{version}.0");
+        ReleaseInfo {
+            version: Version(2, version, 0),
+            notes: String::new(),
+            page_url: format!("https://github.com/{REPOSITORY}/releases/tag/{tag}"),
+            exe_url: format!("https://github.com/{REPOSITORY}/releases/download/{tag}/{ASSET_NAME}"),
+            exe_size: 1,
+            sha256: "00".into(),
+            tag,
+        }
+    }
+
+    fn failed() -> Result<Option<ReleaseInfo>> {
+        Err(Error::other("no answer"))
+    }
+
+    #[test]
+    fn the_servers_release_unless_it_gives_none_then_githubs() {
+        let github_unasked = || -> Result<Option<ReleaseInfo>> { panic!("GitHub asked") };
+        assert_eq!(choose(|| Ok(Some(release(5))), github_unasked, false).unwrap(), Some(release(5)));
+        assert_eq!(choose(failed, || Ok(Some(release(5))), false).unwrap(), Some(release(5)), "the server fails");
+        assert_eq!(
+            choose(|| Ok(None), || Ok(Some(release(5))), false).unwrap(),
+            Some(release(5)),
+            "none for this system"
+        );
+        assert_eq!(choose(failed, failed, false).unwrap_err().message, "no answer", "GitHub's error");
+        assert_eq!(choose(failed, || Ok(None), true).unwrap(), None);
+    }
+
+    #[test]
+    fn github_asked_as_well_once_a_day_the_newer_winning() {
+        assert_eq!(choose(|| Ok(Some(release(5))), || Ok(Some(release(6))), true).unwrap(), Some(release(6)));
+        assert_eq!(choose(|| Ok(Some(release(6))), || Ok(Some(release(5))), true).unwrap(), Some(release(6)));
+        assert_eq!(choose(|| Ok(Some(release(5))), failed, true).unwrap(), Some(release(5)), "GitHub fails");
+        assert_eq!(choose(|| Ok(Some(release(5))), || Ok(None), true).unwrap(), Some(release(5)));
+    }
+
+    #[test]
+    fn the_servers_release_only_with_this_repositorys_page_and_download() {
+        let releases = format!("https://github.com/{REPOSITORY}/releases");
+        let answer = |page: &str, download: &str| {
+            serde_json::json!({
+                "tag_name": "v2.5.0", "body": "notes", "html_url": page,
+                "assets": [{ "name": ASSET_NAME, "size": 10, "digest": "sha256:ab", "browser_download_url": download }]
+            })
+            .to_string()
+        };
+        let good = answer(&format!("{releases}/tag/v2.5.0"), &format!("{releases}/download/v2.5.0/{ASSET_NAME}"));
+        let r = from_server(&good).unwrap().unwrap();
+        assert_eq!((r.version, r.exe_size, r.sha256.as_str()), (Version(2, 5, 0), 10, "ab"));
+        assert!(from_server(&answer(&format!("{releases}/tag/v2.5.0"), "https://example.com/BatteryTray.exe")).is_err());
+        assert!(from_server(&answer(
+            &format!("{releases}/tag/v2.5.0"),
+            &format!("https://github.com/someone/else/releases/download/v2.5.0/{ASSET_NAME}")
+        ))
+        .is_err());
+        assert!(
+            from_server(&answer("https://example.com/", &format!("{releases}/download/v2.5.0/{ASSET_NAME}"))).is_err()
+        );
+        assert!(from_server("<html>").is_err());
+        assert_eq!(from_server(r#"{"tag_name": "v2.5.0", "assets": []}"#).unwrap(), None);
+    }
+
+    #[test]
+    fn install_id_made_up_once_and_kept() {
+        let folder = std::env::temp_dir().join(format!("BatteryTray-install-id-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&folder);
+        let id = install_id_in(&folder);
+        assert_eq!(id.len(), 32);
+        assert!(id.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase()));
+        assert_eq!(install_id_in(&folder), id, "kept");
+        std::fs::write(folder.join("install-id"), "broken").unwrap();
+        let other = install_id_in(&folder);
+        assert!(other.len() == 32 && other != id, "made up again");
+        let _ = std::fs::remove_dir_all(&folder);
+        let file = std::env::temp_dir().join(format!("BatteryTray-install-id-file-{}", std::process::id()));
+        std::fs::write(&file, "").unwrap();
+        assert_eq!(install_id_in(&file.join("folder")), "", "can't be kept, so not sent");
+        let _ = std::fs::remove_file(&file);
+    }
+
+    #[test]
+    fn user_agent_says_version_system_and_processor() {
+        let agent = user_agent();
+        let rest = agent.strip_prefix(&format!("BatteryTray/{} (", Version::current())).unwrap();
+        let (system, arch) = rest.strip_suffix(')').unwrap().split_once("; ").unwrap();
+        let (os, version) = system.split_once(' ').unwrap();
+        assert!(["Windows", "macOS"].contains(&os), "{agent}");
+        assert!(!version.is_empty() && version.split('.').all(|p| p.parse::<u32>().is_ok()), "{agent}");
+        assert!(["x64", "arm64"].contains(&arch), "{agent}");
+    }
+
+    /// The real thing: the update server answers this app's HTTP client with a release it takes, and GitHub gives
+    /// the same. `cargo test -- --ignored`; the test number it sends is counted as a copy, to be deleted after.
+    #[test]
+    #[ignore]
+    fn the_update_server_answers_as_github() {
+        let headers = [("Accept", "application/json"), ("BatteryTray-Install", "fffffffffffffffffffffffffffffff1")];
+        let text = http::get_text_with(SERVER, &user_agent(), &headers, SERVER_STEP).unwrap();
+        let served = from_server(&text).unwrap().unwrap();
+        assert_eq!(Some(served), from_github().unwrap());
     }
 
     #[test]
