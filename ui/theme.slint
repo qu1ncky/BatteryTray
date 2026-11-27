@@ -128,13 +128,22 @@ export component NewBadge inherits Rectangle {
     border-radius: self.height / 2;
     border-width: 1px;
     border-color: Palette.accent;
+    // How far the word's letters rise from their baseline: a word in small letters alone ("новое") as far as an x,
+    // any other ("New", "新") as far as a capital
+    property <bool> small-letters: label.text == label.text.to-lowercase() && label.text != label.text.to-uppercase();
+    property <length> rise: self.small-letters ? label.font-metrics.x-height : label.font-metrics.cap-height;
     label := Text {
         text: T.t("settings.new");
         font-size: 11px;
         font-weight: 600;
         color: Palette.accent;
         horizontal-alignment: center;
-        vertical-alignment: center;
+        vertical-alignment: top;
+        height: self.preferred-height;
+        // The letters in the capsule's middle, not their line: a line keeps more room above its letters than below
+        // them, so a word without a tall letter sat a pixel and a half low. The line, where the font doesn't say
+        // how tall its letters are.
+        y: root.rise > 0 ? (parent.height + root.rise) / 2 - self.font-metrics.ascent : (parent.height - self.height) / 2;
     }
 }
 
