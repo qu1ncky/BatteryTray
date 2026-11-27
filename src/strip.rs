@@ -3,9 +3,10 @@
 //!
 //! Windows gives an app no place of its own on the taskbar but its notification icon, and Windows 11 keeps a new icon
 //! under the arrow until the user drags it out. So the strip is a window of the app's own, made a child of the
-//! taskbar's window and drawn to look like a part of it: the tray's glyph and text sizes, the taskbar's text color,
-//! one hover target for the whole of it. The window is layered with an alpha of its own for every pixel (the taskbar
-//! shows through), never takes the focus, and is off unless the user turns it on.
+//! taskbar's window and drawn to look like a part of it: glyphs a little larger than the tray's, levels as high as
+//! the taskbar's own text, a hairline between two devices, the taskbar's text color, one hover target for the whole
+//! of it. The window is layered with an alpha of its own for every pixel (the taskbar shows through), never takes the
+//! focus, and is off unless the user turns it on.
 //!
 //! A child of the taskbar, not a window kept on top of it, because only a child is wherever the taskbar is: under a
 //! full-screen app (a game, a video: Windows drops the taskbar below it, however the app got that big), out of sight
@@ -33,7 +34,7 @@ use windows::Win32::Graphics::Gdi::{
     GetTextExtentPoint32W, MapWindowPoints, SelectObject, SetBkMode, SetTextColor, AC_SRC_ALPHA, AC_SRC_OVER,
     ANTIALIASED_QUALITY, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, BLENDFUNCTION, CLIP_DEFAULT_PRECIS, COLOR_HIGHLIGHT,
     COLOR_HIGHLIGHTTEXT, COLOR_WINDOWTEXT, DEFAULT_CHARSET, DIB_RGB_COLORS, DT_LEFT, DT_NOCLIP, DT_NOPREFIX,
-    DT_SINGLELINE, DT_VCENTER, FF_SWISS, FW_NORMAL, HBITMAP, HDC, HFONT, HGDIOBJ, OUT_TT_PRECIS, SYS_COLOR_INDEX,
+    DT_SINGLELINE, DT_TOP, FF_SWISS, FW_NORMAL, HBITMAP, HDC, HFONT, HGDIOBJ, OUT_TT_PRECIS, SYS_COLOR_INDEX,
     TRANSPARENT, VARIABLE_PITCH,
 };
 use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED};
@@ -61,26 +62,33 @@ use windows::Win32::UI::WindowsAndMessaging::{
     WM_TIMER, WNDCLASSEXW, WS_CHILD, WS_EX_LAYERED, WS_EX_NOPARENTNOTIFY, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
 
-/// Sizes in Windows' own pixels at 100%, a taskbar item's: on a 48 px taskbar its hover target is 40 px high with
-/// corners of 4, a tray icon is a 16 px glyph, the tray's text is 12 px (Caption in Windows 11's type ramp).
+/// Sizes in Windows' own pixels at 100%. A taskbar item's: on a 48 px taskbar its hover target is 40 px high with
+/// corners of 4. The strip's own: a glyph of 18 px, a little more than a tray icon's 16, and levels of 13 px, whose
+/// digits GDI draws about as high as the taskbar draws its own text (the clock's). With a 16 px glyph and 12 px
+/// levels the strip looked small beside the tray.
 const HEIGHT: f32 = 40.0;
 const INSET: f32 = 4.0;
 const LOWEST: f32 = 24.0;
 const RADIUS: f32 = 4.0;
-const PAD: f32 = 8.0;
-const GLYPH: f32 = 16.0;
-const TEXT: f32 = 12.0;
-/// Between a device's glyph and its level, between the level and the lightning, and between two devices
-const GLYPH_GAP: f32 = 4.0;
-const BOLT_GAP: f32 = 1.0;
-const DEVICE_GAP: f32 = 12.0;
+const PAD: f32 = 9.0;
+const GLYPH: f32 = 18.0;
+const TEXT: f32 = 13.0;
+/// Between a device's glyph and its level, and between the level and the lightning
+const GLYPH_GAP: f32 = 5.0;
+const BOLT_GAP: f32 = 3.0;
+/// The lightning of a device that charges, how wide and how high. After a level it is a mark beside the digits. Alone
+/// (a device that says nothing but that it charges) it stands where the level would, and is larger and as far from
+/// the glyph as a level: at the mark's size it looked lost beside the glyph.
+const BOLT: (f32, f32) = (7.0, 12.0);
+const BOLT_ALONE: (f32, f32) = (8.0, 14.0);
+/// The hairline between two devices: how wide and how high, and what is left clear on each side of it
+const RULE: (f32, f32) = (1.0, 16.0);
+const RULE_GAP: f32 = 9.0;
 /// Left clear between the strip and the arrow of the notification area, and between the last app button and the strip
 const TRAY_GAP: f32 = 4.0;
 const BUTTONS_GAP: f32 = 8.0;
 
-/// The lightning after the level of a device that charges, and the battery shown while no device is on the air
-/// (Segoe Fluent Icons and Segoe MDL2 Assets have both)
-const BOLT: &str = "\u{E945}";
+/// The battery shown while no device is on the air (Segoe Fluent Icons and Segoe MDL2 Assets both have it)
 const NO_DEVICES: &str = "\u{E850}";
 
 const TICK: usize = 1;
@@ -223,22 +231,58 @@ pub fn nearest(buttons: &[RECT], bar: &Bar) -> Option<i32> {
     }
 }
 
-/// The fonts a piece of the strip is drawn in.
+/// The fonts the strip's text is drawn in.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Face {
     Glyph,
     Text,
-    Bolt,
 }
 
-/// One run of text at its place in the strip.
+/// What a piece of the strip is: text in one of the fonts, or a shape the strip draws itself.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Mark {
+    Text(Face, String),
+    /// The lightning of a device that charges, `alone` when no level stands before it. The icon fonts have it only as
+    /// an outline, which is a blot at this size
+    Bolt {
+        alone: bool,
+    },
+    /// The hairline between two devices
+    Rule,
+}
+
+/// A text as its font draws it: how wide and how tall what is seen of it is, and how far into its line's box that
+/// starts, from the left and from the top. A level is as wide as its line, so that its digits keep their columns.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Span {
+    w: i32,
+    tall: i32,
+    left: i32,
+    above: i32,
+}
+
+/// One piece at its place in the strip: `x` and `w` are its ink's (a text's line starts `left` before and `above`
+/// it). The strip's middle goes through the middle of the ink, not of the font's line: digits leave the lower part of
+/// theirs empty, and every glyph of the icon font fills its square in its own way - the keyboard, flat, sits above the
+/// middle of it, the mouse leaves a part of it empty at each side. Centered by their lines, a level stood a pixel
+/// below its glyph and the keyboard's stuck out above its level; spaced by their squares, a mouse's level stood
+/// farther from it than a keyboard's.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Piece {
     x: i32,
     w: i32,
-    face: Face,
-    text: String,
+    tall: i32,
+    left: i32,
+    above: i32,
+    mark: Mark,
     color: Rgba,
+}
+
+impl Piece {
+    /// The row its ink starts at in a strip `h` high.
+    fn top(&self, h: i32) -> i32 {
+        (h - self.tall).div_euclid(2)
+    }
 }
 
 /// The taskbar's colors: its text (white on a dark taskbar), the plate under the pointer, and the app's own orange
@@ -285,6 +329,12 @@ impl Paint {
             _ => self.text,
         }
     }
+
+    /// The hairline between two devices: the taskbar's text, faint; a contrast theme's text as it is.
+    fn rule(&self) -> Rgba {
+        let (r, g, b) = self.text;
+        (r, g, b, if self.contrast.is_some() { 255 } else { 56 })
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -294,40 +344,111 @@ enum Look {
     Pressed,
 }
 
-/// The pieces of a row of devices, left to right, and the row's width with its padding. `measure` says how wide a
-/// text comes out in a face.
-fn layout(slots: &[Slot], scale: f32, paint: &Paint, measure: &mut dyn FnMut(Face, &str) -> i32) -> (Vec<Piece>, i32) {
+/// The pieces of a row of devices, left to right, and the row's width with its padding. `measure` says how a text
+/// comes out in a face.
+fn layout(slots: &[Slot], scale: f32, paint: &Paint, measure: &mut dyn FnMut(Face, &str) -> Span) -> (Vec<Piece>, i32) {
     let px = |v: f32| (v * scale).round() as i32;
     let opaque = |c: Rgb| (c.0, c.1, c.2, 255);
+    let glyph = |text: &str| Mark::Text(Face::Glyph, text.to_string());
+    let level = |text: &str| Mark::Text(Face::Text, text.to_string());
+    let shape = |(w, tall): (f32, f32)| Span { w: px(w).max(1), tall: px(tall), left: 0, above: 0 };
     let mut pieces = Vec::new();
     let mut x = px(PAD);
-    let mut add = |x: &mut i32, face: Face, text: &str, color: Rgba| {
-        let w = measure(face, text);
-        pieces.push(Piece { x: *x, w, face, text: text.to_string(), color });
+    let mut add = |x: &mut i32, mark: Mark, color: Rgba| {
+        let span = match &mark {
+            Mark::Text(face, text) => measure(*face, text),
+            Mark::Bolt { alone } => shape(if *alone { BOLT_ALONE } else { BOLT }),
+            Mark::Rule => shape(RULE),
+        };
+        let Span { w, tall, left, above } = span;
+        pieces.push(Piece { x: *x, w, tall, left, above, mark, color });
         *x += w;
     };
     if slots.is_empty() {
         // Nothing on the air: a battery and two dashes, dimmed, as the tray icon's "--"
         let dim = (paint.text.0, paint.text.1, paint.text.2, 153);
-        add(&mut x, Face::Glyph, NO_DEVICES, dim);
+        add(&mut x, glyph(NO_DEVICES), dim);
         x += px(GLYPH_GAP);
-        add(&mut x, Face::Text, "--", dim);
+        add(&mut x, level("--"), dim);
     }
     for (i, slot) in slots.iter().enumerate() {
         if i > 0 {
-            x += px(DEVICE_GAP);
+            x += px(RULE_GAP);
+            add(&mut x, Mark::Rule, paint.rule());
+            x += px(RULE_GAP);
         }
-        add(&mut x, Face::Glyph, slot.glyph, opaque(paint.text));
+        add(&mut x, glyph(slot.glyph), opaque(paint.text));
         if !slot.level.is_empty() {
             x += px(GLYPH_GAP);
-            add(&mut x, Face::Text, &slot.level, opaque(paint.level(slot.tone)));
+            add(&mut x, level(&slot.level), opaque(paint.level(slot.tone)));
         }
         if slot.power {
-            x += px(BOLT_GAP);
-            add(&mut x, Face::Bolt, BOLT, opaque(paint.text));
+            let alone = slot.level.is_empty();
+            x += px(if alone { GLYPH_GAP } else { BOLT_GAP });
+            add(&mut x, Mark::Bolt { alone }, opaque(paint.text));
         }
     }
     (pieces, x + px(PAD))
+}
+
+/// How much of each pixel of a box `w` by `h` the lightning covers, 0 to 255, row after row.
+fn bolt(w: i32, h: i32) -> Vec<u8> {
+    // Its corners in a box 7 by 12
+    const SHAPE: [(f32, f32); 6] = [(4.5, 0.0), (0.0, 7.0), (3.0, 7.0), (2.0, 12.0), (7.0, 4.5), (4.0, 4.5)];
+    // Points looked at along each side of a pixel
+    const FINE: i32 = 4;
+    let (sx, sy) = (w as f32 / 7.0, h as f32 / 12.0);
+    let inside = |x: f32, y: f32| {
+        let mut odd = false;
+        for (i, a) in SHAPE.iter().enumerate() {
+            let b = SHAPE[(i + 1) % SHAPE.len()];
+            let (ax, ay, bx, by) = (a.0 * sx, a.1 * sy, b.0 * sx, b.1 * sy);
+            if (ay > y) != (by > y) && x < ax + (y - ay) / (by - ay) * (bx - ax) {
+                odd = !odd;
+            }
+        }
+        odd
+    };
+    let mut cover = Vec::with_capacity((w * h).max(0) as usize);
+    for row in 0..h {
+        for col in 0..w {
+            let at = |cell: i32, part: i32| cell as f32 + (part as f32 + 0.5) / FINE as f32;
+            let hits = (0..FINE * FINE).filter(|n| inside(at(col, n % FINE), at(row, n / FINE))).count() as i32;
+            cover.push((hits * 255 / (FINE * FINE)) as u8);
+        }
+    }
+    cover
+}
+
+/// Draws the strip's own shapes into the picture the way GDI draws its text there: white where covered.
+fn shapes(bits: &mut [u8], w: i32, h: i32, pieces: &[Piece]) {
+    for p in pieces {
+        let cover = match p.mark {
+            Mark::Text(..) => continue,
+            Mark::Bolt { .. } => bolt(p.w, p.tall),
+            Mark::Rule => vec![255; (p.w * p.tall).max(0) as usize],
+        };
+        let top = p.top(h);
+        for row in 0..p.tall {
+            for col in 0..p.w {
+                let (x, y) = (p.x + col, top + row);
+                if x >= 0 && y >= 0 && x < w && y < h {
+                    let at = ((y * w + x) * 4) as usize;
+                    bits[at..at + 3].fill(cover[(row * p.w + col) as usize]);
+                }
+            }
+        }
+    }
+}
+
+/// The box of the ink in a picture drawn white on black: its first column and row, its last column and row. What is
+/// fainter than a third is the smoothing around the ink, not the ink.
+fn inked(bits: &[u8], w: i32, h: i32) -> Option<[i32; 4]> {
+    const SEEN: u8 = 96;
+    let seen = |x: i32, y: i32| bits[((y * w + x) * 4) as usize..][..3].iter().any(|c| *c >= SEEN);
+    let column = |x: &i32| (0..h).any(|y| seen(*x, y));
+    let row = |y: &i32| (0..w).any(|x| seen(x, *y));
+    Some([(0..w).find(column)?, (0..h).find(row)?, (0..w).rev().find(column)?, (0..h).rev().find(row)?])
 }
 
 /// How much of the pixel at (x, y) a rounded rectangle w by h covers, 0 to 1.
@@ -403,7 +524,8 @@ struct Fonts {
     dpi: u32,
     glyph: HFONT,
     text: HFONT,
-    bolt: HFONT,
+    /// The rows digits take in the text font's line. Every level stands at these, whatever is in it
+    digits: Span,
 }
 
 impl Fonts {
@@ -429,16 +551,24 @@ impl Fonts {
             )
         };
         // Windows 11's own text font; Windows 10 has Segoe UI
-        let text = if crate::win::windows_build() >= 22000 { "Segoe UI Variable Text" } else { "Segoe UI" };
-        let icons = crate::gui::icon_font();
-        Fonts { dpi, glyph: make(GLYPH, icons), text: make(TEXT, text), bolt: make(TEXT, icons) }
+        let letters = if crate::win::windows_build() >= 22000 { "Segoe UI Variable Text" } else { "Segoe UI" };
+        let (glyph, text) = (make(GLYPH, crate::gui::icon_font()), make(TEXT, letters));
+        Fonts { dpi, glyph, text, digits: ink(text, "0123456789") }
     }
 
     fn of(&self, face: Face) -> HFONT {
         match face {
             Face::Glyph => self.glyph,
             Face::Text => self.text,
-            Face::Bolt => self.bolt,
+        }
+    }
+
+    /// A text of the strip as it comes out in its face: a glyph by its own ink, a level by its line's width and its
+    /// digits' rows.
+    unsafe fn span(&self, face: Face, text: &str) -> Span {
+        match face {
+            Face::Glyph => ink(self.glyph, text),
+            Face::Text => Span { w: extent(self.text, text).cx, left: 0, ..self.digits },
         }
     }
 }
@@ -446,7 +576,7 @@ impl Fonts {
 impl Drop for Fonts {
     fn drop(&mut self) {
         unsafe {
-            for font in [self.glyph, self.text, self.bolt] {
+            for font in [self.glyph, self.text] {
                 let _ = DeleteObject(HGDIOBJ(font.0));
             }
         }
@@ -502,34 +632,62 @@ impl Drop for Picture {
     }
 }
 
-unsafe fn measure(dc: HDC, fonts: &Fonts, face: Face, text: &str) -> i32 {
+/// How wide a text comes out in a font, and how high the font's line is.
+unsafe fn extent(font: HFONT, text: &str) -> SIZE {
     let wide: Vec<u16> = text.encode_utf16().collect();
-    let before = SelectObject(dc, HGDIOBJ(fonts.of(face).0));
+    let dc = CreateCompatibleDC(None);
+    let before = SelectObject(dc, HGDIOBJ(font.0));
     let mut size = SIZE::default();
     let _ = GetTextExtentPoint32W(dc, &wide, &mut size);
     SelectObject(dc, before);
-    size.cx
+    let _ = DeleteDC(dc);
+    size
+}
+
+/// Where the ink of a text is in its line: the text is drawn the way the strip draws it, and looked at. Nothing of it
+/// seen (a font without the glyph): its whole line.
+unsafe fn ink(font: HFONT, text: &str) -> Span {
+    // Room around the line, for what a glyph draws outside it
+    const EDGE: i32 = 4;
+    let size = extent(font, text);
+    let line = Span { w: size.cx, tall: size.cy, left: 0, above: 0 };
+    let (w, h) = (size.cx + 2 * EDGE, size.cy + 2 * EDGE);
+    let Some(mut picture) = Picture::new(w, h) else { return line };
+    SetBkMode(picture.dc, TRANSPARENT);
+    SetTextColor(picture.dc, COLORREF(0x00FF_FFFF));
+    let own = SelectObject(picture.dc, HGDIOBJ(font.0));
+    let mut wide: Vec<u16> = text.encode_utf16().collect();
+    let mut rect = RECT { left: EDGE, top: EDGE, right: w - EDGE, bottom: h - EDGE };
+    DrawTextW(picture.dc, &mut wide, &mut rect, DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX | DT_NOCLIP);
+    SelectObject(picture.dc, own);
+    let _ = GdiFlush();
+    match inked(picture.pixels(), w, h) {
+        Some([left, top, right, bottom]) => {
+            Span { w: right - left + 1, tall: bottom - top + 1, left: left - EDGE, above: top - EDGE }
+        }
+        None => line,
+    }
 }
 
 /// A row of devices laid out with the real fonts.
 unsafe fn measured(slots: &[Slot], scale: f32, paint: &Paint, fonts: &Fonts) -> (Vec<Piece>, i32) {
-    let dc = CreateCompatibleDC(None);
-    let row = layout(slots, scale, paint, &mut |face, text| measure(dc, fonts, face, text));
-    let _ = DeleteDC(dc);
-    row
+    layout(slots, scale, paint, &mut |face, text| fonts.span(face, text))
 }
 
-/// The strip's pixels: the pieces drawn by GDI, white on black, then made into their colors over the plate.
+/// The strip's pixels: the pieces drawn white on black, the text by GDI, then made into their colors over the plate.
 unsafe fn draw(frame: &Frame, fonts: &Fonts) -> Option<Picture> {
     let mut picture = Picture::new(frame.w, frame.h)?;
     SetBkMode(picture.dc, TRANSPARENT);
     SetTextColor(picture.dc, COLORREF(0x00FF_FFFF));
     let own = SelectObject(picture.dc, HGDIOBJ(fonts.text.0));
     for p in &frame.pieces {
-        SelectObject(picture.dc, HGDIOBJ(fonts.of(p.face).0));
-        let mut text: Vec<u16> = p.text.encode_utf16().collect();
-        let mut rect = RECT { left: p.x, top: 0, right: p.x + p.w, bottom: frame.h };
-        DrawTextW(picture.dc, &mut text, &mut rect, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_NOCLIP);
+        let Mark::Text(face, text) = &p.mark else { continue };
+        SelectObject(picture.dc, HGDIOBJ(fonts.of(*face).0));
+        let mut text: Vec<u16> = text.encode_utf16().collect();
+        // The line's corner, so that its ink starts where the piece does
+        let (left, top) = (p.x - p.left, p.top(frame.h) - p.above);
+        let mut rect = RECT { left, top, right: frame.w, bottom: frame.h };
+        DrawTextW(picture.dc, &mut text, &mut rect, DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX | DT_NOCLIP);
     }
     SelectObject(picture.dc, own);
     let _ = GdiFlush();
@@ -540,6 +698,7 @@ unsafe fn draw(frame: &Frame, fonts: &Fonts) -> Option<Picture> {
     };
     let on_plate = plate.and(frame.paint.contrast);
     let (w, h, scale) = (frame.w, frame.h, frame.scale);
+    shapes(picture.pixels(), w, h, &frame.pieces);
     compose(picture.pixels(), w, h, &frame.pieces, plate, on_plate, scale);
     Some(picture)
 }
@@ -1343,11 +1502,11 @@ mod tests {
     #[test]
     fn a_row_is_glyph_level_and_lightning_per_device() {
         let paint = Paint::of(false, None);
-        // Every glyph 16 wide, every character of a level 7
+        // Every glyph's ink 14 by 14, 2 into its square of 18 from the left and from the top; every character of a
+        // level 7 wide, digits 9 rows, 5 below the top of their line
         let mut measure = |face: Face, text: &str| match face {
-            Face::Glyph => 16,
-            Face::Bolt => 12,
-            Face::Text => text.chars().count() as i32 * 7,
+            Face::Glyph => Span { w: 14, tall: 14, left: 2, above: 2 },
+            Face::Text => Span { w: text.chars().count() as i32 * 7, tall: 9, left: 0, above: 5 },
         };
         let slots = [
             slot("h", "37", Tone::Good, false),
@@ -1355,45 +1514,171 @@ mod tests {
             slot("k", "≈15", Tone::Warn, false),
             slot("g", "", Tone::Charge, true),
         ];
+        let name = |p: &Piece| match &p.mark {
+            Mark::Text(_, text) => text.clone(),
+            Mark::Bolt { alone: false } => "bolt".into(),
+            Mark::Bolt { alone: true } => "bolt alone".into(),
+            Mark::Rule => "rule".into(),
+        };
         let (pieces, width) = layout(&slots, 1.0, &paint, &mut measure);
-        let at: Vec<(i32, &str)> = pieces.iter().map(|p| (p.x, p.text.as_str())).collect();
-        assert_eq!(
-            at,
-            [
-                (8, "h"),
-                (28, "37"),
-                (54, "m"),
-                (74, "62"),
-                (89, BOLT),
-                (113, "k"),
-                (133, "≈15"),
-                (166, "g"),
-                (183, BOLT)
-            ]
-        );
-        assert_eq!(width, 183 + 12 + 8);
-        // The taskbar's white; orange only for the level of the device below its reminder level
+        let at: Vec<(i32, String)> = pieces.iter().map(|p| (p.x, name(p))).collect();
+        // 9 px of padding; 5 from a glyph's ink to its level, 3 from the level to the lightning; 9 on each side of a
+        // hairline. A lightning with no level before it stands where the level would, 5 from the glyph
+        let expected = [
+            (9, "h"),
+            (28, "37"),
+            (51, "rule"),
+            (61, "m"),
+            (80, "62"),
+            (97, "bolt"),
+            (113, "rule"),
+            (123, "k"),
+            (142, "≈15"),
+            (172, "rule"),
+            (182, "g"),
+            (201, "bolt alone"),
+        ];
+        assert_eq!(at, expected.map(|(x, text)| (x, text.to_string())));
+        assert_eq!(width, 201 + 8 + 9);
+        // A glyph's line is drawn from where its square starts, a level's from where the level does
+        assert_eq!((pieces[0].left, pieces[0].above, pieces[1].left, pieces[1].above), (2, 2, 0, 5));
+        // The strip's middle goes through the middle of each piece's ink: in 40 rows a glyph's 14 start at 13, a
+        // level's 9 at 15 (a row above the middle where it can't be exact), the lightning's 12 at 14, the hairline's
+        // 16 at 12
+        let tops: Vec<i32> = pieces[..6].iter().map(|p| p.top(40)).collect();
+        assert_eq!(tops, [13, 15, 12, 13, 15, 14]);
+        assert_eq!((pieces[5].w, pieces[5].tall, pieces[2].w, pieces[2].tall), (7, 12, 1, 16));
+        // Alone the lightning is larger: 8 by 14, from row 13
+        assert_eq!((pieces[11].w, pieces[11].tall, pieces[11].top(40)), (8, 14, 13));
+        // The taskbar's white; orange only for the level of the device below its reminder level; the hairlines faint
         let white = (255, 255, 255, 255);
-        assert!(pieces.iter().filter(|p| p.text != "≈15").all(|p| p.color == white));
-        assert_eq!(pieces[6].color, (0xF7, 0xC0, 0x4A, 255));
+        let rule = |p: &&Piece| p.mark == Mark::Rule;
+        assert!(pieces.iter().filter(|p| !rule(p) && name(p) != "≈15").all(|p| p.color == white));
+        assert!(pieces.iter().filter(rule).all(|p| p.color == (255, 255, 255, 56)));
+        assert_eq!(pieces[8].color, (0xF7, 0xC0, 0x4A, 255));
         // On a light taskbar, its dark text and the darker orange
         let light = layout(&slots, 1.0, &Paint::of(true, None), &mut measure).0;
-        assert_eq!((light[0].color, light[6].color), ((0x1A, 0x1A, 0x1A, 255), (0x9D, 0x5D, 0x00, 255)));
-        // A contrast theme: its text color for everything
+        assert_eq!((light[0].color, light[8].color), ((0x1A, 0x1A, 0x1A, 255), (0x9D, 0x5D, 0x00, 255)));
+        assert_eq!(light[2].color, (0x1A, 0x1A, 0x1A, 56));
+        // A contrast theme: its text color for everything, the hairlines too
         let theme = Paint::of(false, Some(((255, 255, 0), (0, 120, 215), (255, 255, 255))));
         assert!(layout(&slots, 1.0, &theme, &mut measure).0.iter().all(|p| p.color == (255, 255, 0, 255)));
+        // At 125% the gaps and the shapes grow with the taskbar; a hairline stays one pixel
+        let big = layout(&slots[..2], 1.25, &paint, &mut measure).0;
+        assert_eq!((big[0].x, big[2].w, big[2].tall, big[5].w, big[5].tall), (11, 1, 20, 9, 15));
 
-        // Nothing on the air: a dimmed battery and "--"
+        // Nothing on the air: a dimmed battery and "--", no hairline
         let (none, width) = layout(&[], 1.0, &paint, &mut measure);
-        assert_eq!(none.iter().map(|p| p.text.as_str()).collect::<Vec<_>>(), [NO_DEVICES, "--"]);
-        assert_eq!((none[1].color.3, width), (153, 8 + 16 + 4 + 14 + 8));
+        assert_eq!(none.iter().map(name).collect::<Vec<_>>(), [NO_DEVICES, "--"]);
+        assert_eq!((none[1].color.3, width), (153, 9 + 14 + 5 + 14 + 9));
+    }
+
+    #[test]
+    fn the_hairline_and_the_lightning_are_drawn_by_the_strip_itself() {
+        let (w, h) = (30, 20);
+        let shape = |x, w, tall, mark, color| Piece { x, w, tall, left: 0, above: 0, mark, color };
+        let rule = shape(5, 1, 16, Mark::Rule, (255, 255, 255, 56));
+        let lightning = shape(12, 7, 11, Mark::Bolt { alone: false }, (255, 255, 255, 255));
+        let mut bits = vec![0u8; (w * h * 4) as usize];
+        shapes(&mut bits, w, h, &[rule.clone(), lightning]);
+        let gray = |x: i32, y: i32| bits[((y * w + x) * 4) as usize] as i32;
+        // The hairline: its one column, 16 rows around the middle
+        assert_eq!(
+            [gray(5, 1), gray(5, 2), gray(5, 17), gray(5, 18), gray(4, 10), gray(6, 10)],
+            [0, 255, 255, 0, 0, 0]
+        );
+        // The lightning: in its box of 7 by 11 from row 4 on, a little over a quarter of it filled, its upper tip to
+        // the right of its lower one, its middle solid
+        let boxed = |x: i32, y: i32| (12..19).contains(&x) && (4..15).contains(&y);
+        let all = (0..h).flat_map(|y| (0..w).map(move |x| (x, y))).filter(|&(x, _)| x > 6);
+        assert!(all.clone().all(|(x, y)| boxed(x, y) || gray(x, y) == 0));
+        let filled = all.map(|(x, y)| gray(x, y)).sum::<i32>() as f32 / 255.0;
+        assert!((20.0..25.0).contains(&filled), "{filled} pixels");
+        let weight = |y: i32| {
+            (12..19).map(|x| (x - 12) * gray(x, y)).sum::<i32>() as f32
+                / (12..19).map(|x| gray(x, y)).sum::<i32>() as f32
+        };
+        assert!(weight(4) > weight(14) + 1.0, "the tips at {} and {}", weight(4), weight(14));
+        assert_eq!(gray(15, 10), 255);
+
+        // Over the taskbar the hairline is its color at a fifth, the rest of the strip still unseen but there
+        compose(&mut bits, w, h, &[rule], None, None, 1.0);
+        let at = (10 * w + 5) as usize * 4;
+        assert_eq!(bits[at..at + 4], [56, 56, 56, 57]);
+    }
+
+    #[test]
+    fn ink_is_what_is_seen_of_a_text_not_its_smoothing() {
+        let (w, h) = (6, 8);
+        let mut bits = vec![0u8; (w * h * 4) as usize];
+        let mut put = |x: i32, y: i32, gray: u8| bits[((y * w + x) * 4) as usize..][..3].fill(gray);
+        // Faint smoothing above and beside two pixels of ink, fainter below
+        put(2, 2, 60);
+        put(1, 3, 90);
+        put(2, 3, 200);
+        put(3, 4, 255);
+        put(3, 5, 40);
+        assert_eq!(inked(&bits, w, h), Some([2, 3, 3, 4]));
+        assert_eq!(inked(&vec![0u8; (w * h * 4) as usize], w, h), None);
+    }
+
+    /// The fonts' own lines say nothing of where a glyph or a digit is seen: the strip looks at what GDI drew.
+    #[test]
+    fn every_glyph_and_level_stands_on_the_strips_middle() {
+        // A headset (as high as wide), a keyboard (flat, above the middle of its square), a mouse (the whole height),
+        // and a gamepad that only says it charges: a lightning in place of its level
+        let slots = [
+            slot("\u{E7F6}", "49", Tone::Good, false),
+            slot("\u{E765}", "18", Tone::Charge, true),
+            slot("\u{E962}", "100", Tone::Good, false),
+            slot("\u{E7FC}", "", Tone::Charge, true),
+        ];
+        for scale in [1.0f32, 1.25, 1.5, 1.75, 2.0] {
+            unsafe {
+                let fonts = Fonts::new((96.0 * scale).round() as u32);
+                let paint = Paint::of(false, None);
+                let (pieces, w) = measured(&slots, scale, &paint, &fonts);
+                let h = (HEIGHT * scale).round() as i32;
+                let frame = Frame { x: 0, y: 0, w, h, scale, pieces: pieces.clone(), look: Look::Rest, paint };
+                let mut drawn = draw(&frame, &fonts).expect("a picture");
+                let bits = drawn.pixels();
+                // Every level at the same rows, whatever its digits
+                let levels: Vec<(i32, i32)> = pieces
+                    .iter()
+                    .filter(|p| matches!(p.mark, Mark::Text(Face::Text, _)))
+                    .map(|p| (p.above, p.tall))
+                    .collect();
+                assert!(levels.len() == 3 && levels.iter().all(|l| *l == levels[0] && l.1 > 0), "{levels:?}");
+                for p in &pieces {
+                    // The piece's rows as drawn: its columns' alpha, from what the faintest ink comes out as (the
+                    // piece's own alpha over the unseen plate's)
+                    let over = 96.0 / 255.0 * p.color.3 as f32 / 255.0;
+                    let seen = (255.0 * over + (1.0 - over)).round() as i32;
+                    let alpha = |x: i32, y: i32| bits[((y * w + x) * 4 + 3) as usize] as i32;
+                    let rows: Vec<i32> = (0..h).filter(|&y| (p.x..p.x + p.w).any(|x| alpha(x, y) >= seen)).collect();
+                    let (Some(first), Some(last)) = (rows.first(), rows.last()) else {
+                        panic!("{:?} at {scale}: nothing drawn", p.mark)
+                    };
+                    // Twice the middle of its rows against twice the strip's: half a pixel apart at most
+                    let off = first + last + 1 - h;
+                    assert!((-1..=0).contains(&off), "{:?} at {scale}: rows {first}..={last} of {h}", p.mark);
+                    // A glyph's ink starts and ends where the piece says, with nothing of its square around it
+                    if matches!(p.mark, Mark::Text(Face::Glyph, _)) {
+                        let columns: Vec<i32> =
+                            (p.x - 4..p.x + p.w + 4).filter(|&x| (0..h).any(|y| alpha(x, y) >= seen)).collect();
+                        assert_eq!((columns.first(), columns.last()), (Some(&p.x), Some(&(p.x + p.w - 1))));
+                    }
+                }
+            }
+        }
     }
 
     #[test]
     fn the_plate_takes_the_mouse_everywhere_and_shows_only_under_it() {
         // GDI's part: a white block where a piece is, black elsewhere
         let (w, h) = (40, 20);
-        let piece = Piece { x: 10, w: 6, face: Face::Text, text: "1".into(), color: (0xF7, 0xC0, 0x4A, 255) };
+        let text = Mark::Text(Face::Text, "1".into());
+        let piece = Piece { x: 10, w: 6, tall: 8, left: 0, above: 0, mark: text, color: (0xF7, 0xC0, 0x4A, 255) };
         let drawn = || {
             let mut bits = vec![0u8; (w * h * 4) as usize];
             for y in 6..14 {
