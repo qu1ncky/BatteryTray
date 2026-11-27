@@ -8,79 +8,98 @@ struct DevicesView: View {
     @EnvironmentObject var model: AppModel
     /// Folded whenever the window opens
     @StateObject private var hiddenExpanded = Local(false)
+    /// How many banners there were: one more is scrolled into sight
+    @StateObject private var bannerCount = Local(0)
+    private static let top = "top"
 
     var body: some View {
         VStack(spacing: 0) {
             if let snapshot = model.snapshot {
                 // One edge on each side for everything: the cards, the headings, the rows and the footer's text
-                List {
-                    // Room under the header's line: the first card's border doesn't run into it (16 points with the
-                    // row's own 3)
-                    Color.clear
-                        .frame(height: 13)
-                        .listRowSeparator(.hidden)
-                        .listRowInsets(EdgeInsets())
-                        .accessibilityHidden(true)
-                    banners(snapshot)
-                    // The pinned devices, then the connected ones, one list; a drag never leaves its block
-                    block(snapshot.devices.pinned, card: true)
-                    block(snapshot.devices.connected, card: true)
-                    if snapshot.devices.noneOnline {
-                        Text(model.t("none.online"))
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .center)
-                            .padding(.vertical, 18)
+                ScrollViewReader { scroller in
+                    List {
+                        // Room under the header's line: the first card's border doesn't run into it (16 points with the
+                        // row's own 3)
+                        Color.clear
+                            .frame(height: 13)
+                            .listRowSeparator(.hidden)
+                            .listRowInsets(EdgeInsets())
+                            .accessibilityHidden(true)
+                            .id(Self.top)
+                        banners(snapshot)
+                        // The pinned devices, then the connected ones, one list; a drag never leaves its block
+                        block(snapshot.devices.pinned, card: true)
+                        block(snapshot.devices.connected, card: true)
+                        if snapshot.devices.noneOnline {
+                            Text(model.t("none.online"))
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .center)
+                                .padding(.vertical, 18)
+                                .listRowSeparator(.hidden)
+                                .listRowInsets(Self.insets(top: 3, bottom: 3))
+                        }
+                        if !snapshot.devices.offline.isEmpty {
+                            Text(model.t("offline.header"))
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                                .padding(.top, 14)
+                                .listRowSeparator(.hidden)
+                                .listRowInsets(Self.insets(top: 3, bottom: 1))
+                            block(snapshot.devices.offline, card: false)
+                        }
+                        if !snapshot.devices.hidden.isEmpty {
+                            // Not a disclosure group: a list with one keeps a column for its arrow on the left of
+                            // every row
+                            Button { withAnimation(.easeInOut(duration: 0.2)) { hiddenExpanded.value.toggle() } } label: {
+                                HStack(spacing: 5) {
+                                    Text("\(model.t("hidden.header")) · \(snapshot.devices.hidden.count)")
+                                    Image(systemName: hiddenExpanded.value ? "chevron.up" : "chevron.down")
+                                        .font(.system(size: 9, weight: .bold))
+                                }
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .padding(.top, 10)
                             .listRowSeparator(.hidden)
                             .listRowInsets(Self.insets(top: 3, bottom: 3))
-                    }
-                    if !snapshot.devices.offline.isEmpty {
-                        Text(model.t("offline.header"))
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                            .padding(.top, 14)
-                            .listRowSeparator(.hidden)
-                            .listRowInsets(Self.insets(top: 3, bottom: 1))
-                        block(snapshot.devices.offline, card: false)
-                    }
-                    if !snapshot.devices.hidden.isEmpty {
-                        // Not a disclosure group: a list with one keeps a column for its arrow on the left of every row
-                        Button { withAnimation(.easeInOut(duration: 0.2)) { hiddenExpanded.value.toggle() } } label: {
-                            HStack(spacing: 5) {
-                                Text("\(model.t("hidden.header")) · \(snapshot.devices.hidden.count)")
-                                Image(systemName: hiddenExpanded.value ? "chevron.up" : "chevron.down")
-                                    .font(.system(size: 9, weight: .bold))
-                            }
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .padding(.top, 10)
-                        .listRowSeparator(.hidden)
-                        .listRowInsets(Self.insets(top: 3, bottom: 3))
-                        if hiddenExpanded.value {
-                            ForEach(snapshot.devices.hidden) { device in
-                                HiddenRow(device: device)
-                                    .listRowSeparator(.hidden)
-                                    .listRowInsets(Self.insets(top: 1, bottom: 1))
+                            if hiddenExpanded.value {
+                                ForEach(snapshot.devices.hidden) { device in
+                                    HiddenRow(device: device)
+                                        .listRowSeparator(.hidden)
+                                        .listRowInsets(Self.insets(top: 1, bottom: 1))
+                                }
                             }
                         }
                     }
+                    .listStyle(.plain)
+                    .scrollContentBackground(.hidden)
+                    .environment(\.defaultMinListRowHeight, 10)
+                    // A banner that comes or goes moves the list smoothly
+                    .animation(.easeInOut(duration: 0.2), value: Self.bannersShown(snapshot))
+                    // A banner that comes while the window is open is scrolled into sight: the list keeps the rows that
+                    // were in sight where they were, which would leave the banner under the window's header
+                    .onChange(of: Self.bannersShown(snapshot)) { shown in
+                        let count = shown.filter { $0 }.count
+                        defer { bannerCount.value = count }
+                        guard count > bannerCount.value else { return }
+                        DispatchQueue.main.async {
+                            withAnimation(.easeInOut(duration: 0.2)) { scroller.scrollTo(Self.top, anchor: .top) }
+                        }
+                    }
+                    .onAppear { bannerCount.value = Self.bannersShown(snapshot).filter { $0 }.count }
                 }
-                .listStyle(.plain)
-                .scrollContentBackground(.hidden)
-                .environment(\.defaultMinListRowHeight, 10)
-                // A banner that comes or goes moves the list smoothly
-                .animation(.easeInOut(duration: 0.2), value: [
-                    snapshot.update.bannerVisible,
-                    !snapshot.autostart && !snapshot.settings.autostartBannerDismissed,
-                    snapshot.needsPermission,
-                ])
                 footer(snapshot)
             }
         }
         .frame(minWidth: 380, minHeight: 360)
+    }
+
+    /// Which banners are up: the update, the login item, the Input Monitoring permission.
+    private static func bannersShown(_ s: Snapshot) -> [Bool] {
+        [s.update.bannerVisible, !s.autostart && !s.settings.autostartBannerDismissed, s.needsPermission]
     }
 
     /// The window's edge on the left and the right, as the footer has it
