@@ -1,7 +1,8 @@
 //! Puts the taskbar strip on the real taskbar with the demo's devices, without the app around it, and says every
 //! second where its window is and whether the mouse would reach it: `cargo run --example strip_probe -- [folder]
 //! [seconds] [light|dark]`. With a folder ("-" for none), it first draws the strip to PNG files there, at rest and
-//! under the pointer, in both modes of the taskbar and at its scale. The strip stays for 10 seconds unless told
+//! under the pointer, in both modes of the taskbar and at its scale, and with a device that only says it charges.
+//! The strip stays for 10 seconds unless told
 //! otherwise; a click on it and its menu are only printed. For looking at the strip's place, size and colors on a
 //! taskbar, and at how it goes with the taskbar (under a full-screen app, in front with Start open) and gives way to
 //! the apps' buttons, with nothing installed. While the app itself runs with its strip on, the two are at one place:
@@ -130,6 +131,17 @@ pub fn main() {
         }
         let none = Content { light: false, ..Default::default() };
         save(folder, "strip-none.png", &none, scale, false);
+        // A device that only says it charges, its lightning where a level would be, beside one with a level
+        let charging = Content {
+            slots: vec![
+                slot(DeviceKind::Mouse, "", Tone::Charge, true),
+                slot(DeviceKind::Gamepad, "49", Tone::Good, false),
+                slot(DeviceKind::Keyboard, "100", Tone::Charge, true),
+            ],
+            ..Default::default()
+        };
+        save(folder, "strip-charging.png", &charging, scale, false);
+        save(folder, "strip-charging-100.png", &charging, 1.0, false);
         // The same row at 100% and 200%, to see the sizes hold
         save(folder, "strip-dark-100.png", &demo(false), 1.0, true);
         save(folder, "strip-dark-200.png", &demo(false), 2.0, true);
