@@ -5,6 +5,7 @@
 //   taskbar <frames dir> <lang> <out dir>                 the Windows taskbar with the strip's readme-NN.png (400%)
 //   reminder <reminder-70.png> <lang> <out.png>           the reminder (200%) in the screen's corner
 //   overlay <windows overlay.png> <out.png>               the Windows overlay (150%) over a game
+//   widgets <widgets.png> <lang> <out.png>                the Mac desktop widgets (readme-widgets, 200%) on the desktop
 //   install <lang> <out dir>                              where to click on the first start, Windows and macOS
 import AppKit
 import ImageIO
@@ -296,6 +297,20 @@ func reminderScene(_ input: String, _ lang: String, _ output: String) {
     save(c.result(), output)
 }
 
+/// The desktop widgets (`readme-widgets`: laid out, nothing around them) on the wallpaper under the menu bar, each
+/// with the shadow macOS gives it.
+func widgetsScene(_ input: String, _ lang: String, _ output: String) {
+    let widgets = load(input)
+    let size = CGSize(width: CGFloat(widgets.width) / 2, height: CGFloat(widgets.height) / 2)
+    let margin: CGFloat = 40, top: CGFloat = 24 + 36
+    let c = Canvas(size.width + 2 * margin, top + size.height + margin, scale: 2)
+    wallpaper(c, seed: 2)
+    menuBar(c, lang: lang, right: c.w - 14)
+    c.shadowed(widgets, CGRect(x: margin, y: top, width: size.width, height: size.height), blur: 20, drop: 6,
+               alpha: 0.4)
+    save(c.result(), output)
+}
+
 /// The overlay in the top left corner of a game, with its shortcut below.
 func overlayScene(_ input: String, _ output: String) {
     let overlay = load(input)
@@ -507,11 +522,12 @@ case "menubar": menubarScenes(args[2], args[3], args[4])
 case "taskbar": taskbarScenes(args[2], args[3], args[4])
 case "reminder": reminderScene(args[2], args[3], args[4])
 case "overlay": overlayScene(args[2], args[3])
+case "widgets": widgetsScene(args[2], args[3], args[4])
 case "install":
     folder(args[3])
     installWindows(args[2], args[3] + "/install-windows-\(args[2]).png")
     installMac(args[2], args[3] + "/install-macos-\(args[2]).png")
 default:
-    FileHandle.standardError.write(Data("readme-pictures hero|menubar|taskbar|reminder|overlay|install …\n".utf8))
+    FileHandle.standardError.write(Data("readme-pictures hero|menubar|taskbar|reminder|overlay|widgets|install …\n".utf8))
     exit(1)
 }

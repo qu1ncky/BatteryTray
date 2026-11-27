@@ -112,10 +112,12 @@ does nothing for a target other than Windows.
   are every 5 ms, with their extended styles: for catching a popup that jumps, can be clicked, takes focus or doesn't
   follow its contents' size.
 - `macos/readme-pictures.sh [Desktop run id]` (macOS) - draws the README's pictures (`docs/readme/`) in each language:
-  the windows, the menu bar and the taskbar, the reminder, the overlay, where to click on the first start. It builds
-  the app and runs `--snapshot … frames` (its windows come and go on the screen for a minute or two), takes the
-  Windows windows and the taskbar strip's frames from the `desktop-windows-2025` artifact of the newest successful
-  Desktop run of the branch (or main), and draws the scenes around them with `macos/readme-pictures.swift`. Needs
+  the windows, the menu bar and the taskbar, the reminder, the overlay, the desktop widgets, where to click on the
+  first start. It builds the app and runs `--snapshot … frames` (its windows come and go on the screen for a minute or
+  two), draws the widgets with their own views and the demo's devices from the core it built
+  (`macos/readme-widgets.swift`, off screen), takes the Windows windows and the taskbar strip's frames from the
+  `desktop-windows-2025` artifact of the newest successful Desktop run of the branch (or main), and draws the scenes
+  around them with `macos/readme-pictures.swift`. Needs
   ffmpeg and gh besides what `build.sh` needs.
 - `cargo run --example strip_probe -- [folder] [seconds] [light|dark]` (Windows) - puts the taskbar strip (Settings > General >
   Taskbar, `src/strip.rs`) on the real taskbar with the demo's devices for 10 seconds, with no app around it, and prints

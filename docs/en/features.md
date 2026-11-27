@@ -29,6 +29,15 @@
 
 Turned on in **Settings → Overlay**, a shortcut (**Ctrl+Alt+V** on Windows and **⌃⌥V** on a Mac, or one of your own) shows the connected devices for five seconds on the screen you're working on, over games and full-screen apps, without taking the focus or the mouse. Press it again to restart the timer, or choose to show it until pressed again. Pick a corner of the screen and preview it before turning it on. Devices of the same kind are shown with their names.
 
+## Widgets on the Mac desktop
+
+On macOS 14 or later: right-click the desktop → **Edit Widgets…** → BatteryTray.
+
+- **Charge Next** (small) shows the device that needs charging most, large.
+- **Rings** (small and medium: four devices, large: six) and **List** (large, six) show the first devices of your list, and a device running low always gets a place. A device that isn't connected shows its last level, faint, and how long ago it was seen.
+- Each also comes as **· Color**, every level in its color; the others color a level only when it runs low, as the menu bar does.
+- When BatteryTray quits they say so, and a click opens it.
+
 ## Honest numbers
 
 When a device can't report its level while charging, you see a charging sign instead of a stale or made-up number. Levels estimated from a battery's voltage are marked with "≈".
@@ -52,7 +61,7 @@ The same app on both: the device list, the reminders, the overlay and every supp
 
 | | Windows | macOS |
 |---|---|---|
-| The level | a number in the tray; optionally up to five devices on the taskbar | up to five devices in the menu bar, with a menu of every device |
+| The level | a number in the tray; optionally up to five devices on the taskbar | up to five devices in the menu bar, with a menu of every device; desktop widgets (macOS 14 or later) |
 | Settings | in the main window (gear) | their own window, **Settings… (⌘,)**: General, Reminders, Overlay |
 | Low battery reminder | always-on-top window, bottom right | floating panel, top right |
 | "Charging complete", "a new version" | Windows notifications | macOS notifications |

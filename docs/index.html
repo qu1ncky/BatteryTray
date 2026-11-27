@@ -56,7 +56,9 @@
     { "@type": "Question", "name": "How do I check my Razer or Logitech mouse battery without Synapse or G HUB?",
       "acceptedAnswer": { "@type": "Answer", "text": "BatteryTray talks to the device through its receiver with the device's own protocol (Razer, Logitech HID++, SteelSeries, HyperX, Corsair and others) and shows the level in the tray or the menu bar." } },
     { "@type": "Question", "name": "Is there a Mac menu bar app that shows the battery of all my devices?",
-      "acceptedAnswer": { "@type": "Answer", "text": "Yes: BatteryTray for macOS lists AirPods (each earbud and the case), Magic Mouse and Keyboard, Bluetooth headsets and mice, game controllers, an iPhone or iPad on a cable, and gaming mice, keyboards and headsets on their receivers." } }
+      "acceptedAnswer": { "@type": "Answer", "text": "Yes: BatteryTray for macOS lists AirPods (each earbud and the case), Magic Mouse and Keyboard, Bluetooth headsets and mice, game controllers, an iPhone or iPad on a cable, and gaming mice, keyboards and headsets on their receivers." } },
+    { "@type": "Question", "name": "Is there a Mac desktop widget for the battery of my headset, mouse or keyboard?",
+      "acceptedAnswer": { "@type": "Answer", "text": "Yes: on macOS 14 or later BatteryTray has widgets for the desktop (right-click the desktop, then Edit Widgets…): the device to charge next, or rings or a list of your devices, gaming devices on their receivers included." } }
   ]
 }
 </script>
@@ -85,6 +87,7 @@
   .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 18px 20px; }
   .card h3 { margin: 0 0 6px; font-size: 17px; }
   .card p { margin: 0; color: var(--muted); font-size: 15px; }
+  .grid .card:last-child:nth-child(3n+1) { grid-column: 1 / -1; }
   .reminder { display: flex; flex-wrap: wrap; gap: 24px; align-items: center; }
   .reminder img { width: 340px; max-width: 100%; border-radius: 12px; }
   .reminder p { flex: 1 1 280px; color: var(--muted); margin: 0; }
@@ -126,6 +129,7 @@
     <div class="card"><h3>Bluetooth too</h3><p>AirPods with each earbud and the case, Magic devices, headsets, controllers, any Bluetooth device the system knows a level for.</p></div>
     <div class="card"><h3>Overlay in games</h3><p>A shortcut shows your devices' levels for five seconds over games and full-screen apps, without taking focus.</p></div>
     <div class="card"><h3>New devices by themselves</h3><p>Plug in a receiver or connect a headset and it shows up within seconds. Updates itself from GitHub.</p></div>
+    <div class="card"><h3>Widgets on the Mac desktop</h3><p>Rings or a list of your devices, or just the one to charge next, on the desktop of macOS 14 or later.</p></div>
   </div>
 
   <h2>A reminder before it dies</h2>
@@ -144,6 +148,7 @@
   <details><summary>How do I see my AirPods battery on Windows?</summary><p>BatteryTray reads each earbud's and the case's level from the AirPods' own Bluetooth messages.</p></details>
   <details><summary>How do I check my Razer or Logitech mouse battery without Synapse or G HUB?</summary><p>BatteryTray asks the device through its receiver with its own protocol, as the vendor's app would, and shows the level in the tray.</p></details>
   <details><summary>Is there a Mac menu bar app that shows the battery of all my devices?</summary><p>Yes: BatteryTray for macOS lists AirPods, Magic devices, Bluetooth headsets and mice, controllers, an iPhone or iPad on a cable, and gaming peripherals on their receivers.</p></details>
+  <details><summary>Is there a Mac desktop widget for the battery of my headset, mouse or keyboard?</summary><p>Yes: on macOS 14 or later BatteryTray has widgets for the desktop (right-click the desktop → Edit Widgets…): the device to charge next, or rings or a list of your devices, gaming devices on their receivers included.</p></details>
 
   <footer>BatteryTray is open source under the MIT license — <a href="https://github.com/qu1ncky/BatteryTray">source code, issues and releases on GitHub</a>. Not affiliated with Apple, Razer, Logitech, SteelSeries, HyperX, Corsair, ASUS, Sony or Microsoft; product names are trademarks of their owners.</footer>
 </main>

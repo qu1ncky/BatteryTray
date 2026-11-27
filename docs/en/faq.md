@@ -24,6 +24,9 @@ Yes: BatteryTray for macOS shows AirPods (each earbud and the case), Magic Mouse
 **How do I see my headset's battery while gaming?**
 Turn on the overlay in Settings → Overlay, then press Ctrl+Alt+V (⌃⌥V on a Mac) in the game: every connected device's level shows for five seconds, without taking the focus. The shortcut can be changed there too.
 
+**Is there a Mac desktop widget for the battery of my headset, mouse or keyboard?**
+Yes, on macOS 14 or later: right-click the desktop → **Edit Widgets…** → BatteryTray. **Charge Next** shows the device to charge first; **Rings** and **List** show the first devices of your list, gaming devices on their receivers too, whose level macOS itself doesn't know. Each also comes as **· Color**.
+
 **Can it show my iPhone or iPad battery on a Mac?**
 Yes, while it is on a cable and trusts the Mac (Finder asks for that the first time you connect it): its level and whether it charges, in the list and the menu bar.
 

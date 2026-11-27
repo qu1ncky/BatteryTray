@@ -41,7 +41,7 @@
 | `providers/bluetooth/` | Windows：设备属性 `DEVPKEY_Bluetooth_Battery`（即“设置 → 蓝牙”中显示的值），仅在 `ConnectionStatus = Connected` 时读取。已连接的低功耗蓝牙设备优先读取它自己的电池服务，因为该属性经常过时：直接从设备读取电量（服务和特征来自 Windows 缓存，值不走缓存，不写入任何内容），有多个时取最低值，每个都显示在详细信息中（ZMK 分体键盘的两半，按描述符 0x2901 命名）。AirPods 和 Beats 耳机：左右耳机和充电盒的电量来自它们的近距离配对广播（Apple Continuity 类型 0x07），在这类耳机连接时由被动的 `BluetoothLEAdvertisementWatcher` 监听，并按型号（已配对设备的 product ID）与耳机匹配，取最近信号最强的一条。macOS：`system_profiler SPBluetoothDataType` 报告的已连接设备信息（与蓝牙菜单显示的相同），包括 AirPods 的左右耳机和充电盒；对于通过免提协议报告电量的耳机，使用 macOS 在电源列表中保存的电量（`IOPSCopyPowerSourcesByType`，电池小组件和 `pmset -g accps` 显示的也是它）。 |
 | `providers/apple_mobile.rs` | macOS：通过数据线连接的 iPhone 和 iPad，使用访达所用的 MobileDevice 框架：在与 `lockdownd` 的会话中读取已信任这台 Mac 的设备的 `com.apple.mobile.battery` 域。从不配对，也从不通过网络访问设备。 |
 | `src/hid/` | 所有提供者所依赖的 HID 层：Win32（`windows.rs`）或 IOKit（`macos.rs`）。在 Mac 上，每个设备的报告描述符会被拆分成 Windows 会列出的集合（`descriptor.rs`），并以 Windows 路径的形式命名，所以每个提供者都能原样在 Mac 上工作。 |
-| `macos/` | Mac 应用：围绕内核的 SwiftUI 和 AppKit，内核由 `macos/core` 构建为静态库。手柄通过 Apple 的 GameController 框架读取。 |
+| `macos/` | Mac 应用：围绕内核的 SwiftUI 和 AppKit，内核由 `macos/core` 构建为静态库。手柄通过 Apple 的 GameController 框架读取。桌面小组件（`macos/Widget`）只读取应用为它们写入其文件夹的设备信息，从不直接与设备通信。 |
 
 ## 添加设备
 
