@@ -20,6 +20,8 @@ cargo test                   # unit tests, no devices needed
 cargo test -- --ignored      # also downloads the latest release from GitHub and checks it as an update would
 cargo fmt --check            # formatting (rustfmt.toml)
 cargo clippy --all-targets -- -D warnings
+install.cmd                  # build and install, as a user's full install
+powershell -File build-release.ps1   # the release exe and zip in dist\
 ```
 
 The C runtime is linked into the exe (`.cargo/config.toml`), so it starts on a Windows without the Visual C++
@@ -91,27 +93,43 @@ does nothing for a target other than Windows.
   prints what `BatteryTray.exe --dump` writes, `watch` polls as the app does and prints every change, `list` prints
   every HID collection. It reads the app's `state.json` but never writes it, and logs to
   `%LOCALAPPDATA%\BatteryTray\rust-core`.
-- `BatteryTray.app/Contents/MacOS/BatteryTray --snapshot <folder> [ru|en|zh] [light|dark]` - the macOS app draws each of its
+- `BatteryTray.app/Contents/MacOS/BatteryTray --snapshot <folder> [ru|en|zh] [light|dark] [frames]` - the macOS app draws each of its
   windows with the demo's devices to PNG files and quits: the device list, a device's menu, a name being edited, the
   menu bar item (drawn on a plain bar: its window belongs to the system) and its menu, each settings tab, the reminder
   and the overlay (an app may take pictures of its own windows, no Screen Recording permission needed). `--demo` runs the app with those devices, with settings of its own in the
-  temporary folder. The README's Mac pictures (`docs/macos-*.png`) come from `--snapshot`.
+  temporary folder. The site's Mac pictures (`docs/macos-*.png`) come from `--snapshot`. With `frames` it also draws the README's
+  pictures: the menu bar item as a keyboard runs down and charges back, and the reminder with 70% of its time left.
 - `cargo run --example snapshot -- <folder> [ru|en|zh] [scale] [light|dark]` (Windows) - renders the windows with sample data
   to PNG files, off screen, in the dark theme unless told otherwise (the overlay is dark in both), to check a layout without
   running the app: the device list (with the update banner, and without it for the README; a device's menu, a smaller
   one, a name being edited, the hidden devices shown, and the empty list with the autostart banner), each settings tab
-  (and the update card with a newer version), the reminder and the overlay. A drag, a tooltip and an open dropdown need
+  (the general one also with the taskbar strip switched on, and with the update card of a newer version), the reminder and the overlay. A drag, a tooltip and an open dropdown need
   a real pointer and are not drawn.
 - `cargo run --example popup_probe` (Windows) - opens the reminder and the overlay as the app does and prints where their windows
   are every 5 ms, with their extended styles: for catching a popup that jumps, can be clicked, takes focus or doesn't
   follow its contents' size.
+- `macos/readme-pictures.sh [Desktop run id]` (macOS) - draws the README's pictures (`docs/readme/`) in each language:
+  the windows, the menu bar and the taskbar, the reminder, the overlay, where to click on the first start. It builds
+  the app and runs `--snapshot … frames` (its windows come and go on the screen for a minute or two), takes the
+  Windows windows and the taskbar strip's frames from the `desktop-windows-2025` artifact of the newest successful
+  Desktop run of the branch (or main), and draws the scenes around them with `macos/readme-pictures.swift`. Needs
+  ffmpeg and gh besides what `build.sh` needs.
+- `cargo run --example strip_probe -- [folder] [seconds] [light|dark]` (Windows) - puts the taskbar strip (Settings > General >
+  Taskbar, `src/strip.rs`) on the real taskbar with the demo's devices for 10 seconds, with no app around it, and prints
+  every second where its window is, where the notification area starts and whether the mouse would reach the strip; first,
+  where the apps' buttons end, as the accessibility tree says. With a folder it also draws the strip to PNG files, at rest
+  and under the pointer, for a dark and a light taskbar, and the README's frames of it (`readme-NN.png`, 400%); 0 seconds
+  only draws them, as the Desktop workflow does. The strip is a window of the app's own made a child of the taskbar's
+  window (so it is under a full-screen app and in front with Start open, as the taskbar is), and this is how to see it
+  on a taskbar the app has never run on: another scale, the taskbar at the top, Windows 10. A layered child window needs
+  the app's manifest, which `build.rs` gives the examples too; a test binary has none.
 
 ## Checked on a real desktop
 
 The `Desktop` workflow (`.github/scripts/desktop-test.ps1`) takes the release exe through what happens on a user's PC,
 on runners with a desktop - Windows Server 2022, which has Windows 10's shell and fonts, and Server 2025, which has
 Windows 11's: the last C# release installs from its zip and updates itself to the build, the build updates itself to a
-newer one, then uninstall, a fresh install, the window, a portable copy, `--update`, and screenshots of the windows.
+newer one, then uninstall, a fresh install, the window, a portable copy, `--update`, and screenshots of the windows and the taskbar strip's pictures.
 The binaries are not changed for it: `api.github.com` is pointed at a server on the runner that answers with a release
 made of the exe under test. Each run keeps that exe as an artifact (`BatteryTray-windows-2022`, `-2025`), for trying a
 build before it is released.
@@ -119,6 +137,19 @@ build before it is released.
 The `macOS` workflow lints and tests the core on a Mac, builds the app for Apple Silicon and Intel and draws its windows
 in each language; it keeps `BatteryTray-macOS.zip` as an artifact (`BatteryTray-macOS`), which is what a release
 carries for Macs.
+
+## Releasing a version
+
+1. Raise `version` in `Cargo.toml`.
+2. `powershell -File build-release.ps1` on Windows, or from any computer: Actions → **Release files** → Run workflow on that commit, and take `BatteryTray.exe` and the zip from its `BatteryTray-release-windows` artifact.
+3. Take `BatteryTray-macOS.zip` and `BatteryTray-macOS.dmg` from the `BatteryTray-macOS` artifact of the macOS workflow on that commit (or build them with `macos/build.sh` on a Mac).
+4. `gh release create vX.Y.Z dist\BatteryTray-X.Y.Z-win-x64.zip dist\BatteryTray.exe BatteryTray-macOS.zip BatteryTray-macOS.dmg --title "BatteryTray X.Y.Z" --notes "what's new"`.
+
+The README's download buttons take `BatteryTray.exe` and `BatteryTray-macOS.dmg` from the latest release, so both must be in every release.
+
+Package managers: set the new version and the exe's SHA-256 in `bucket/batterytray.json` (Scoop), and send the version to winget with `komac update qu1ncky.BatteryTray --version X.Y.Z --urls https://github.com/qu1ncky/BatteryTray/releases/download/vX.Y.Z/BatteryTray.exe --submit`.
+
+The updaters take the asset named exactly `BatteryTray.exe` (Windows) or `BatteryTray-macOS.zip` (macOS) from the latest release, and the tag must match the version inside the exe or the app. Drafts and pre-releases are ignored by the updater, handy for testing a build.
 
 ## What installed copies rely on
 
@@ -145,7 +176,8 @@ MIT, as the rest of the project. The licenses of the crates in the exe go into `
 zip (see above); those of the crates in the Mac app into the bundle's `Contents/Resources` (`macos/build.sh`, with
 `macos/about.toml` and `macos/about.hbs`), next to `LICENSE` and `THIRD_PARTY_NOTICES.md`. The Windows UI is built with
 [Slint](https://slint.dev) under its Royalty-free license 2.0, which asks for an attribution: the Slint badge on a
-public page the app is downloaded from - the main README, which the releases link to. Without it the app may not be
+public page, easy to find there (the license prefers the page the app is downloaded from, but doesn't require it). It is
+at the top of `THIRD_PARTY_NOTICES.md`, which the README's License section links to. Without it the app may not be
 distributed.
 
 [![Made with Slint](https://raw.githubusercontent.com/slint-ui/slint/master/logo/MadeWithSlint-logo-whitebg.png)](https://slint.dev)

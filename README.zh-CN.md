@@ -1,109 +1,91 @@
-# BatteryTray — 在 Windows 和 macOS 上查看无线耳机、鼠标、键盘和手柄的电量
+<div align="center">
+
+<img src="docs/icon.png" alt="" width="88">
+
+# BatteryTray
+
+**无线耳机、鼠标、键盘和手柄的电量——<br>显示在 Windows 任务栏和 Mac 菜单栏中。**
 
 [![最新版本](https://img.shields.io/github/v/release/qu1ncky/BatteryTray)](https://github.com/qu1ncky/BatteryTray/releases/latest)
+[![下载量](https://img.shields.io/github/downloads/qu1ncky/BatteryTray/total)](https://github.com/qu1ncky/BatteryTray/releases)
+[![许可证：MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 ![Windows 10 / 11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6)
 ![macOS 13+](https://img.shields.io/badge/macOS-13%2B%20·%20Apple%20Silicon%20%7C%20Intel-000000)
 
 [English](README.md) · [Русский](README.ru.md) · **中文**
 
-在 Windows 任务栏时钟旁边或 Mac 菜单栏中查看无线耳机、鼠标、键盘和手柄还剩多少电量，并在它们没电**之前**提醒你。一个免费的小程序管理所有设备，无需 Razer Synapse、Logitech G HUB、SteelSeries GG 等厂商软件，无需账号，只读取电量。在 Mac 上还会一并显示 AirPods（左右耳机和充电盒）、妙控鼠标、妙控键盘、蓝牙耳机，以及通过数据线连接的 iPhone 和 iPad。
+<a href="https://github.com/qu1ncky/BatteryTray/releases/latest/download/BatteryTray.exe"><img src="docs/download-windows-zh.svg" alt="下载 Windows 版 BatteryTray" height="56"></a>&nbsp;&nbsp;<a href="https://github.com/qu1ncky/BatteryTray/releases/latest/download/BatteryTray-macOS.dmg"><img src="docs/download-macos-zh.svg" alt="下载 macOS 版 BatteryTray" height="56"></a>
+
+<sub>免费开源 · 无需账号和厂商软件 · <a href="#下载和安装">如何安装</a> · <a href="https://github.com/qu1ncky/BatteryTray/releases">更新说明</a></sub>
+
+<img src="docs/readme/hero-zh.png" alt="Windows 和 Mac 上的 BatteryTray：Razer Barracuda X 耳机 37%，Attack Shark R3 鼠标正在充电，Rainy 75 键盘约 15%" width="720">
+
+</div>
+
+- **一个程序管理所有设备。** 通过 2.4 GHz 接收器读取 Razer、Logitech、SteelSeries、HyperX、Corsair、ASUS ROG 等数十个品牌的游戏鼠标、键盘和耳机，还支持 Xbox 和 DualSense 手柄、AirPods，以及系统能读到电量的任何蓝牙设备。[支持的设备](docs/zh/devices.md)
+- **始终可见。** 显示在 Windows 时钟旁和 Mac 菜单栏中；设备电量不足时会用警示色显示。
+- **不会错过的提醒**：在游戏或通话中途没电之前提醒你。勿扰模式不会隐藏它。
+- **游戏中也能看：** 在“设置 → 悬浮窗”中启用后，按 <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>V</kbd>（Mac 上为 <kbd>⌃⌥V</kbd>），所有设备的电量会显示五秒。[全部功能](docs/zh/features.md)
 
 <p align="center">
-  <a href="https://github.com/qu1ncky/BatteryTray/releases/latest/download/BatteryTray.exe"><img src="docs/download-windows-zh.svg" alt="下载 Windows 版 BatteryTray" height="64"></a>
-  &nbsp;&nbsp;
-  <a href="https://github.com/qu1ncky/BatteryTray/releases/latest/download/BatteryTray-macOS.dmg"><img src="docs/download-macos-zh.svg" alt="下载 macOS 版 BatteryTray" height="64"></a>
+  <img src="docs/readme/menubar-zh.gif" alt="Mac 菜单栏：耳机、鼠标和键盘及其电量；键盘电量下降，先变橙色再变红色，然后重新充电" width="830"><br>
+  <sub>Mac 菜单栏</sub>
 </p>
-<p align="center"><sub>Windows 10 和 11 · macOS 13 Ventura 或更高版本，Apple 芯片和 Intel · 免费开源（MIT）<br><a href="https://github.com/qu1ncky/BatteryTray/releases">所有版本和更新说明</a></sub></p>
-
 <p align="center">
-  <img src="docs/screenshot-zh.png" alt="Windows 上的 BatteryTray：无线耳机、鼠标、键盘和 Xbox 手柄的电量" height="580">
-  <img src="docs/macos-zh.png" alt="macOS 上的 BatteryTray：Mac 窗口中无线耳机、鼠标、键盘和 Xbox 手柄的电量" height="580">
+  <img src="docs/readme/taskbar-zh.gif" alt="Windows 任务栏：时钟旁图标左侧显示耳机、鼠标和键盘的电量；键盘电量下降，先变橙色再变红色，然后重新充电" width="830"><br>
+  <sub>Windows 任务栏（设置 → 常规 → 任务栏）</sub>
 </p>
 
-## 功能
-
-- **托盘电量图标**：显示最需要充电的设备；绿色正常，低于其提醒值为黄色，低于其严重值为红色，充电时为蓝色。鼠标悬停可查看全部设备。
-- **一个窗口查看所有设备**：已连接的设备显示电量，未连接的显示上次电量和时间。通过设备的 **⋯** 菜单可以重命名、置顶或隐藏到“已隐藏”中；按住卡片左侧的拖动柄可调整顺序（悬浮窗和托盘提示也按此顺序）。
-- **悬浮窗**：在 **设置（齿轮）→ 悬浮窗** 中启用快捷键后，按 **Ctrl+Alt+V** 即可在当前应用所在的屏幕上查看已连接且未隐藏的设备，持续五秒。再次按下可重新计时，也可选择切换模式，用同一快捷键显示或隐藏。可更改快捷键、选择屏幕角落，并在启用前预览。同类型设备会自动显示名称，也可选择始终显示所有名称。支持桌面应用和无边框游戏，不抢占焦点或鼠标操作。
-- **新设备自动出现**：插入接收器或连接蓝牙耳机后，几秒内就会出现在列表中。
-- **不会错过的低电量提醒**：屏幕角落的置顶小窗口，不受“勿扰模式”影响，也不会抢走游戏焦点。无人响应时，只要你在电脑前，它会在 10 秒后关闭，并按重复间隔再次提醒（也可在“设置 → 提醒”中改为一直显示到你响应）。
-
-  <img src="docs/reminder-zh.png" alt="BatteryTray 低电量提醒：AirPods Pro 18%、Razer Barracuda X 严重低电量 14%，以及“10 分钟后提醒”和“充电前不再提醒”按钮" width="340">
-
-- **每个设备单独的提醒值**：耗电快的耳机可以在 40% 时提醒，而鼠标可以等到 15%；每个设备都可以在其 **⋯** 菜单中设置自己的提醒值和严重值，未设置时使用全局值。
-- **每种提醒都有自己的提示音**：低电量、严重电量和“充电完成”可在“设置 → 提醒 → 提示音”中分别选择：系统提示音、系统自带的其他声音、你自己的 WAV 或 MP3 文件，或无声音。
-- **充电完成通知**：支持报告充电完成的设备在充满时发出 Windows 通知。
-- **不显示虚构的电量**：设备充电时无法报告电量时，显示充电状态而不是过时的数字；估算值以“≈”标记。
-- **中文、英文、俄文界面**：跟随系统语言，也可以在“设置 → 常规”中随时切换，无需重启。
-- **浅色和深色主题**：跟随系统，也可在“设置 → 常规”中选择；悬浮窗在游戏上方始终为深色。
-- **轻量**：单个约 10 MB 的 exe，在托盘中约占 8 MB 内存，无需安装其他组件。
-- **自动更新**：从 GitHub 发布页下载并校验 SHA-256，在窗口关闭时静默安装。
-
-## 在 Mac 上
-
-BatteryTray for macOS 是原生的菜单栏应用（SwiftUI），与 Windows 版使用同一套设备核心，因此支持相同的设备，其余部分则按 Mac 应用的习惯设计：
-
-<img src="docs/macos-menu-zh.png" alt="macOS 菜单栏中的 BatteryTray：显示每个设备电量的菜单" width="363">
-
-- **菜单栏电量**：显示列表中靠前的设备（默认 3 个，可在“设置 → 常规 → 菜单栏”中选择 1–5 个），每个设备显示图标和电量，电量低时以颜色标出；电量低但未排上的设备会占据最后一个位置。点击可查看所有设备的电量和命令，并打开设备窗口和 **设置…（⌘,）**。
-- **设置**在独立窗口中，包含“常规”“提醒”“悬浮窗”标签页。
-- **悬浮窗**通过 **⌃⌥V** 调出（可录制任何包含 ⌘、⌃ 或 ⌥ 的快捷键），显示在所有窗口和全屏应用之上。
-- **低电量提醒**是右上角不抢焦点的浮动面板；“充电完成”和“新版本可用”使用 macOS 通知。
-- **蓝牙**：macOS 知道电量的所有设备，包括 AirPods 的左右耳机和充电盒、妙控鼠标、妙控键盘、妙控板、通过蓝牙报告电量的耳机（例如蓝牙模式下的 Razer Barracuda X）、Xbox 等手柄（通过 GameController 框架）。
-- **通过数据线连接的 iPhone 和 iPad**：显示电量和充电状态，前提是设备已信任这台 Mac（与 Finder 相同）。
-- **一个应用同时支持 Apple 芯片和 Intel**，需要 macOS 13 Ventura 或更高版本，约 11 MB。
-
-在 Mac 上，键盘以及带键盘按键的鼠标需要“输入监控”权限才能读取（macOS 对所有打开此类设备的应用都有此要求）。点击设备列表上方横幅中的“允许”，或在“系统设置 → 隐私与安全性 → 输入监控”中打开 BatteryTray。BatteryTray 只读取电量，从不读取你的输入。
-
-## 支持的设备
-
-Razer Barracuda X（2.4 GHz 接收器，已测试）、Attack Shark R3 及其他 Rongyuan 平台鼠标键盘、Xenta 接收器（`1D57:FA60`）上的 Attack Shark、FURYCUBE、Delux、Inphic 鼠标（Attack Shark V3 Pro 已由用户测试，以及 X11、X3 Max、X6 / R1、FURYCUBE F1、G3、G9 PRO、G11 等）、约 45 款 Razer 无线鼠标、HyperSpeed 键盘和 BlackShark / Kraken 耳机、Logitech HID++ 设备（MX Master、MX Keys、G Lightspeed 系列等）、Logitech G / ASTRO / SteelSeries Arctis / HyperX Cloud / Corsair / Audeze / JBL Quantum / Jabra / Sony INZONE 等无线耳机、SteelSeries 和 HyperX 无线鼠标、ASUS ROG 鼠标键盘（含 Omni 接收器）、Corsair SLIPSTREAM 鼠标键盘、ATK / VXE / VGN、Lamzu、Pulsar、Scyrox、G-Wolves、Glorious、WLmouse、MCHOSE、AJAZZ（T520 Max 已由用户测试）、Keychron、Rapoo VT、Incott、VAXEE、Ninjutso、Endgame Gear、ZOWIE 等鼠标、MCHOSE / AULA / VGN / AJAZZ / CHERRY / Attack Shark 等 2.4 GHz 键盘、Steam Controller、8BitDo、Flydigi、GameSir 手柄、Sony DualSense / DualShock 4、Nintendo Switch Pro 手柄和 Joy-Con、Xbox 手柄，以及 Windows 或 macOS 能显示电量的任何蓝牙设备（在 Mac 上包括 AirPods 和妙控系列，在 Windows 上包括妙控键盘）。以上设备在 macOS 上同样支持（Xbox 无线适配器除外，macOS 没有其驱动）。完整列表见 [英文说明](README.md#supported-devices)。
-
-标记为“未测试”的设备是按照公开的开源协议实现的，尚未在真机上验证；如果你有这些设备，欢迎在 [Issues](https://github.com/qu1ncky/BatteryTray/issues) 反馈。
-
-## 常见问题
-
-**有没有能在任务栏或菜单栏显示无线鼠标、键盘、耳机电量的软件？**
-有：BatteryTray，免费开源，支持 Windows 10/11 和 macOS 13+。它在时钟旁边（Windows）显示最需要充电的设备电量，在菜单栏（Mac）显示你的设备电量，在一个窗口中列出所有设备，并在电池耗尽前提醒你。通过接收器读取雷蛇、罗技、赛睿、HyperX、海盗船、华硕、Attack Shark 等游戏外设以及蓝牙设备，无需厂商软件。
-
-**如何在 Windows 上查看 AirPods 电量？**
-BatteryTray 会像 iPhone 一样从 AirPods 自身的蓝牙消息中读取左右耳机和充电盒的电量，并显示在托盘中。
-
-**有没有在 Mac 菜单栏显示所有设备电量的应用？**
-有：BatteryTray for macOS 会在菜单栏和一个窗口中显示 AirPods（左右耳机和充电盒）、妙控鼠标、妙控键盘、蓝牙耳机和鼠标、手柄、通过数据线连接的 iPhone 和 iPad，以及接收器上的游戏鼠标、键盘和耳机。
+<table>
+<tr>
+<td width="50%"><img src="docs/readme/reminder-zh.png" alt="低电量提醒：AirPods Pro 18%，Razer Barracuda X 14%，以及“10 分钟后提醒”和“充电前不再提醒”按钮；底部的进度条显示距离自动关闭还剩多少时间" width="100%"></td>
+<td width="50%"><img src="docs/readme/overlay-zh.png" alt="游戏画面上的悬浮窗：耳机 37%，Attack Shark R3 鼠标正在充电，VXE R1 鼠标 82%；按 Ctrl+Alt+V 显示" width="100%"></td>
+</tr>
+<tr>
+<td align="center"><sub>提醒：稍后提醒、充电前不再提醒，或让它自动关闭</sub></td>
+<td align="center"><sub>悬浮窗：显示在游戏和全屏应用之上</sub></td>
+</tr>
+</table>
 
 ## 下载和安装
 
-### Windows
+<table>
+<tr>
+<td width="50%" valign="top">
 
-1. 点击上方的 **下载 Windows 版**（即[最新版本](https://github.com/qu1ncky/BatteryTray/releases/latest)中的 `BatteryTray.exe`）并运行。
-2. 程序未进行代码签名，Windows 可能会提示未知应用：点击“更多信息”→“仍要运行”。
-3. 图标会出现在时钟旁边。Windows 11 会把新图标收进 **^** 箭头里，可以把它拖到任务栏上常驻显示。点击设备列表上方横幅中的“启用”即可随 Windows 启动。
+**Windows 10 和 11**
 
-**使用包管理器**：`winget install qu1ncky.BatteryTray`，或使用 [Scoop](https://scoop.sh)：`scoop bucket add batterytray https://github.com/qu1ncky/BatteryTray` 和 `scoop install batterytray`。
+1. 下载 [`BatteryTray.exe`](https://github.com/qu1ncky/BatteryTray/releases/latest/download/BatteryTray.exe) 并运行。
+2. 如果 Windows 提示未知应用：点击 **更多信息** → **仍要运行**。
+3. 电量会显示在时钟旁（Windows 11 可能把它收进 **^** 里，把它拖到任务栏上即可）。点击设备列表上方的 **启用**，即可开机自动启动。
 
-如果 Windows 不允许程序读取某个设备（某些第三方驱动只对管理员开放接收器），设备列表上方会出现提示。点击“授予权限”即可安装本程序，只需确认一次 UAC。
+<img src="docs/readme/install-windows-zh.png" alt="Microsoft Defender SmartScreen：先点击“更多信息”，再点击“仍要运行”" width="100%">
 
-**完整安装**：从 [Releases](https://github.com/qu1ncky/BatteryTray/releases/latest) 下载 `BatteryTray-…-win-x64.zip`，解压后运行 `install.cmd`。程序安装到 `C:\Program Files\BatteryTray`，通过名为“BatteryTray”的计划任务在登录时启动。卸载请运行压缩包中的 `uninstall.cmd`。
+也可以用 `winget install qu1ncky.BatteryTray`，或 [Scoop](https://scoop.sh)：`scoop bucket add batterytray https://github.com/qu1ncky/BatteryTray`，然后 `scoop install batterytray`。
 
-### macOS
+</td>
+<td width="50%" valign="top">
 
-1. 点击上方的 **下载 macOS 版**（即[最新版本](https://github.com/qu1ncky/BatteryTray/releases/latest)中的 `BatteryTray-macOS.dmg`），打开后将 **BatteryTray** 拖到“应用程序”。从其他位置打开时，应用会主动提出移到“应用程序”。
-2. 打开应用。该应用未经 Apple 公证，第一次打开时 macOS 会阻止：前往 **系统设置 → 隐私与安全性**，向下滚动并点击 **仍要打开**（macOS 13 和 14 也可以按住 Control 点按应用并选择“打开”）。
-3. 电量会出现在菜单栏中。macOS 会请求蓝牙权限：点击 **允许**。可在“设置 → 常规”中打开 **登录时打开**。
+**macOS 13 或更高版本**，Apple 芯片和 Intel
 
-macOS 只会在需要时各请求一次：**蓝牙**（读取 macOS 自身不显示电量的低功耗蓝牙设备）、**输入监控**（仅在连接键盘或带键盘按键的鼠标时；需在 macOS 打开的系统设置中手动打开开关）。应用使用项目自己的证书签名（不是 Apple Developer ID），因此首次打开需要“仍要打开”；每个版本使用同一证书，授予的权限在更新后仍然保留。
+1. 打开 [`BatteryTray-macOS.dmg`](https://github.com/qu1ncky/BatteryTray/releases/latest/download/BatteryTray-macOS.dmg)，把 **BatteryTray** 拖到 **应用程序**。
+2. 打开它。第一次打开时 macOS 会阻止：前往 **系统设置 → 隐私与安全性 → 仍要打开**。
+3. 允许蓝牙访问，电量就会显示在菜单栏中。点击设备列表上方的 **启用**，即可登录时打开。
 
-设置和日志位于 `~/Library/Application Support/BatteryTray`。应用会像 Windows 版一样从 GitHub 自动更新（`BatteryTray-macOS.zip`，校验 SHA-256 和版本）。
+<img src="docs/readme/install-macos-zh.png" alt="系统设置，隐私与安全性：已阻止“BatteryTray”以保护Mac，仍要打开" width="100%">
 
-## 从源码构建
+权限：蓝牙；只有连接键盘时才需要“输入监控”（macOS 要求所有打开键盘的应用都具备此权限；BatteryTray 只读取电量）。不需要其他权限。
 
-构建步骤见[英文说明](README.md#build-from-source)。Mac 版：`macos/build.sh`；运行测试：`cargo test --workspace`。
+</td>
+</tr>
+</table>
+
+## 更多
+
+[支持的设备](docs/zh/devices.md) · [全部功能](docs/zh/features.md) · [常见问题](docs/zh/faq.md) · [工作原理](docs/zh/how-it-works.md) · [从源码构建](docs/development.md) · [更新说明](https://github.com/qu1ncky/BatteryTray/releases)
+
+没有找到你的设备，或遇到问题？请[提交 issue](https://github.com/qu1ncky/BatteryTray/issues) 并附上日志：Windows 上为 `%LOCALAPPDATA%\BatteryTray\log.txt`，Mac 上为 `~/Library/Application Support/BatteryTray/log.txt`。如需添加新设备，还请在设备连接时附上[这条命令](docs/zh/devices.md#设备不在列表中)的输出，它会显示设备接收器的 USB ID。
 
 ## 许可证
 
-MIT，见 [LICENSE](LICENSE)。Mac 版界面使用 SwiftUI 和 AppKit；Windows 版界面使用 [Slint](https://slint.dev)，遵循其免版税许可（Royalty-free）：
-
-[![Made with Slint](https://raw.githubusercontent.com/slint-ui/slint/master/logo/MadeWithSlint-logo-whitebg.png)](https://slint.dev)
-
-本项目与 Apple、Razer、Logitech、SteelSeries、HyperX、Corsair、Sony、Microsoft 及 ATTACK SHARK 无关；产品名称为其各自所有者的商标。
+[MIT](LICENSE)。第三方代码、协议来源和 Slint 署名见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。本项目与 Apple、Razer、Logitech、SteelSeries、HyperX、Corsair、ASUS、Sony、Microsoft、Valve、ATTACK SHARK 及文中提到的其他厂商无关；产品名称是其各自所有者的商标。

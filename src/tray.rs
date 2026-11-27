@@ -26,6 +26,7 @@ pub const MENU_OPEN: u32 = 1;
 pub const MENU_REFRESH: u32 = 2;
 pub const MENU_EXIT: u32 = 3;
 pub const MENU_SETTINGS: u32 = 4;
+pub const MENU_HIDE_STRIP: u32 = 5;
 
 pub struct Tray {
     hwnd: HWND,
@@ -107,17 +108,24 @@ impl Tray {
 }
 
 /// Shows the tray menu at the cursor and returns the chosen item (0 = none). A free function: the menu runs a modal
-/// loop, during which the app's state must stay free for the messages it dispatches.
-pub fn show_menu(hwnd: HWND) -> u32 {
+/// loop, during which the app's state must stay free for the messages it dispatches. Opened from the taskbar strip
+/// (`on_strip`), it also offers to take the strip off the taskbar, right where the strip is.
+pub fn show_menu(hwnd: HWND, on_strip: bool) -> u32 {
     unsafe {
         let Ok(menu) = CreatePopupMenu() else { return 0 };
         let open = crate::win::wide(&t("tray.open"));
         let settings = crate::win::wide(&t("settings"));
         let refresh = crate::win::wide(&t("refresh"));
         let exit = crate::win::wide(&t("tray.exit"));
+        let hide_strip = crate::win::wide(&t("tray.hide.strip"));
         let _ = AppendMenuW(menu, MF_STRING, MENU_OPEN as usize, windows::core::PCWSTR(open.as_ptr()));
         let _ = AppendMenuW(menu, MF_STRING, MENU_SETTINGS as usize, windows::core::PCWSTR(settings.as_ptr()));
         let _ = AppendMenuW(menu, MF_STRING, MENU_REFRESH as usize, windows::core::PCWSTR(refresh.as_ptr()));
+        if on_strip {
+            let _ = AppendMenuW(menu, MF_SEPARATOR, 0, None);
+            let hide = windows::core::PCWSTR(hide_strip.as_ptr());
+            let _ = AppendMenuW(menu, MF_STRING, MENU_HIDE_STRIP as usize, hide);
+        }
         let _ = AppendMenuW(menu, MF_SEPARATOR, 0, None);
         let _ = AppendMenuW(menu, MF_STRING, MENU_EXIT as usize, windows::core::PCWSTR(exit.as_ptr()));
         let mut at = POINT::default();

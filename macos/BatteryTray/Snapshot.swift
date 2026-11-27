@@ -4,6 +4,8 @@ import AppKit
 /// file and quits - the device list, a device's menu, a name being edited, the menu bar item and its menu, each settings
 /// tab, the reminder and the overlay - in that appearance (the system's without it), for the README's pictures and for
 /// checking a layout. An app may always take pictures of its own windows, so no Screen Recording permission is needed.
+/// With `frames` after them, also the README's pictures (macos/readme-pictures.sh): the menu bar item as a keyboard
+/// runs down and charges back (bar-NN.png), and the reminder with 70% of its time left (reminder-70.png).
 @MainActor
 final class Snapshots {
     private let folder: URL
@@ -47,7 +49,48 @@ final class Snapshots {
             { self.take(self.floating(clickThrough: true), "overlay") },
             { NSApp.terminate(nil) },
         ]
+        if CommandLine.arguments.contains("frames") {
+            steps.removeLast()
+            steps += [
+                { self.drawMenuBarFrames() },
+                {
+                    ReminderController.pictureRemaining = 0.7
+                    model.send(["cmd": "test_alert"])
+                },
+                { self.take(self.floating(clickThrough: false), "reminder-70") },
+                { NSApp.terminate(nil) },
+            ]
+        }
         next()
+    }
+
+    /// The README's menu bar: a headset and a mouse that keep their levels, and a keyboard that runs down past its
+    /// reminder and critical levels (20% and 10%, the defaults), is put on its cable and charges back. The Windows
+    /// taskbar's frames have the same levels (examples/strip_probe). At 400%, on nothing: the scene is drawn around them.
+    private func drawMenuBarFrames() {
+        func slot(_ kind: String, _ level: Int, power: Bool = false) -> BarSlot {
+            BarSlot(kind: kind, level: "\(level)", tone: power ? "charge" : level <= 10 ? "bad" : level <= 20 ? "warn" : "good",
+                    power: power)
+        }
+        let keyboard = [24, 22, 20, 18, 16, 14, 12, 10, 8, 6].map { ($0, false) } + [6, 9, 12, 15, 18, 21].map { ($0, true) }
+        for (i, (level, power)) in keyboard.enumerated() {
+            let image = MenuBarLabel.image([slot("headset", 64), slot("mouse", 47), slot("keyboard", level, power: power)])
+            let size = image.size
+            guard let bitmap = NSBitmapImageRep(
+                bitmapDataPlanes: nil, pixelsWide: Int((size.width * 4).rounded(.up)), pixelsHigh: Int((size.height * 4).rounded(.up)),
+                bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .calibratedRGB,
+                bytesPerRow: 0, bitsPerPixel: 0)
+            else { continue }
+            bitmap.size = size
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: bitmap)
+            NSApp.effectiveAppearance.performAsCurrentDrawingAppearance {
+                image.draw(in: NSRect(origin: .zero, size: size))
+            }
+            NSGraphicsContext.restoreGraphicsState()
+            try? bitmap.representation(using: .png, properties: [:])?
+                .write(to: folder.appendingPathComponent(String(format: "bar-%02d.png", i)))
+        }
     }
 
     /// A reminder that isn't critical: the demo's connected devices that have a level, each just below its own

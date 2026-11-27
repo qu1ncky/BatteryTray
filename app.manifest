@@ -9,6 +9,14 @@
       </requestedPrivileges>
     </security>
   </trustInfo>
+  <!-- Version 6 of the common controls: the taskbar strip's tooltip is Windows' own, drawn as the taskbar's are
+       (themed, dark on a dark taskbar) rather than as the plain box of version 5 -->
+  <dependency>
+    <dependentAssembly>
+      <assemblyIdentity type="win32" name="Microsoft.Windows.Common-Controls" version="6.0.0.0"
+                        processorArchitecture="*" publicKeyToken="6595b64144ccf1df" language="*"/>
+    </dependentAssembly>
+  </dependency>
   <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
     <application>
       <supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}"/>

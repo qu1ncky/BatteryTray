@@ -38,6 +38,8 @@ pub mod settings;
 pub mod sound_player;
 pub mod sounds;
 pub mod state;
+#[cfg(windows)]
+pub mod strip;
 pub mod sys;
 #[cfg(windows)]
 pub mod theme;
