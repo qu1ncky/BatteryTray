@@ -412,14 +412,15 @@ pub static SPECS: &[Spec] = &[
         ..Spec::HEADSET
     },
     // WalkPlay's vendor ID is on many DACs, and the headset on its cable shows up under the same product ID
-    // without the control collection: listed only while that collection is there
+    // without the control collection: listed only while that collection is there. It is told by its usage and its
+    // long reports (the volume keys have the same usage and 3-byte ones), not by its interface: 3 on the source's
+    // dongle, 4 on another (issue #51)
     Spec {
         key: "moondrop-gm01-pro",
         name: "MOONDROP GM01 Pro",
         vid: 0x35D8,
         pids: &[0x0133],
-        interface: 3,
-        accept: Some(|i| i.usage_page == 0x000C && i.output_length >= 4 && i.input_length >= 10),
+        accept: Some(|i| i.usage_page == 0x000C && i.usage == 0x0001 && i.output_length >= 4 && i.input_length >= 10),
         shared: true,
         query: moondrop_gm01,
         ..Spec::HEADSET
@@ -1657,6 +1658,33 @@ mod tests {
         assert!(scape(&collection(0xFF00, 0x0001, 64, 64, 0)));
         assert!(!scape(&collection(0xFF00, 0x0001, 8, 64, 0)));
         assert!(!scape(&collection(0x000C, 0x0001, 64, 64, 0)));
+    }
+
+    #[test]
+    fn the_gm01_pro_is_asked_on_its_control_collection_on_either_interface() {
+        let spec = SPECS.iter().find(|s| s.key == "moondrop-gm01-pro").unwrap();
+        let at = |mi: u8, page, usage, input, output| HidInfo {
+            path: format!(r"\\?\hid#vid_35d8&pid_0133&mi_{mi:02x}&col01#8&1&0&0000#{{4d1e55b2}}"),
+            ..collection(page, usage, input, output, 0)
+        };
+        let asked = |all: &[HidInfo]| -> Vec<(i32, u16, usize)> {
+            let picked = super::super::candidates(spec, all);
+            picked.iter().map(|i| (i.interface_number(), i.usage_page, i.output_length)).collect()
+        };
+        // The dongle of issue #51 as its owner's log lists it: the volume keys, a vendor collection, the control
+        // collection and the call buttons on interface 4, one more vendor collection on interface 3
+        let dongle = [
+            at(4, 0x000C, 0x0001, 3, 0),
+            at(4, 0xFF02, 0x0002, 64, 64),
+            at(4, 0x000C, 0x0001, 64, 64),
+            at(4, 0x000B, 0x0005, 3, 3),
+            at(3, 0xFF02, 0x0002, 65, 65),
+        ];
+        assert_eq!(asked(&dongle), [(4, 0x000C, 64)]);
+        // The source's dongle has the control collection on interface 3
+        assert_eq!(asked(&[at(3, 0x000C, 0x0001, 64, 64)]), [(3, 0x000C, 64)]);
+        // Without it there is nothing to ask, as with the headset on its cable
+        assert!(!super::super::fits(spec, &dongle[..1]));
     }
 
     #[test]
