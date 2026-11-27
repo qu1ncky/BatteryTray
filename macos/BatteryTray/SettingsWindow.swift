@@ -234,14 +234,27 @@ struct RowButtonStyle: ButtonStyle {
 /// "New" in a small outlined capsule next to a section that is new in this version; taken away in the next one.
 struct NewBadge: View {
     @EnvironmentObject var model: AppModel
+    /// The caption's semibold: its metrics put the word in the middle
+    private static let font = NSFont.systemFont(ofSize: NSFont.preferredFont(forTextStyle: .caption1).pointSize,
+                                                weight: .semibold)
 
     var body: some View {
-        Text(model.t("settings.new"))
-            .font(.caption.weight(.semibold))
+        let word = model.t("settings.new")
+        Text(word)
+            .font(Font(Self.font))
             .foregroundStyle(Color.accentColor)
+            .offset(y: Self.centring(word))
             .padding(.horizontal, 6)
             .padding(.vertical, 1)
             .overlay(Capsule().strokeBorder(Color.accentColor, lineWidth: 1))
+    }
+
+    /// A text is centred by its line, which has room for ascenders and descenders; "новое" has neither and
+    /// would sit low in the capsule. This moves the letters themselves to the middle.
+    private static func centring(_ word: String) -> CGFloat {
+        let letters = NSAttributedString(string: word, attributes: [.font: font])
+            .boundingRect(with: .zero, options: .usesDeviceMetrics)
+        return letters.midY - (font.ascender + font.descender) / 2
     }
 }
 
