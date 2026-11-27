@@ -25,7 +25,8 @@
 - **One app for all your devices.** Gaming mice, keyboards and headsets from Razer, Logitech, SteelSeries, HyperX, Corsair, ASUS ROG and dozens of other brands through their 2.4 GHz receivers, plus Xbox and DualSense controllers, AirPods and any Bluetooth device whose level the system knows. [Supported devices](docs/en/devices.md)
 - **Always in sight.** Next to the clock on Windows and in the Mac menu bar, in a warning color when a device runs low.
 - **A reminder you won't miss**, before a battery dies mid-game or mid-call. Do Not Disturb doesn't hide it.
-- **Over games:** turn on the overlay in Settings → Overlay, and <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>V</kbd> (<kbd>⌃⌥V</kbd> on a Mac) shows every device's level for five seconds. [All features](docs/en/features.md)
+- **Over games:** turn on the overlay in Settings → Overlay, and <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>V</kbd> (<kbd>⌃⌥V</kbd> on a Mac) shows every device's level for five seconds.
+- **Widgets on the Mac desktop.** Rings or a list of your devices, or just the one to charge next (macOS 14 or later). [All features](docs/en/features.md)
 
 <p align="center">
   <img src="docs/readme/menubar-en.gif" alt="The Mac menu bar: a headset, a mouse and a keyboard with their levels; the keyboard runs down, turns orange, then red, and charges back" width="830"><br>
@@ -46,6 +47,11 @@
 <td align="center"><sub>The overlay, over games and full-screen apps</sub></td>
 </tr>
 </table>
+
+<p align="center">
+  <img src="docs/readme/widgets-en.png" alt="Mac desktop widgets: a Rainy 75 keyboard at about 15% to charge next; rings and a list with a Razer Barracuda X headset at 37%, an Attack Shark R3 mouse charging, the keyboard, and an Xbox controller and a Logitech MX Keys that aren't connected" width="830"><br>
+  <sub>Mac desktop widgets: right-click the desktop → Edit Widgets… → BatteryTray</sub>
+</p>
 
 ## Download and install
 
@@ -79,6 +85,10 @@ Permissions: Bluetooth, and Input Monitoring only when a keyboard is connected (
 </td>
 </tr>
 </table>
+
+## Privacy
+
+No account, no ads, and nothing on your devices is ever changed: BatteryTray only reads their battery. The one thing it sends is its update check, every 6 hours, which also tells us how many people use the app, as Homebrew and many other open-source apps count theirs: the app's version, the system and its version, the type of processor, and a random number the app made up on its first check. Nothing hidden: the server keeps the country, not the address, knows nothing of your devices or what you do, and its code is open ([`server/`](server)). [More](docs/en/features.md#updates)
 
 ## More
 

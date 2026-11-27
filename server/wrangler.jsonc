@@ -1,0 +1,33 @@
+// The update server (docs/development.md, "The update server"): the latest release for the apps' update checks, and
+// how many copies of the app are in use, counted by the random number each copy sends along.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "updates",
+  "main": "src/index.js",
+  "compatibility_date": "2026-11-10",
+  "workers_dev": true,
+  "preview_urls": false,
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "batterytray",
+      // Created with `wrangler d1 create batterytray --location eeur`, near most of the users
+      "database_id": "148de336-0ee1-4c6f-b398-2eb1e2fd0e72",
+      "migrations_dir": "migrations"
+    }
+  ],
+  // Just after midnight UTC: the finished day's numbers (count.js, sumUp)
+  "triggers": { "crons": ["10 0 * * *"] },
+  "vars": {
+    "REPOSITORY": "qu1ncky/BatteryTray",
+    // "off" answers every update check with 503, and the apps ask GitHub themselves, as they did before the server
+    "SERVE": "on"
+  },
+  // Only what the code logs itself, its failures: no invocation logs or traces, which would keep each request's
+  // address and headers
+  "observability": {
+    "enabled": true,
+    "logs": { "enabled": true, "invocation_logs": false },
+    "traces": { "enabled": false }
+  }
+}

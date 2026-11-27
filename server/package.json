@@ -1,0 +1,14 @@
+{
+  "name": "batterytray-updates",
+  "private": true,
+  "type": "module",
+  "description": "The update server: the latest release for the apps' update checks, and how many copies are in use",
+  "scripts": {
+    "dev": "wrangler dev",
+    "test": "node --test --no-warnings test/*.test.js",
+    "deploy": "wrangler d1 migrations apply batterytray --remote && wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "4.160.0"
+  }
+}

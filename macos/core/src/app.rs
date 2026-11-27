@@ -4,6 +4,7 @@
 
 use crate::demo;
 use crate::keys;
+use crate::widget::WidgetFeed;
 use batterytray::autostart;
 use batterytray::hid;
 use batterytray::loc::{self, t, tf};
@@ -83,6 +84,8 @@ pub struct MacApp {
     main_open: bool,
     overlay_timed: bool,
     stopping: bool,
+    /// What the desktop widgets show
+    widget: WidgetFeed,
 }
 
 /// What the Swift app is to do: shown in order.
@@ -131,6 +134,7 @@ impl MacApp {
             sys::macos_version(),
             updated_from.as_ref().map(|v| format!(", updated from v{v}")).unwrap_or_default()
         ));
+        let widget = WidgetFeed::new(&folder, !demo);
         let app = Self {
             settings,
             settings_path,
@@ -145,6 +149,7 @@ impl MacApp {
             main_open: false,
             overlay_timed: false,
             stopping: false,
+            widget,
         };
         let mut effects = Vec::new();
         if updated_from.is_some() {
@@ -527,6 +532,22 @@ impl MacApp {
         let reopen = self.main_open;
         self.tear_down();
         json!({ "type": "restart", "background": !reopen })
+    }
+
+    /// The desktop widgets' devices as they are now: written when they changed, and when it is time, the effect that
+    /// has the widgets drawn again (widget.rs). After every command that reaches the app.
+    pub fn widget_effects(&mut self) -> Effects {
+        if self.stopping {
+            return Vec::new();
+        }
+        let view = view::widget_view(&self.rows(), &self.settings);
+        self.widget.update(&view, true, Instant::now())
+    }
+
+    /// The app quits: the widgets say it is closed instead of levels that would grow old.
+    pub fn widget_closed(&mut self) -> Effects {
+        let view = view::widget_view(&self.rows(), &self.settings);
+        self.widget.update(&view, false, Instant::now())
     }
 
     pub fn tear_down(&mut self) {

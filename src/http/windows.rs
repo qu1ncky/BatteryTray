@@ -7,6 +7,7 @@ use std::fs::File;
 use std::io::Write;
 use std::path::Path;
 use std::ptr::{null, null_mut};
+use std::time::Duration;
 
 const ACCESS_TYPE_AUTOMATIC_PROXY: u32 = 4;
 const FLAG_SECURE: u32 = 0x0080_0000;
@@ -95,6 +96,13 @@ impl Response {
 
 /// Sends a GET and waits for the response headers. Anything but 2xx is an error, as .NET's EnsureSuccessStatusCode.
 pub fn get(url: &str, user_agent: &str, accept: Option<&str>) -> Result<Response> {
+    let headers: Vec<(&str, &str)> = accept.map(|a| ("Accept", a)).into_iter().collect();
+    get_with(url, user_agent, &headers, 30_000)
+}
+
+/// A GET with headers of its own, each step (resolving, connecting, sending) given `step_ms` at most and each wait
+/// for data twice that.
+fn get_with(url: &str, user_agent: &str, headers: &[(&str, &str)], step_ms: i32) -> Result<Response> {
     let rest = url.strip_prefix("https://").ok_or_else(|| Error::other(format!("not an https URL: {url}")))?;
     let (authority, path) = match rest.find('/') {
         Some(i) => (&rest[..i], &rest[i..]),
@@ -107,7 +115,7 @@ pub fn get(url: &str, user_agent: &str, accept: Option<&str>) -> Result<Response
 
     unsafe {
         let session = check(WinHttpOpen(wide(user_agent).as_ptr(), ACCESS_TYPE_AUTOMATIC_PROXY, null(), null(), 0))?;
-        ok(WinHttpSetTimeouts(session.0, 30_000, 30_000, 30_000, 60_000))?;
+        ok(WinHttpSetTimeouts(session.0, step_ms, step_ms, step_ms, step_ms.saturating_mul(2)))?;
         let connect = check(WinHttpConnect(session.0, wide(host).as_ptr(), port, 0))?;
         let request = check(WinHttpOpenRequest(
             connect.0,
@@ -118,7 +126,8 @@ pub fn get(url: &str, user_agent: &str, accept: Option<&str>) -> Result<Response
             null(),
             FLAG_SECURE,
         ))?;
-        let headers = accept.map(|a| wide(&format!("Accept: {a}")));
+        let lines = headers.iter().map(|(name, value)| format!("{name}: {value}")).collect::<Vec<_>>().join("\r\n");
+        let headers = (!lines.is_empty()).then(|| wide(&lines));
         let (headers_ptr, headers_len) = match &headers {
             Some(h) => (h.as_ptr(), u32::MAX),
             None => (null(), 0),
@@ -157,6 +166,12 @@ pub fn get(url: &str, user_agent: &str, accept: Option<&str>) -> Result<Response
 /// The body of a GET as text.
 pub fn get_text(url: &str, user_agent: &str, accept: Option<&str>) -> Result<String> {
     get(url, user_agent, accept)?.text()
+}
+
+/// The body of a GET with headers of its own, given up when a step takes longer than `step` (a wait for data, twice
+/// that).
+pub fn get_text_with(url: &str, user_agent: &str, headers: &[(&str, &str)], step: Duration) -> Result<String> {
+    get_with(url, user_agent, headers, step.as_millis().min(i32::MAX as u128 / 2) as i32)?.text()
 }
 
 /// Downloads a file of `size` bytes into `path`, telling `progress` each new percentage.

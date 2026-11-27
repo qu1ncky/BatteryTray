@@ -24,6 +24,9 @@ Yes: BatteryTray for macOS shows AirPods (each earbud and the case), Magic Mouse
 **How do I see my headset's battery while gaming?**
 Turn on the overlay in Settings → Overlay, then press Ctrl+Alt+V (⌃⌥V on a Mac) in the game: every connected device's level shows for five seconds, without taking the focus. The shortcut can be changed there too.
 
+**Is there a Mac desktop widget for the battery of my headset, mouse or keyboard?**
+Yes, on macOS 14 or later: right-click the desktop → **Edit Widgets…** → BatteryTray. **Charge Next** shows the device to charge first; **Rings** and **List** show the first devices of your list, gaming devices on their receivers too, whose level macOS itself doesn't know. Each also comes as **· Color**.
+
 **Can it show my iPhone or iPad battery on a Mac?**
 Yes, while it is on a cable and trusts the Mac (Finder asks for that the first time you connect it): its level and whether it charges, in the list and the menu bar.
 
@@ -64,7 +67,7 @@ The exe isn't signed with a paid code signing certificate, so Microsoft Defender
 The app is signed with the project's own certificate, not with Apple's paid Developer ID, and isn't notarized. So the first time macOS blocks it: open **System Settings → Privacy & Security** and click **Open Anyway**. The certificate is the same for every version, so the permissions you give stay after updates.
 
 **Is it safe? What does it send?**
-BatteryTray only asks devices for their battery and never changes their settings. It has no account and no telemetry; the only place it connects to is GitHub, to look for a new version. Updates are checked against the SHA-256 that GitHub publishes, and on a Mac also against the app's signature.
+BatteryTray only asks devices for their battery and never changes their settings. It has no account. It connects only to look for a new version: to the project's update server on Cloudflare, and to GitHub, where the releases are. The update check carries the app's version, the system and its version, the type of processor and a random number the app made up, so that we know how many copies are in use; the server keeps the country it came from, not the address. Nothing about your devices, your settings or how you use the app is sent. Updates are checked against the SHA-256 that GitHub publishes, and on a Mac also against the app's signature.
 
 **Why does the Mac app ask for Input Monitoring?**
 macOS lets an app open a keyboard, or a mouse that also has keyboard keys, only with that permission, even to read its battery. BatteryTray asks for it only when such a device is connected, and only reads the battery, never what you type. Besides it, the Mac app asks only for Bluetooth: no Accessibility, no Screen Recording.
@@ -76,7 +79,7 @@ It doesn't, unless a third-party driver locks a receiver to administrators: for 
 Yes, the macOS app is one universal app for both, macOS 13 Ventura or later.
 
 **How does it update?**
-By itself, from this repository's releases on GitHub: it checks half a minute after start and then every 6 hours, verifies the download and swaps itself only while its windows are closed. Turn that off in Settings → General → Updates, and the app only tells you about a new version.
+By itself, from this repository's releases on GitHub: half a minute after start and then every 6 hours it asks the project's update server (or GitHub, when the server doesn't answer) for the latest version, verifies the download and swaps itself only while its windows are closed. Turn that off in Settings → General → Updates, and the app only tells you about a new version.
 
 **Can I install it with winget or Scoop?**
 Yes: `winget install qu1ncky.BatteryTray`, or `scoop bucket add batterytray https://github.com/qu1ncky/BatteryTray` and `scoop install batterytray`. For a full install, download `BatteryTray-…-win-x64.zip` from [Releases](https://github.com/qu1ncky/BatteryTray/releases/latest), unzip it and run `install.cmd`: it installs to `C:\Program Files\BatteryTray` and starts at sign-in through a Task Scheduler task named "BatteryTray".

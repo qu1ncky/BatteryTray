@@ -168,13 +168,7 @@ pub fn device_view(row: &DeviceRow, s: &AppSettings, now: DateTime<Local>) -> De
     } else {
         // The reason, when the provider knows it ("asleep or off"), reads better than a bare "Not connected"
         let why = row.current.as_ref().and_then(|c| c.detail.clone()).filter(|d| !d.is_empty());
-        parts.push(match why {
-            Some(why) => {
-                let mut chars = why.chars();
-                chars.next().map(|c| c.to_uppercase().collect::<String>() + chars.as_str()).unwrap_or_default()
-            }
-            None => t("state.offline"),
-        });
+        parts.push(why.as_deref().map(capitalized).unwrap_or_else(|| t("state.offline")));
         if let Some(last) = &row.last {
             if let Some(was) = last.level {
                 parts.push(tf("last.seen", &[&was, &ago(last.time, now)]));
@@ -341,8 +335,22 @@ pub fn tray_view(rows: &[DeviceRow], s: &AppSettings) -> TrayView {
         .collect();
     let tooltip = if lines.is_empty() { t("tray.nodata") } else { lines.join("\n") };
 
-    // The icon shows the device that needs charging most by its own levels: a critical one first, then one below its
-    // reminder level, the least charged among equals; charging ones only when nothing else is left
+    // The icon shows the device that needs charging most
+    let pick = charge_next(&shown, s);
+    let (label, tone) = match pick {
+        None => ("--".to_string(), Tone::Offline),
+        Some((r, charging, l)) => (l.to_string(), level_tone(Some(l), charging, true, &r.id, s)),
+    };
+    let bar = bar_slots(&shown, s);
+    let urgent = pick.and_then(|(r, _, _)| r.current.as_ref().map(|c| bar_slot(r, c, s)));
+    TrayView { label, tone, lines, tooltip, bar, urgent }
+}
+
+/// Of these devices on the air, the one that needs charging most by its own levels, with whether it charges and its
+/// level: a critical one first, then one below its reminder level, the least charged among equals; charging ones only
+/// when nothing else is left. The tray icon's number is of it, and the macOS widget that shows the device to charge
+/// next shows it.
+fn charge_next<'a>(shown: &[&'a DeviceRow], s: &AppSettings) -> Option<(&'a DeviceRow, bool, i32)> {
     let live: Vec<(&DeviceRow, bool, i32)> =
         shown.iter().filter_map(|r| r.current.as_ref().and_then(|c| c.level.map(|l| (*r, c.charging, l)))).collect();
     let urgency = |id: &str, level: i32| {
@@ -354,18 +362,11 @@ pub fn tray_view(rows: &[DeviceRow], s: &AppSettings) -> TrayView {
             0
         }
     };
-    let pick = live
-        .iter()
+    live.iter()
         .filter(|(_, charging, _)| !charging)
         .min_by_key(|(r, _, l)| (std::cmp::Reverse(urgency(&r.id, *l)), *l))
-        .or_else(|| live.iter().min_by_key(|(_, _, l)| *l));
-    let (label, tone) = match pick {
-        None => ("--".to_string(), Tone::Offline),
-        Some((r, charging, l)) => (l.to_string(), level_tone(Some(*l), *charging, true, &r.id, s)),
-    };
-    let bar = bar_slots(&shown, s);
-    let urgent = pick.and_then(|(r, _, _)| r.current.as_ref().map(|c| bar_slot(r, c, s)));
-    TrayView { label, tone, lines, tooltip, bar, urgent }
+        .or_else(|| live.iter().min_by_key(|(_, _, l)| *l))
+        .copied()
 }
 
 /// The devices in the menu bar item: the first ones of the list that have a level or are charging, at most as many as
@@ -406,6 +407,137 @@ pub fn short(name: &str) -> String {
     } else {
         name.to_string()
     }
+}
+
+/// What the macOS widgets show (macos/Widget): the devices of the list but the hidden ones, block after block as the
+/// window has them (pinned, connected, then those that are off, with their last level), the one to charge next, and
+/// which of them a widget with four places and one with six shows.
+#[derive(Clone, Debug, PartialEq)]
+pub struct WidgetView {
+    pub devices: Vec<WidgetDevice>,
+    /// The device to charge next, as the tray icon's number is of: an index into `devices`, None when no device on the
+    /// air has a level
+    pub next: Option<usize>,
+    /// The devices of a widget with four places and of one with six, as indices into `devices`: the first ones; one
+    /// below its own reminder level that didn't get a place takes the last place of one that isn't, the least charged
+    /// first, as in the menu bar
+    pub four: Vec<usize>,
+    pub six: Vec<usize>,
+}
+
+/// One device in the widgets.
+#[derive(Clone, Debug, PartialEq)]
+pub struct WidgetDevice {
+    pub id: String,
+    pub name: String,
+    pub kind: DeviceKind,
+    pub connected: bool,
+    /// The level now, or for a device that is off the last one seen
+    pub level: Option<i32>,
+    /// "37%", "≈15%" for an estimate, empty when the device only says it is charging, "—" when there is no level
+    pub level_text: String,
+    /// How much of the ring or the bar is filled, 0 to 1
+    pub fill: f32,
+    pub estimate: bool,
+    /// Charging or full on its charger: a lightning follows the level
+    pub power: bool,
+    /// Charging with no readable level: the ring is drawn full and faint, the lightning alone says it all
+    pub indeterminate: bool,
+    pub tone: Tone,
+    /// Under the name: whether it charges and how it is connected ("Charging · cable"), or why it is off ("Not
+    /// connected")
+    pub detail: String,
+    /// For a device that is off, when its last level was read: the widget says how long ago as it is drawn
+    pub seen: Option<DateTime<Local>>,
+}
+
+pub fn widget_view(rows: &[DeviceRow], s: &AppSettings) -> WidgetView {
+    let ordered = rows::list_order(rows, s);
+    let block = |b: Block| ordered.iter().copied().filter(move |r| rows::block(r, s) == b);
+    let listed: Vec<&DeviceRow> =
+        block(Block::Pinned).chain(block(Block::Connected)).chain(block(Block::Offline)).collect();
+    let devices: Vec<WidgetDevice> = listed.iter().map(|r| widget_device(r, s)).collect();
+    let on_air: Vec<&DeviceRow> = listed.iter().copied().filter(|r| r.online()).collect();
+    let next = charge_next(&on_air, s).and_then(|(next, _, _)| listed.iter().position(|r| r.id == next.id));
+    let low = |i: &usize| matches!(devices[*i].tone, Tone::Warn | Tone::Bad);
+    let places = |count: usize| {
+        let mut picked: Vec<usize> = (0..devices.len()).take(count).collect();
+        let mut left_out: Vec<usize> = (count..devices.len()).filter(low).collect();
+        left_out.sort_by_key(|&i| devices[i].level);
+        for device in left_out {
+            let Some(place) = picked.iter().rposition(|p| !low(p)) else { break };
+            picked.remove(place);
+            picked.push(device);
+        }
+        picked
+    };
+    let (four, six) = (places(4), places(6));
+    WidgetView { devices, next, four, six }
+}
+
+fn widget_device(row: &DeviceRow, s: &AppSettings) -> WidgetDevice {
+    let level_text = |level: Option<i32>, estimate: bool, power: bool| match level {
+        Some(l) => format!("{}{l}%", if estimate { "≈" } else { "" }),
+        None if power => String::new(),
+        None => "—".into(),
+    };
+    let fill = |level: Option<i32>| (level.unwrap_or(0) as f32 / 100.0).clamp(0.0, 1.0);
+    let device = |level: Option<i32>, estimate: bool| WidgetDevice {
+        id: row.id.clone(),
+        name: row.name.clone(),
+        kind: row.kind(),
+        connected: false,
+        level,
+        level_text: level_text(level, estimate, false),
+        fill: fill(level),
+        estimate,
+        power: false,
+        indeterminate: false,
+        tone: Tone::Offline,
+        detail: String::new(),
+        seen: None,
+    };
+    match row.current.as_ref().filter(|c| c.online) {
+        Some(c) => {
+            let power = c.charging || c.full_on_charger;
+            let mut parts = Vec::new();
+            if c.charging {
+                parts.push(t("state.charging"));
+            } else if c.full_on_charger {
+                parts.push(t("state.full"));
+            }
+            parts.push(c.via.clone());
+            // Why there is no level, when the provider says ("Needs permission"); a voltage stays in the window
+            if c.level.is_none() {
+                parts.extend(c.detail.clone().filter(|d| !d.is_empty()));
+            }
+            WidgetDevice {
+                connected: true,
+                level_text: level_text(c.level, c.estimate, power),
+                power,
+                indeterminate: power && c.level.is_none(),
+                tone: level_tone(c.level, power, true, &row.id, s),
+                detail: parts.into_iter().filter(|p| !p.is_empty()).collect::<Vec<_>>().join(" · "),
+                ..device(c.level, c.estimate)
+            }
+        }
+        None => {
+            let last = row.last.as_ref();
+            // The reason, when the provider knows it ("asleep or off"), as the list says it
+            let why = row.current.as_ref().and_then(|c| c.detail.as_deref()).filter(|d| !d.is_empty());
+            WidgetDevice {
+                detail: why.map(capitalized).unwrap_or_else(|| t("state.offline")),
+                seen: last.map(|l| l.time),
+                ..device(last.and_then(|l| l.level), last.is_some_and(|l| l.estimate))
+            }
+        }
+    }
+}
+
+/// The text with its first letter capitalized.
+fn capitalized(text: &str) -> String {
+    let mut chars = text.chars();
+    chars.next().map(|c| c.to_uppercase().collect::<String>() + chars.as_str()).unwrap_or_default()
 }
 
 /// The devices the overlay shows: on the air and not hidden, in the order of the list (never by level). Names are
@@ -594,6 +726,71 @@ mod tests {
         let bar = tray_view(&rows, &s).bar;
         assert_eq!(bar.iter().map(|b| b.level.as_str()).collect::<Vec<_>>(), ["37", "", "≈9"]);
         assert_eq!(bar[2].tone, Tone::Bad);
+    }
+
+    #[test]
+    fn the_widgets_show_the_list_and_the_device_to_charge_next() {
+        let mut s = AppSettings::default();
+        let at = |id: &str, kind: DeviceKind, level: Option<i32>, charging: bool| {
+            let mut r = row(id, kind, true);
+            let c = r.current.as_mut().unwrap();
+            c.level = level;
+            c.charging = charging;
+            r
+        };
+        assert_eq!(widget_view(&[], &s), WidgetView { devices: vec![], next: None, four: vec![], six: vec![] });
+
+        let mut keyboard = at("keyboard", DeviceKind::Keyboard, Some(15), false);
+        keyboard.current.as_mut().unwrap().estimate = true;
+        // Pinned and off, with the reason its provider gives; remembered only, off for two hours
+        let mut pad = row("pad", DeviceKind::Gamepad, false);
+        pad.last.as_mut().unwrap().level = Some(80);
+        pad.current.as_mut().unwrap().detail = Some("asleep or off".into());
+        let mut keys = row("keys", DeviceKind::Keyboard, false);
+        let seen = Local::now() - chrono::Duration::hours(2);
+        keys.current = None;
+        keys.last.as_mut().unwrap().time = seen;
+        let rows = [
+            at("headset", DeviceKind::Headset, Some(37), false),
+            at("mouse", DeviceKind::Mouse, Some(62), true),
+            keyboard,
+            at("buds", DeviceKind::Headset, Some(8), false),
+            pad,
+            keys,
+            at("hidden", DeviceKind::Mouse, Some(5), false),
+        ];
+        s.device_order = ["headset", "mouse", "keyboard", "buds", "pad", "keys", "hidden"].map(String::from).to_vec();
+        s.device_mut("pad").pinned = true;
+        s.device_mut("hidden").hidden = true;
+        let view = widget_view(&rows, &s);
+        let ids: Vec<&str> = view.devices.iter().map(|d| d.id.as_str()).collect();
+        assert_eq!(ids, ["pad", "headset", "mouse", "keyboard", "buds", "keys"], "pinned first, off last, none hidden");
+
+        // The critical one is next; four places leave the charging mouse out for it, six have room for all
+        assert_eq!(view.next, Some(4));
+        assert_eq!(view.four, [0, 1, 3, 4]);
+        assert_eq!(view.six, [0, 1, 2, 3, 4, 5]);
+
+        let [pad, headset, mouse, keyboard, buds, keys] = &view.devices[..] else { panic!("six devices") };
+        assert_eq!(
+            (headset.level_text.as_str(), headset.tone, headset.detail.as_str()),
+            ("37%", Tone::Good, "2.4 GHz")
+        );
+        assert_eq!((mouse.power, mouse.tone, mouse.detail.as_str()), (true, Tone::Charge, "Charging · 2.4 GHz"));
+        assert_eq!((keyboard.level_text.as_str(), keyboard.tone), ("≈15%", Tone::Warn));
+        assert_eq!((buds.tone, buds.fill), (Tone::Bad, 0.08));
+        // Off: the last level, faint; why, or that it isn't connected; since when
+        assert_eq!((pad.connected, pad.level_text.as_str(), pad.tone), (false, "80%", Tone::Offline));
+        assert_eq!(pad.detail, "Asleep or off");
+        assert_eq!((keys.detail.as_str(), keys.seen), ("Not connected", Some(seen)));
+
+        // Charging without a level: no number, the ring full and faint; no level at all: a dash
+        let rows = [at("a", DeviceKind::Headset, None, true), at("b", DeviceKind::Mouse, None, false)];
+        let view = widget_view(&rows, &AppSettings::default());
+        let (a, b) = (&view.devices[0], &view.devices[1]);
+        assert_eq!((a.level_text.as_str(), a.indeterminate, a.tone), ("", true, Tone::Charge));
+        assert_eq!((b.level_text.as_str(), b.indeterminate), ("—", false));
+        assert_eq!(view.next, None, "no level to go by");
     }
 
     #[test]
