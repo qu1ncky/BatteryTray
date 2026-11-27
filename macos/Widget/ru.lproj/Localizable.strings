@@ -1,0 +1,20 @@
+/* The widgets' own texts. Their names and descriptions are what the widget gallery shows, in the system's language;
+   the rest is shown in the app's language. The texts of devices come from the app (src/loc.rs). */
+
+"next.name" = "Пора заряжать";
+"next.description" = "Узнавайте, какое устройство пора зарядить первым. В цвете только низкий заряд.";
+"next.color.name" = "Пора заряжать · цветной";
+"next.color.description" = "Узнавайте, какое устройство пора зарядить первым. В цвете любой заряд.";
+"rings.name" = "Кольца";
+"rings.description" = "Следите за зарядом наушников, мышей, клавиатур и геймпадов. В цвете только низкий заряд.";
+"rings.color.name" = "Кольца · цветной";
+"rings.color.description" = "Следите за зарядом наушников, мышей, клавиатур и геймпадов. В цвете любой заряд.";
+"list.name" = "Список";
+"list.description" = "Все ваши устройства списком, вместе с теми, что не на связи. В цвете только низкий заряд.";
+"list.color.name" = "Список · цветной";
+"list.color.description" = "Все ваши устройства списком, вместе с теми, что не на связи. В цвете любой заряд.";
+
+"empty.title" = "Нет устройств";
+"empty.hint" = "Подключите наушники, мышь или клавиатуру";
+"closed.title" = "BatteryTray закрыт";
+"closed.hint" = "Нажмите, чтобы открыть";

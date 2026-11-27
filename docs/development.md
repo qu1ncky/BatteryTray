@@ -48,7 +48,9 @@ cargo clippy --workspace --all-targets -- -D warnings
 
 `build.sh` builds the core for each processor, compiles the Swift sources against it (`swiftc`, no Xcode project),
 joins the two into one app, draws the icon (`macos/make-icon.swift`), writes the version from `Cargo.toml` into
-Info.plist, signs the app and zips it (a release's universal build also makes the disk image). The signature is the
+Info.plist, signs the app and zips it (a release's universal build also makes the disk image). The desktop widgets
+(`macos/Widget`) are compiled the same way into an app extension in `Contents/PlugIns`, signed before the app with
+the sandbox an extension must have (`macos/Widget/Widget.entitlements`). The signature is the
 project's own certificate, "BatteryTray Code Signing" (a self-signed code signing certificate, valid until 2046): the
 same one for every version, so macOS keeps the permissions it gave the app (Bluetooth, Input Monitoring) across updates, which it doesn't for an app signed ad hoc. `build.sh` takes it from the keychain or from
 `BATTERYTRAY_SIGNING_IDENTITY`, and falls back to ad hoc with a warning when there is none. A build for a release
@@ -86,6 +88,7 @@ does nothing for a target other than Windows.
 | `src/autostart/` | the logon task on Windows (elevated when installed in Program Files), a LaunchAgent on macOS |
 | `macos/core` | the core for the macOS app as a static library: one C call (`bt_call`) takes a command as JSON and answers with the state to show or the effects to carry out, and makes the decisions `src/app.rs` makes on Windows (reminders, "charged" notices, settings, the list's order, updates); `keys.rs` maps the overlay's shortcut between Win32 keys, which settings.json keeps, and the Mac's key codes; `demo.rs` the demo's devices |
 | `macos/BatteryTray` | the macOS app: the menu bar item and its menu, the device window, Settings (toolbar tabs), the reminder and the overlay as non-activating panels, the shortcut through Carbon, notifications, game controllers through GameController |
+| `macos/Widget` | the desktop widgets (WidgetKit, macOS 14 and later), an app extension in the sandbox: "Charge Next" (the device the menu bar's number is of), "Rings" and "List" (the list's devices as `src/view.rs` picks them for four or six places), each also colored. They read one folder of the user's: the app writes what they show into `widget/devices.json` in its folder, with the texts in its language, and asks WidgetKit to draw them again (`macos/core/src/widget.rs`): at once when something that shows changes, for a level alone at most every 15 minutes (WidgetKit allows a widget some 40-70 redraws a day). When the app quits they say it is closed. Their names and the texts they have without the app are in `macos/Widget/*.lproj` |
 
 ## Tools
 
@@ -165,7 +168,8 @@ Copies on a Mac update themselves from the "BatteryTray-macOS.zip" asset in the 
 CFBundleShortVersionString of the BatteryTray.app inside it, which must equal the release's version, and its
 signature, which must meet the running copy's designated requirement). They rely on the
 bundle identifier `io.github.qu1ncky.BatteryTray` (one copy at a time, and the name of the login item
-`~/Library/LaunchAgents/io.github.qu1ncky.BatteryTray.plist`), the `--background`, `--update` and `--dump` switches,
+`~/Library/LaunchAgents/io.github.qu1ncky.BatteryTray.plist`), the widgets placed on the desktop on the extension's
+`io.github.qu1ncky.BatteryTray.Widgets` and their kinds (`next`, `rings`, `list`, each also with `.color`), the `--background`, `--update` and `--dump` switches,
 and the same `settings.json` and `state.json`. The overlay's shortcut is kept as on Windows (a Win32 virtual key and
 MOD_* flags, ⌘ being MOD_WIN). On its first
 start after the C# app, this one removes what that left behind (`BatteryTray.old.exe` and the .NET single-file

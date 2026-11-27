@@ -1,0 +1,20 @@
+/* The widgets' own texts. Their names and descriptions are what the widget gallery shows, in the system's language;
+   the rest is shown in the app's language. The texts of devices come from the app (src/loc.rs). */
+
+"next.name" = "该充电了";
+"next.description" = "查看最先需要充电的设备。仅低电量显示颜色。";
+"next.color.name" = "该充电了 · 彩色";
+"next.color.description" = "查看最先需要充电的设备。所有电量都显示颜色。";
+"rings.name" = "圆环";
+"rings.description" = "随时了解耳机、鼠标、键盘和手柄的电量。仅低电量显示颜色。";
+"rings.color.name" = "圆环 · 彩色";
+"rings.color.description" = "随时了解耳机、鼠标、键盘和手柄的电量。所有电量都显示颜色。";
+"list.name" = "列表";
+"list.description" = "以列表显示你的所有设备，包括未连接的设备。仅低电量显示颜色。";
+"list.color.name" = "列表 · 彩色";
+"list.color.description" = "以列表显示你的所有设备，包括未连接的设备。所有电量都显示颜色。";
+
+"empty.title" = "没有设备";
+"empty.hint" = "连接耳机、鼠标或键盘";
+"closed.title" = "BatteryTray 已关闭";
+"closed.hint" = "点按以打开";

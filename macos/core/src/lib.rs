@@ -6,6 +6,7 @@
 mod app;
 mod demo;
 mod keys;
+mod widget;
 
 use app::{MacApp, Notify};
 use batterytray::reading::{DeviceKind, DeviceReading};
@@ -213,11 +214,14 @@ fn call(command: &Value) -> Value {
         }
         "quit" => {
             log::write("exit");
+            let closed = app.widget_closed();
             app.tear_down();
-            Vec::new()
+            return effects(closed);
         }
         other => return json!({ "error": format!("no command {other}") }),
     };
+    let mut list = list;
+    list.extend(app.widget_effects());
     effects(list)
 }
 
