@@ -80,6 +80,11 @@
   .buttons img { height: 64px; display: block; }
   .small { font-size: 14px; color: var(--muted); }
   .small a { color: var(--accent); }
+  .hero { text-align: center; }
+  .hero h1, .hero .lead, .hero .small { text-wrap: balance; }
+  .hero .small a, .nowrap { white-space: nowrap; }
+  .hero .lead { margin-left: auto; margin-right: auto; }
+  .hero .buttons { justify-content: center; }
   .shots { display: flex; flex-wrap: wrap; gap: 24px; justify-content: center; margin: 44px 0; }
   .shots img { height: 520px; max-width: 100%; object-fit: contain; border-radius: 12px; }
   h2 { font-size: 26px; margin: 56px 0 18px; letter-spacing: -0.01em; }
@@ -108,13 +113,15 @@
     <span><a href="../" hreflang="en">English</a><a href="https://github.com/qu1ncky/BatteryTray/blob/main/README.ru.md">GitHub</a></span>
   </nav>
 
-  <h1>Заряд всех беспроводных устройств — в трее Windows и в строке меню Mac</h1>
-  <p class="lead">BatteryTray показывает, сколько заряда осталось у беспроводных наушников, мыши, клавиатуры, геймпада и AirPods, и напоминает до того, как они сядут посреди игры или звонка. Бесплатно и с открытым кодом, без аккаунта и фирменного софта: программа только читает заряд.</p>
-  <div class="buttons">
-    <a href="https://github.com/qu1ncky/BatteryTray/releases/latest/download/BatteryTray.exe"><img src="../download-windows-ru.svg" alt="Скачать BatteryTray для Windows"></a>
-    <a href="https://github.com/qu1ncky/BatteryTray/releases/latest/download/BatteryTray-macOS.dmg"><img src="../download-macos-ru.svg" alt="Скачать BatteryTray для macOS"></a>
-  </div>
-  <p class="small">Windows 10 и 11 · macOS 13 Ventura и новее, Apple Silicon и Intel · лицензия MIT · <a href="https://github.com/qu1ncky/BatteryTray/blob/main/README.ru.md#установка">Как установить</a> · <a href="https://github.com/qu1ncky/BatteryTray/releases">Все версии</a></p>
+  <header class="hero">
+    <h1>Заряд всех беспроводных устройств&nbsp;— в трее Windows и в строке меню Mac</h1>
+    <p class="lead">BatteryTray показывает, сколько заряда осталось у беспроводных наушников, мыши, клавиатуры, геймпада и AirPods, и напоминает до того, как они сядут посреди игры или звонка. Бесплатно и с открытым кодом, без аккаунта и фирменного софта: программа только читает заряд.</p>
+    <div class="buttons">
+      <a href="https://github.com/qu1ncky/BatteryTray/releases/latest/download/BatteryTray.exe"><img src="../download-windows-ru.svg" alt="Скачать BatteryTray для Windows"></a>
+      <a href="https://github.com/qu1ncky/BatteryTray/releases/latest/download/BatteryTray-macOS.dmg"><img src="../download-macos-ru.svg" alt="Скачать BatteryTray для macOS"></a>
+    </div>
+    <p class="small">Windows 10 и 11 · macOS 13 Ventura и новее, Apple&nbsp;Silicon и Intel · лицензия MIT · <a href="https://github.com/qu1ncky/BatteryTray/blob/main/README.ru.md#установка">Как установить</a> · <a href="https://github.com/qu1ncky/BatteryTray/releases">Все версии</a></p>
+  </header>
 
   <div class="shots">
     <img src="../screenshot-ru.png" alt="BatteryTray в Windows: заряд беспроводных наушников, мыши, клавиатуры и геймпада Xbox">
