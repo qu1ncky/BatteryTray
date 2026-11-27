@@ -86,6 +86,10 @@
 </tr>
 </table>
 
+## 隐私
+
+无需账号，没有广告，也不会更改你的设备：BatteryTray 只读取它们的电量。它唯一发送的是每 6 小时一次的更新检查，我们也借此了解有多少人在使用它，就像 Homebrew 和许多其他开源程序统计用户那样：程序版本、系统及其版本、处理器类型，以及程序在首次检查时生成的一个随机编号。没有任何隐藏的东西：服务器保存国家或地区而不是 IP 地址，对你的设备和你做的事一无所知，它的代码也是公开的（[`server/`](server)）。[详细说明](docs/zh/features.md#更新)
+
 ## 更多
 
 [支持的设备](docs/zh/devices.md) · [全部功能](docs/zh/features.md) · [常见问题](docs/zh/faq.md) · [工作原理](docs/zh/how-it-works.md) · [从源码构建](docs/development.md) · [更新说明](https://github.com/qu1ncky/BatteryTray/releases)

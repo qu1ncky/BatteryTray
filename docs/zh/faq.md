@@ -67,7 +67,7 @@ exe 没有使用付费的代码签名证书，所以 Microsoft Defender SmartScr
 该应用使用项目自己的证书签名，而不是 Apple 付费的 Developer ID，也没有经过公证。所以第一次打开时 macOS 会阻止它：打开 **系统设置 → 隐私与安全性**，点击 **仍要打开**。每个版本的证书都相同，所以你授予的权限在更新后仍然保留。
 
 **安全吗？它会发送什么？**
-BatteryTray 只向设备询问电量，从不更改它们的设置。它没有账号，也没有遥测；它唯一会连接的地方是 GitHub，用来检查新版本。更新会用 GitHub 公布的 SHA-256 进行校验，在 Mac 上还会校验应用的签名。
+BatteryTray 只向设备询问电量，从不更改它们的设置。它没有账号。它只在检查新版本时联网：连接项目在 Cloudflare 上的更新服务器，以及存放版本文件的 GitHub。检查中包含程序版本、系统及其版本、处理器类型，以及程序自己生成的一个随机编号，让我们知道有多少副本在使用；服务器保存检查来自的国家或地区，但不保存 IP 地址。不会发送任何关于你的设备、设置或使用方式的信息。更新会用 GitHub 公布的 SHA-256 进行校验，在 Mac 上还会校验应用的签名。
 
 **为什么 Mac 版要求“输入监控”权限？**
 macOS 只允许具有此权限的应用打开键盘或带键盘按键的鼠标，即使只是读取电量也一样。BatteryTray 只在连接了这类设备时才请求该权限，并且只读取电量，从不读取你输入的内容。除此之外，Mac 版只请求蓝牙权限：不需要辅助功能，也不需要屏幕录制。
@@ -79,7 +79,7 @@ macOS 只允许具有此权限的应用打开键盘或带键盘按键的鼠标�
 支持，macOS 版是同时支持两者的通用应用，需要 macOS 13 Ventura 或更高版本。
 
 **它如何更新？**
-自动从本仓库在 GitHub 上的版本更新：启动半分钟后检查一次，之后每 6 小时检查一次，校验下载的文件，并且只在窗口关闭时替换自己。如果在“设置 → 常规 → 更新”中关闭自动更新，程序只会提示你有新版本。
+自动从本仓库在 GitHub 上的版本更新：启动半分钟后检查一次，之后每 6 小时向项目的更新服务器（服务器无响应时则向 GitHub）询问最新版本，校验下载的文件，并且只在窗口关闭时替换自己。如果在“设置 → 常规 → 更新”中关闭自动更新，程序只会提示你有新版本。
 
 **可以用 winget 或 Scoop 安装吗？**
 可以：`winget install qu1ncky.BatteryTray`，或 `scoop bucket add batterytray https://github.com/qu1ncky/BatteryTray` 和 `scoop install batterytray`。如需完整安装，请从 [Releases](https://github.com/qu1ncky/BatteryTray/releases/latest) 下载 `BatteryTray-…-win-x64.zip`，解压后运行 `install.cmd`：程序会安装到 `C:\Program Files\BatteryTray`，并在登录时通过名为“BatteryTray”的任务计划程序任务启动。

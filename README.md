@@ -86,6 +86,10 @@ Permissions: Bluetooth, and Input Monitoring only when a keyboard is connected (
 </tr>
 </table>
 
+## Privacy
+
+No account, no ads, and nothing on your devices is ever changed: BatteryTray only reads their battery. The one thing it sends is its update check, every 6 hours, which also tells us how many people use the app, as Homebrew and many other open-source apps count theirs: the app's version, the system and its version, the type of processor, and a random number the app made up on its first check. Nothing hidden: the server keeps the country, not the address, knows nothing of your devices or what you do, and its code is open ([`server/`](server)). [More](docs/en/features.md#updates)
+
 ## More
 
 [Supported devices](docs/en/devices.md) · [All features](docs/en/features.md) · [FAQ](docs/en/faq.md) · [How it works](docs/en/how-it-works.md) · [Build from source](docs/development.md) · [Release notes](https://github.com/qu1ncky/BatteryTray/releases)

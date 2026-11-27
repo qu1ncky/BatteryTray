@@ -49,11 +49,13 @@ When a device can't report its level while charging, you see a charging sign ins
 
 ## Updates
 
-Half a minute after start and then every 6 hours the app looks at the [latest release](https://github.com/qu1ncky/BatteryTray/releases/latest) on GitHub, the only place it ever connects to. With automatic updates (the default) it downloads the new version, checks its SHA-256 against the digest GitHub publishes and the version inside it, and swaps itself only while its windows are closed. Without them, it tells you once and the **Update** button installs it. Everything is in **Settings → General → Updates**: status, what's new, "Check now" and the automatic updates switch. On a Mac the new app must also be signed by the same certificate as the running one.
+Half a minute after start and then every 6 hours the app asks the project's update server which [release](https://github.com/qu1ncky/BatteryTray/releases/latest) is the latest; when the server doesn't answer, and once a day anyway, it asks GitHub itself. With automatic updates (the default) it downloads the new version from GitHub, checks its SHA-256 against the digest GitHub publishes and the version inside it, and swaps itself only while its windows are closed. Without them, it tells you once and the **Update** button installs it. Everything is in **Settings → General → Updates**: status, what's new, "Check now" and the automatic updates switch. On a Mac the new app must also be signed by the same certificate as the running one.
+
+The update check is also how we know how many people use BatteryTray. It carries the app's version, the system with its version, the type of processor and a random number the app made up on its first check, so that each copy is counted once. The server keeps these and the country the check came from, never the address; nothing about your devices, your settings or how you use the app is sent. Its code is in [`server/`](../../server).
 
 ## Small and private
 
-A single ~10 MB exe on Windows, an ~11 MB app on a Mac, about 8 MB of memory. No account, no telemetry, never changes anything on your devices: it only asks them for their battery.
+A single ~10 MB exe on Windows, an ~11 MB app on a Mac, about 8 MB of memory. No account, no ads; the update check is all it sends ([Updates](#updates)), and it never changes anything on your devices: it only asks them for their battery.
 
 ## Windows and macOS
 
