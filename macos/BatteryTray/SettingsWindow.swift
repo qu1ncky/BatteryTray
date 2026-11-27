@@ -54,9 +54,17 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         window.center()
     }
 
+    var isVisible: Bool {
+        window.isVisible
+    }
+
     func show() {
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
+    }
+
+    func close() {
+        window.close()
     }
 
     private func pageHeight(_ index: Int, _ height: CGFloat) {
@@ -245,6 +253,26 @@ struct NewBadge: View {
     }
 }
 
+private struct SettingsRowIcon: View {
+    let symbol: String
+
+    var body: some View {
+        Image(systemName: symbol)
+            .resizable()
+            .scaledToFit()
+            .frame(width: 16, height: 16)
+    }
+}
+
+private struct SettingsRowLabelStyle: LabelStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 8) {
+            configuration.icon.frame(width: 22, height: 18)
+            configuration.title.multilineTextAlignment(.leading)
+        }
+    }
+}
+
 /// General: the login item, the Input Monitoring permission when a device waits for it, the language and the theme, how
 /// many devices the menu bar item shows, the updates, the folder of the log and settings, a suggestion.
 struct GeneralSettings: View {
@@ -254,6 +282,14 @@ struct GeneralSettings: View {
     static func lowerFirst(_ text: String) -> String {
         guard let first = text.first else { return text }
         return first.lowercased() + text.dropFirst()
+    }
+
+    private func settingsLabel(_ key: String, systemImage: String) -> some View {
+        Label {
+            Text(model.t(key))
+        } icon: {
+            SettingsRowIcon(symbol: systemImage)
+        }
     }
 
     var body: some View {
@@ -267,7 +303,7 @@ struct GeneralSettings: View {
                             model.send(["cmd": "autostart", "on": false])
                         }
                     })) {
-                        Label(model.t("autostart"), systemImage: "power")
+                        settingsLabel("autostart", systemImage: "power")
                     }
                 }
                 if s.needsPermission {
@@ -281,7 +317,7 @@ struct GeneralSettings: View {
                                 }
                             }
                         } icon: {
-                            Image(systemName: "hand.raised").foregroundStyle(.orange)
+                            SettingsRowIcon(symbol: "hand.raised").foregroundStyle(.orange)
                         }
                     }
                 }
@@ -292,21 +328,42 @@ struct GeneralSettings: View {
                         Text("English").tag("en")
                         Text("中文").tag("zh")
                     } label: {
-                        Label(model.t("lang.header"), systemImage: "globe")
+                        settingsLabel("lang.header", systemImage: "globe")
                     }
                     Picker(selection: Binding(get: { s.settings.theme }, set: { model.send(["cmd": "theme", "value": $0]) })) {
                         Text(model.t("theme.auto")).tag("auto")
                         Text(model.t("theme.light")).tag("light")
                         Text(model.t("theme.dark")).tag("dark")
                     } label: {
-                        Label(model.t("theme.header"), systemImage: "circle.lefthalf.filled")
+                        settingsLabel("theme.header", systemImage: "circle.lefthalf.filled")
                     }
                 }
                 Section {
                     Picker(selection: Binding(get: { s.settings.menuBarDevices }, set: { model.set("menu_bar_devices", $0) })) {
                         ForEach(1...5, id: \.self) { Text("\($0)").tag($0) }
                     } label: {
-                        Label(model.t("menubar.devices"), systemImage: "menubar.rectangle")
+                        settingsLabel("menubar.devices", systemImage: "menubar.rectangle")
+                    }
+                    if s.settings.menuBarDevices == 1 {
+                        Picker(selection: Binding(get: { s.settings.trayPriority }, set: { model.set("tray_priority", $0) })) {
+                            Text(model.t("tray.priority.mouse")).tag("mouse")
+                            Text(model.t("tray.priority.keyboard")).tag("keyboard")
+                            Text(model.t("tray.priority.bluetooth")).tag("bluetooth")
+                            Text(model.t("tray.priority.headset")).tag("headset")
+                            Text(model.t("tray.priority.lowest")).tag("lowest")
+                        } label: {
+                            settingsLabel("tray.priority", systemImage: "list.number")
+                        }
+                    }
+                    Picker(selection: Binding(get: { s.settings.trayBatteryIcon },
+                                              set: { model.set("tray_battery_icon", $0) })) {
+                        Text(model.t("tray.style.icon")).tag(true)
+                        Text(model.t("tray.style.number")).tag(false)
+                    } label: {
+                        settingsLabel("tray.style", systemImage: "battery.100percent")
+                    }
+                    Toggle(isOn: Binding(get: { s.settings.hideOffline }, set: { model.set("hide_offline", $0) })) {
+                        settingsLabel("hide.offline", systemImage: "eye.slash")
                     }
                 } header: {
                     HStack(spacing: 8) {
@@ -340,7 +397,7 @@ struct GeneralSettings: View {
                         .padding(.top, 4)
                     }
                     Toggle(isOn: Binding(get: { s.settings.autoUpdate }, set: { model.set("auto_update", $0) })) {
-                        Text(model.t("updates.auto"))
+                        settingsLabel("updates.auto", systemImage: "arrow.clockwise")
                     }
                 }
                 Section {
@@ -350,7 +407,7 @@ struct GeneralSettings: View {
                             NSWorkspace.shared.open(URL(fileURLWithPath: path))
                         }
                     } label: {
-                        Label(model.t("open.folder"), systemImage: "folder")
+                        settingsLabel("open.folder", systemImage: "folder")
                     }
                     Button {
                         if let text = Core.call(["cmd": "suggestion_url"])["url"] as? String, let url = URL(string: text) {
@@ -365,13 +422,14 @@ struct GeneralSettings: View {
                                     .accessibilityLabel(model.t("feedback.browser"))
                             }
                         } icon: {
-                            Image(systemName: "lightbulb")
+                            SettingsRowIcon(symbol: "lightbulb")
                         }
                     }
                 }
                 .buttonStyle(RowButtonStyle())
             }
             .formStyle(.grouped)
+            .labelStyle(SettingsRowLabelStyle())
             .fixedSize(horizontal: false, vertical: true)
             .animation(.easeInOut(duration: SettingsWindowController.duration), value: s.needsPermission)
             .animation(.easeInOut(duration: SettingsWindowController.duration), value: s.update)
@@ -438,7 +496,12 @@ struct ReminderSettings: View {
                     Button {
                         model.send(["cmd": "test_alert"])
                     } label: {
-                        Label(model.t("alerts.test"), systemImage: "bell.badge")
+                        Label {
+                            Text(model.t("alerts.test"))
+                        } icon: {
+                            SettingsRowIcon(symbol: "bell.badge")
+                        }
+                        .labelStyle(SettingsRowLabelStyle())
                     }
                     .buttonStyle(RowButtonStyle())
                 }
@@ -630,7 +693,12 @@ struct OverlaySettings: View {
                     Button {
                         AppDelegate.shared?.overlay.preview()
                     } label: {
-                        Label(model.t("overlay.preview"), systemImage: "eye")
+                        Label {
+                            Text(model.t("overlay.preview"))
+                        } icon: {
+                            SettingsRowIcon(symbol: "eye")
+                        }
+                        .labelStyle(SettingsRowLabelStyle())
                     }
                     .buttonStyle(RowButtonStyle())
                 }

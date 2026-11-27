@@ -629,8 +629,9 @@ impl MacApp {
                 "auto_close_seconds": s.auto_close_seconds, "auto_update": s.auto_update,
                 "overlay_enabled": s.overlay_enabled, "overlay_mode": s.overlay_mode,
                 "overlay_corner": s.overlay_corner, "overlay_names": s.overlay_show_names,
-                "menu_bar_devices": s.menu_bar_devices,
-                "language": s.language, "theme": s.theme, "autostart_banner_dismissed": s.autostart_banner_dismissed,
+                "menu_bar_devices": s.menu_bar_devices, "tray_battery_icon": s.tray_battery_icon,
+                "language": s.language, "theme": s.theme, "tray_priority": s.tray_priority, "hide_offline": s.hide_offline,
+                "autostart_banner_dismissed": s.autostart_banner_dismissed,
             },
             "autostart": autostart::is_registered(),
             "update": {

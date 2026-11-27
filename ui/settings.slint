@@ -173,6 +173,9 @@ export component GeneralPage inherits Page {
     in property <string> language;
     // "light", "dark", or "auto" to follow Windows
     in property <string> theme;
+    in property <string> tray-priority;
+    in property <bool> tray-battery-icon;
+    in property <bool> hide-offline;
     in property <string> update-status;
     in property <string> update-checked-text;
     in property <string> update-notes;
@@ -183,6 +186,9 @@ export component GeneralPage inherits Page {
     callback autostart-changed(bool);
     callback language-chosen(string);
     callback theme-chosen(string);
+    callback tray-priority-chosen(string);
+    callback tray-battery-icon-chosen(bool);
+    callback hide-offline-changed(bool);
     callback install-update();
     callback check-updates();
     callback auto-update-changed(bool);
@@ -233,6 +239,64 @@ export component GeneralPage inherits Page {
                     current: root.theme == "light" ? 1 : root.theme == "dark" ? 2 : 0;
                     selected(i) => { root.theme-chosen(["auto", "light", "dark"][i]); }
                 }
+            }
+            Divider {}
+            ControlRow {
+                leading-glyph: "\u{E83F}";
+                text: T.t("tray.style");
+                Dropdown {
+                    min-width: 150px;
+                    label: T.t("tray.style");
+                    options: [T.t("tray.style.icon"), T.t("tray.style.number")];
+                    current: root.tray-battery-icon ? 0 : 1;
+                    selected(i) => { root.tray-battery-icon-chosen(i == 0); }
+                }
+            }
+            Divider {}
+            HorizontalLayout {
+                min-height: 48px;
+                padding-left: 16px;
+                padding-right: 16px;
+                spacing: 12px;
+                Glyph {
+                    width: 20px;
+                    text: "\u{E8CB}";
+                    font-size: 18px;
+                    horizontal-alignment: center;
+                }
+                Text {
+                    text: T.t("tray.priority");
+                    color: Palette.text;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                    wrap: word-wrap;
+                }
+                VerticalLayout {
+                    alignment: center;
+                    Dropdown {
+                        min-width: 150px;
+                        label: T.t("tray.priority");
+                        options: [
+                            T.t("tray.priority.mouse"),
+                            T.t("tray.priority.keyboard"),
+                            T.t("tray.priority.bluetooth"),
+                            T.t("tray.priority.headset"),
+                            T.t("tray.priority.lowest"),
+                        ];
+                        current: root.tray-priority == "keyboard" ? 1
+                            : root.tray-priority == "bluetooth" ? 2
+                            : root.tray-priority == "headset" ? 3
+                            : root.tray-priority == "lowest" ? 4 : 0;
+                        selected(i) => { root.tray-priority-chosen(["mouse", "keyboard", "bluetooth", "headset", "lowest"][i]); }
+                    }
+                }
+            }
+            Divider {}
+            SwitchRow {
+                leading-glyph: "\u{ED1A}";
+                text: T.t("hide.offline");
+                checked: root.hide-offline;
+                toggled(on) => { root.hide-offline-changed(on); }
             }
         }
     }

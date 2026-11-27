@@ -606,10 +606,13 @@ export component DevicesScreen inherits Rectangle {
     in property <bool> banner-button-visible;
     in property <bool> autostart-banner;
     in property <bool> admin-banner;
+    in property <bool> animate-banners: true;
     in-out property <bool> hidden-open;
     // The list's frame in window coordinates: the lifted copy stays inside it
     out property <length> frame-y: scroll.absolute-position.y;
     out property <length> frame-height: scroll.height;
+    out property <length> panel-height: body.padding-top + header.preferred-height
+        + max(scroll.min-height, contents.preferred-height) + footer.preferred-height + body.padding-bottom;
     callback refresh();
     callback open-settings();
     callback install-update();
@@ -641,12 +644,12 @@ export component DevicesScreen inherits Rectangle {
         running: root.overrun != 0;
         triggered => { root.scroll-by(-max(-12px, min(12px, root.overrun / 3))); }
     }
-    VerticalLayout {
+    body := VerticalLayout {
         padding-top: 14px;
         padding-right: 14px;
         padding-bottom: 12px;
         padding-left: 20px;
-        HorizontalLayout {
+        header := HorizontalLayout {
             padding-right: 6px;
             padding-bottom: 14px;
             spacing: 2px;
@@ -676,12 +679,13 @@ export component DevicesScreen inherits Rectangle {
         }
         scroll := ScrollView {
             vertical-stretch: 1;
-            VerticalLayout {
+            contents := VerticalLayout {
                 alignment: start;
                 padding-right: 6px;
                 // The banners open and close smoothly, each with the gap under it; then the devices, 8px apart
                 Collapsible {
                     open: root.banner-visible;
+                    instant: !root.animate-banners;
                     VerticalLayout {
                         padding-bottom: 8px;
                         Dimmable {
@@ -719,6 +723,7 @@ export component DevicesScreen inherits Rectangle {
                 // Windows keeps a device from the app: admin rights would let it in
                 Collapsible {
                     open: root.admin-banner;
+                    instant: !root.animate-banners;
                     VerticalLayout {
                         padding-bottom: 8px;
                         Dimmable {
@@ -775,6 +780,7 @@ export component DevicesScreen inherits Rectangle {
                 }
                 Collapsible {
                     open: root.autostart-banner;
+                    instant: !root.animate-banners;
                     VerticalLayout {
                         padding-bottom: 8px;
                         Dimmable {
@@ -940,7 +946,7 @@ export component DevicesScreen inherits Rectangle {
                 }
             }
         }
-        HorizontalLayout {
+        footer := HorizontalLayout {
             padding-top: 10px;
             padding-right: 6px;
             Text {

@@ -78,9 +78,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             MainActor.assumeIsolated { AppDelegate.shared?.openMain() }
         }
         model.$snapshot.sink { [weak self] snapshot in self?.snapshotChanged(snapshot) }.store(in: &subscriptions)
-        // The login start shows nothing; started any other way, the window opens
+        // The login start shows nothing; started any other way, the popover opens once the status item is placed
         if !background {
-            openMain()
+            DispatchQueue.main.async { [weak self] in self?.openMain() }
         }
         if let (folder, language) = snapshot {
             // Once the demo's devices have been read
@@ -96,15 +96,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         openMain()
         return false
-    }
-
-    /// Opened again from Finder, Spotlight or `open` while it runs: macOS only brings a menu bar app to the front, with
-    /// nothing to show. As a second launch, the device window comes up. Its own windows activate the app too, but then
-    /// one of them is open already.
-    func applicationDidBecomeActive(_ notification: Notification) {
-        if mainWindow == nil && settingsWindow == nil && !quitting {
-            openMain()
-        }
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
@@ -134,7 +125,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func snapshotChanged(_ snapshot: Snapshot?) {
         guard let snapshot else { return }
         applyTheme(snapshot.settings.theme)
-        statusItem?.update(snapshot.tray)
+        statusItem?.update(snapshot.tray, batteryIcon: snapshot.settings.trayBatteryIcon)
         overlay.apply(snapshot)
         if snapshot.lang != language {
             language = snapshot.lang
@@ -218,12 +209,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         testReminder = sample
     }
 
-    /// Opens the device window (or brings it to the front), with nothing left open in it from before.
+    /// Opens the single native device popover under the menu bar icon (or refreshes it).
     func openMain() {
         if quitting { return }
+        settingsWindow?.close()
         if mainWindow == nil {
-            mainWindow = MainWindowController(model: model, anchor: statusItem?.buttonFrame) { [weak self] in
-                self?.mainWindow = nil
+            mainWindow = MainWindowController(model: model, button: statusItem?.button) { [weak self] in
                 self?.windowsChanged()
             }
         }
@@ -232,8 +223,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         windowsChanged()
     }
 
+    func closeMain() {
+        mainWindow?.close()
+    }
+
+    /// Left click on the menu bar icon toggles the native device popover, matching Windows.
+    func toggleMain() {
+        if quitting { return }
+        if mainWindow?.isVisible == true {
+            mainWindow?.close()
+        } else {
+            openMain()
+        }
+    }
+
     func openSettings() {
         if quitting { return }
+        mainWindow?.close()
         if settingsWindow == nil {
             settingsWindow = SettingsWindowController(model: model) { [weak self] in
                 self?.settingsWindow = nil
@@ -246,12 +252,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         windowsChanged()
     }
 
+    func closeSettingsIfVisible() -> Bool {
+        guard let settingsWindow, settingsWindow.isVisible else { return false }
+        settingsWindow.close()
+        return true
+    }
+
     /// The app stays a menu bar app with its windows open too, out of the Dock: a window is made in the space the user
     /// is in only while the app has no Dock icon, so with one the settings opened from the device window over an app in
     /// full screen went to the desktop, out of sight. While a window is open the device
     /// list's "N min ago" stays fresh; an automatic update waits.
     func windowsChanged() {
-        let open = mainWindow != nil || settingsWindow != nil
+        let open = (mainWindow?.isVisible ?? false) || settingsWindow != nil
         if open {
             NSApp.activate(ignoringOtherApps: true)
             if clockTimer == nil {
@@ -267,7 +279,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func reportWindows() {
-        let open = mainWindow != nil || settingsWindow != nil
+        let open = (mainWindow?.isVisible ?? false) || settingsWindow != nil
         Core.call(["cmd": "windows", "main_open": open, "overlay_timed": overlay.isTimedVisible])
     }
 

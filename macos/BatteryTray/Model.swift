@@ -66,13 +66,13 @@ struct Tray: Decodable, Equatable {
     var bar: [BarSlot]
 }
 
-/// One device in the menu bar item (view.rs: BarSlot): its kind's symbol, then its level without "%".
+/// One device in the menu bar item (view.rs: BarSlot): its kind's symbol and battery icon.
 struct BarSlot: Decodable, Equatable {
     var kind: String
     /// "37", "≈15", or empty when the device only says it is charging
     var level: String
     var tone: String
-    /// Charging or full on its charger: a lightning follows the level
+    /// Charging or full on its charger: the battery displays a lightning bolt
     var power: Bool
 }
 
@@ -108,12 +108,15 @@ struct Settings: Decodable, Equatable {
     var language: String
     /// "light", "dark", or "auto" to follow the system's appearance
     var theme: String
+    var trayBatteryIcon: Bool
+    var trayPriority: String
+    var hideOffline: Bool
     var autostartBannerDismissed: Bool
 
     enum CodingKeys: String, CodingKey {
         case low, critical, soundLow, soundCritical, soundCharged, soundNotes, notifyCharged, autoClose, autoCloseSeconds,
              autoUpdate, overlayEnabled, overlayMode, overlayCorner, overlayNames, menuBarDevices, language, theme,
-             autostartBannerDismissed
+             trayBatteryIcon, trayPriority, hideOffline, autostartBannerDismissed
         case repeatMinutes = "repeat"
     }
 }

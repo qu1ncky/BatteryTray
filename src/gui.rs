@@ -1,9 +1,8 @@
 //! The Slint side: the compiled windows, the winit backend with the software renderer, and the Win32 touches Slint
 //! has no API for (a window that never takes focus, click-through, translucency, the work area).
-//! The reminder and the overlay get their extended styles the moment Windows creates them (a CBT hook spots their
+//! The panel, reminder and overlay get their styles the moment Windows creates them (a CBT hook spots their
 //! window classes), before they could ever be seen, and keep them: winit writes a window's extended style afresh
-//! whenever it changes the window's state, which Slint does several times after showing it. A layered window is not
-//! drawn until it is given an opacity, so they stay unseen until `set_alpha` - once they stand where they belong.
+//! whenever it changes the window state. The layered reminder and overlay stay invisible until `set_alpha`.
 
 use crate::loc;
 use slint::winit_030::{winit, WinitWindowAccessor};
@@ -15,8 +14,8 @@ use windows::Win32::Graphics::Gdi::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     GetForegroundWindow, GetWindowLongPtrW, SetLayeredWindowAttributes, SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE,
-    HWND_TOPMOST, LWA_ALPHA, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
-    WS_EX_TRANSPARENT,
+    GWL_STYLE, HWND_TOPMOST, LWA_ALPHA, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, WS_EX_APPWINDOW, WS_EX_DLGMODALFRAME,
+    WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT, WS_MAXIMIZEBOX, WS_MINIMIZEBOX,
 };
 
 slint::include_modules!();
@@ -24,26 +23,27 @@ slint::include_modules!();
 /// What kind of window the next component created is: winit is told before the window exists.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
-    /// The main window: a title bar in the app mode, the app icon, a taskbar button.
-    Normal,
+    /// The tray panel, owned by the hidden tray window so it can retain the standard caption.
+    Panel(HWND),
     /// The low battery reminder: shown without taking focus, no taskbar button, no frame.
     Reminder,
     /// The overlay: as the reminder, and the mouse goes through it to whatever is underneath.
     Overlay,
 }
 
+const PANEL_CLASS: &str = "BatteryTray.Panel";
 const REMINDER_CLASS: &str = "BatteryTray.Reminder";
 const OVERLAY_CLASS: &str = "BatteryTray.Overlay";
 
 thread_local! {
-    static NEXT: Cell<Kind> = const { Cell::new(Kind::Normal) };
+    static NEXT: Cell<Option<Kind>> = const { Cell::new(None) };
 }
 
 /// Creates a component of the given kind (the attributes hook reads the kind while the component is created).
 pub fn create<C>(kind: Kind, new: impl FnOnce() -> Result<C, slint::PlatformError>) -> Result<C, slint::PlatformError> {
-    NEXT.with(|n| n.set(kind));
+    let previous = NEXT.with(|n| n.replace(Some(kind)));
     let created = new();
-    NEXT.with(|n| n.set(Kind::Normal));
+    NEXT.with(|n| n.set(previous));
     created
 }
 
@@ -51,7 +51,7 @@ pub fn create<C>(kind: Kind, new: impl FnOnce() -> Result<C, slint::PlatformErro
 pub fn init() -> Result<(), slint::PlatformError> {
     use windows::Win32::System::Threading::GetCurrentThreadId;
     use windows::Win32::UI::WindowsAndMessaging::{SetWindowsHookExW, WH_CBT};
-    use winit::platform::windows::{CornerPreference, IconExtWindows, WindowAttributesExtWindows};
+    use winit::platform::windows::{CornerPreference, WindowAttributesExtWindows};
     // For as long as the app runs, on the thread that creates the windows
     unsafe {
         let _ = SetWindowsHookExW(WH_CBT, Some(on_create), None, GetCurrentThreadId());
@@ -60,7 +60,6 @@ pub fn init() -> Result<(), slint::PlatformError> {
         .backend_name("winit".into())
         .renderer_name("software".into())
         .with_winit_window_attributes_hook(|attributes| {
-            let icon = winit::window::Icon::from_resource(1, None).ok();
             let popup = |a: winit::window::WindowAttributes, class: &str| {
                 a.with_class_name(class)
                     .with_active(false)
@@ -68,30 +67,48 @@ pub fn init() -> Result<(), slint::PlatformError> {
                     .with_corner_preference(CornerPreference::Round)
             };
             match NEXT.with(|n| n.get()) {
-                Kind::Normal => attributes
+                Some(Kind::Panel(owner)) => attributes
+                    .with_class_name(PANEL_CLASS)
+                    .with_owner_window(owner.0 as isize)
+                    .with_enabled_buttons(winit::window::WindowButtons::CLOSE)
+                    .with_skip_taskbar(true)
                     .with_theme(Some(title_bar(crate::theme::current().apps_light)))
-                    .with_window_icon(icon.clone())
-                    .with_taskbar_icon(icon),
-                Kind::Reminder => popup(attributes, REMINDER_CLASS),
-                // Dark in any mode, as its contents: also the frame Windows 11 draws around a rounded window
-                Kind::Overlay => popup(attributes, OVERLAY_CLASS).with_theme(Some(winit::window::Theme::Dark)),
+                    .with_corner_preference(CornerPreference::Round),
+                Some(Kind::Reminder) => popup(attributes, REMINDER_CLASS),
+                // The overlay keeps its dark contents and frame in either app mode.
+                Some(Kind::Overlay) => popup(attributes, OVERLAY_CLASS).with_theme(Some(winit::window::Theme::Dark)),
+                None => attributes,
             }
         })
         .select()
 }
 
-/// The extended style a popup window class gets: no focus, no taskbar button, layered (unseen until it has an
-/// opacity); the overlay also lets the mouse through.
-fn popup_bits(hwnd: HWND) -> Option<u32> {
+struct WindowStyles {
+    extended: u32,
+    remove: u32,
+}
+
+static PANEL_STYLES: WindowStyles =
+    WindowStyles { extended: WS_EX_DLGMODALFRAME.0, remove: WS_MINIMIZEBOX.0 | WS_MAXIMIZEBOX.0 };
+const PASSIVE_POPUP: u32 = WS_EX_TOOLWINDOW.0 | WS_EX_NOACTIVATE.0 | WS_EX_LAYERED.0;
+static REMINDER_STYLES: WindowStyles = WindowStyles { extended: PASSIVE_POPUP, remove: 0 };
+static OVERLAY_STYLES: WindowStyles = WindowStyles { extended: PASSIVE_POPUP | WS_EX_TRANSPARENT.0, remove: 0 };
+
+/// The panel uses a dialog caption without an app icon. Only reminders and overlays are passive.
+fn popup_styles(hwnd: HWND) -> Option<&'static WindowStyles> {
     let mut name = [0u16; 64];
     let n = unsafe { windows::Win32::UI::WindowsAndMessaging::GetClassNameW(hwnd, &mut name) };
     let class = String::from_utf16_lossy(&name[..n.max(0) as usize]);
-    let base = WS_EX_TOOLWINDOW.0 | WS_EX_NOACTIVATE.0 | WS_EX_LAYERED.0;
     match class.as_str() {
-        REMINDER_CLASS => Some(base),
-        OVERLAY_CLASS => Some(base | WS_EX_TRANSPARENT.0),
+        PANEL_CLASS => Some(&PANEL_STYLES),
+        REMINDER_CLASS => Some(&REMINDER_STYLES),
+        OVERLAY_CLASS => Some(&OVERLAY_STYLES),
         _ => None,
     }
+}
+
+fn popup_style(style: u32, bits: u32) -> u32 {
+    (style | bits) & !WS_EX_APPWINDOW.0
 }
 
 /// A window is being created on the UI thread: a popup gets its styles now, and keeps them.
@@ -104,9 +121,15 @@ unsafe extern "system" fn on_create(
     use windows::Win32::UI::WindowsAndMessaging::{CallNextHookEx, HCBT_CREATEWND};
     if code == HCBT_CREATEWND as i32 {
         let hwnd = HWND(wparam.0 as *mut _);
-        if let Some(bits) = popup_bits(hwnd) {
-            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, GetWindowLongPtrW(hwnd, GWL_EXSTYLE) | bits as isize);
-            let _ = SetWindowSubclass(hwnd, Some(keep_styles), KEEP_STYLES_ID, bits as usize);
+        if let Some(styles) = popup_styles(hwnd) {
+            let style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32;
+            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, popup_style(style, styles.extended) as isize);
+            if styles.remove != 0 {
+                let style = GetWindowLongPtrW(hwnd, GWL_STYLE) as u32;
+                SetWindowLongPtrW(hwnd, GWL_STYLE, (style & !styles.remove) as isize);
+            }
+            // The class-specific style policy is static and outlives this window.
+            let _ = SetWindowSubclass(hwnd, Some(keep_styles), KEEP_STYLES_ID, styles as *const WindowStyles as usize);
         }
     }
     CallNextHookEx(None, code, wparam, lparam)
@@ -243,21 +266,31 @@ pub fn set_alpha(window: &slint::Window, alpha: u8) {
 
 const KEEP_STYLES_ID: usize = 0xB7;
 
-/// Puts the popup's extended style bits (in `bits`) back into every new extended style before it is applied.
+/// Retains the native popup styles when winit or Slint changes the window state.
 unsafe extern "system" fn keep_styles(
     hwnd: HWND,
     msg: u32,
     wparam: windows::Win32::Foundation::WPARAM,
     lparam: windows::Win32::Foundation::LPARAM,
     _id: usize,
-    bits: usize,
+    data: usize,
 ) -> windows::Win32::Foundation::LRESULT {
     use windows::Win32::UI::Shell::{DefSubclassProc, RemoveWindowSubclass};
-    use windows::Win32::UI::WindowsAndMessaging::{STYLESTRUCT, WM_NCDESTROY, WM_STYLECHANGING};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        STYLESTRUCT, WINDOWPOS, WM_NCDESTROY, WM_STYLECHANGING, WM_WINDOWPOSCHANGING,
+    };
+    let styles = &*(data as *const WindowStyles);
     match msg {
         WM_STYLECHANGING if wparam.0 as i32 == GWL_EXSTYLE.0 => {
             let change = &mut *(lparam.0 as *mut STYLESTRUCT);
-            change.styleNew |= bits as u32;
+            change.styleNew = popup_style(change.styleNew, styles.extended);
+        }
+        WM_STYLECHANGING if wparam.0 as i32 == GWL_STYLE.0 => {
+            let change = &mut *(lparam.0 as *mut STYLESTRUCT);
+            change.styleNew &= !styles.remove;
+        }
+        WM_WINDOWPOSCHANGING if std::ptr::eq(styles, &PANEL_STYLES) => {
+            place_initial_panel(hwnd, &mut *(lparam.0 as *mut WINDOWPOS));
         }
         WM_NCDESTROY => {
             let _ = RemoveWindowSubclass(hwnd, Some(keep_styles), KEEP_STYLES_ID);
@@ -265,6 +298,41 @@ unsafe extern "system" fn keep_styles(
         _ => {}
     }
     DefSubclassProc(hwnd, msg, wparam, lparam)
+}
+
+/// Anchors the panel while it is sized or moved before its first visible frame.
+fn place_initial_panel(hwnd: HWND, position: &mut windows::Win32::UI::WindowsAndMessaging::WINDOWPOS) {
+    use windows::Win32::UI::WindowsAndMessaging::{GetWindowRect, IsWindowVisible, SWP_HIDEWINDOW, SWP_SHOWWINDOW};
+    let showing = position.flags.contains(SWP_SHOWWINDOW);
+    if position.flags.contains(SWP_HIDEWINDOW)
+        || (!showing
+            && (unsafe { IsWindowVisible(hwnd).as_bool() } || position.flags.contains(SWP_NOMOVE | SWP_NOSIZE)))
+    {
+        return;
+    }
+    unsafe {
+        let mut outer = RECT::default();
+        if GetWindowRect(hwnd, &mut outer).is_err() {
+            return;
+        }
+        let monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTOPRIMARY);
+        let area = work_area(monitor);
+        let no_size = position.flags.contains(SWP_NOSIZE);
+        let height = if no_size { outer.bottom - outer.top } else { position.cy };
+        let capped = height.min(area.bottom - area.top);
+        if position.flags.contains(SWP_NOMOVE) {
+            position.x = outer.left;
+        }
+        position.y = (area.bottom - (12.0 * scale_of(monitor)).round() as i32 - capped).max(area.top);
+        position.flags &= !SWP_NOMOVE;
+        if capped < height {
+            if no_size {
+                position.cx = outer.right - outer.left;
+            }
+            position.cy = capped;
+            position.flags &= !SWP_NOSIZE;
+        }
+    }
 }
 
 /// Where a shown window really is, and its monitor's scale, as Windows has them. Right after show() Slint can still
@@ -285,6 +353,36 @@ pub fn move_window(window: &slint::Window, x: i32, y: i32) {
     if let Some(hwnd) = hwnd(window) {
         unsafe {
             let _ = SetWindowPos(hwnd, None, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+        }
+    }
+}
+
+/// Fits the panel to its content while keeping its bottom edge near the tray.
+pub(crate) fn fit_panel(window: &slint::Window, logical_height: f32, first_show: bool) {
+    use windows::Win32::UI::WindowsAndMessaging::{GetClientRect, SWP_NOZORDER};
+    let Some(hwnd) = hwnd(window) else { return };
+    let Some((outer, scale)) = window_rect(window) else { return };
+    unsafe {
+        let mut client = RECT::default();
+        if GetClientRect(hwnd, &mut client).is_err() {
+            return;
+        }
+        let area = work_area(MonitorFromWindow(hwnd, MONITOR_DEFAULTTOPRIMARY));
+        let frame = (outer.bottom - outer.top) - (client.bottom - client.top);
+        let height = ((logical_height * scale).ceil() as i32 + frame).min(area.bottom - area.top);
+        let anchor = if first_show { area.bottom - (12.0 * scale).round() as i32 } else { outer.bottom };
+        let bottom = anchor.clamp(area.top + height, area.bottom);
+        let top = bottom - height;
+        if top != outer.top || bottom != outer.bottom {
+            let _ = SetWindowPos(
+                hwnd,
+                None,
+                outer.left,
+                top,
+                outer.right - outer.left,
+                height,
+                SWP_NOZORDER | SWP_NOACTIVATE,
+            );
         }
     }
 }

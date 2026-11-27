@@ -445,3 +445,56 @@ pub fn main() {
     let size = (overlay.get_content_width(), overlay.get_content_height());
     render(&window, scale, size, &folder.join("overlay-rows.png"));
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn short_device_panel_fits_and_long_device_list_scrolls() {
+        slint::platform::set_platform(Box::new(Offscreen)).unwrap();
+        let ui = MainWindow::new().unwrap();
+        let window = last();
+        gui::setup_texts(&ui.global::<gui::T>());
+        ui.set_autostart(true);
+        ui.set_connected_devices(ModelRc::from(Rc::new(VecModel::from(vec![device(0)]))));
+        lay_out(&window, 1.0, (440.0, 640.0));
+        let short = ui.get_panel_height();
+        assert!((140.0..250.0).contains(&short), "one card asked for {short}px");
+
+        ui.set_connected_devices(ModelRc::from(Rc::new(VecModel::from((0..12).map(device).collect::<Vec<_>>()))));
+        let (w, h) = lay_out(&window, 1.0, (440.0, 640.0));
+        assert_eq!(ui.get_panel_height(), 640.0);
+        let before = draw(&window, w, h);
+        window.dispatch_event(WindowEvent::PointerScrolled {
+            position: slint::LogicalPosition::new(200.0, 250.0),
+            delta_x: 0.0,
+            delta_y: -220.0,
+        });
+        let after = draw(&window, w, h);
+        let changed = (170..540)
+            .flat_map(|y| (80..350).map(move |x| y * w as usize + x))
+            .filter(|&i| before[i].red.abs_diff(after[i].red) > 10)
+            .count();
+        assert!(changed > 500, "scrolling changed only {changed} device-content pixels");
+
+        ui.set_connected_devices(ModelRc::from(Rc::new(VecModel::from(vec![device(0)]))));
+        lay_out(&window, 1.0, (440.0, 640.0));
+        assert_eq!(ui.get_panel_height(), short);
+        ui.set_screen(1);
+        assert_eq!(ui.get_panel_height(), 640.0);
+    }
+
+    fn device(i: usize) -> gui::DeviceItem {
+        gui::DeviceItem {
+            id: format!("test-{i}").into(),
+            name: format!("Device {i}").into(),
+            subtitle: "Bluetooth".into(),
+            connected: true,
+            level_text: format!("{}%", 100 - i * 6).into(),
+            color: rgb(0x6C, 0xCB, 0x5F),
+            fill: (100 - i * 6) as f32 / 100.0,
+            ..Default::default()
+        }
+    }
+}

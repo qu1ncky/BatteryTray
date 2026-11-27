@@ -32,7 +32,11 @@ final class Snapshots {
             { model.renamingID = model.snapshot?.devices.connected.first?.id },
             { self.take(self.window(titled: model.t("app.title")), "rename") },
             { model.renamingID = nil },
-            { self.drawMenuBarItem(model.snapshot?.tray.bar ?? [], "menu-bar-item") },
+            {
+                if let image = self.app?.statusItem?.button?.image {
+                    self.drawMenuBarItem(image, "menu-bar-item")
+                }
+            },
             { self.app?.statusItem?.snapshotMenu { self.take($0, "menu-bar", wait: 0) } },
             { self.app?.openSettings() },
             { self.take(self.settings(0), "settings-general") },
@@ -108,9 +112,8 @@ final class Snapshots {
 
     /// The menu bar item as it draws itself, on a plain menu bar of the pictures' appearance: its own window belongs to
     /// the system and can't be taken.
-    func drawMenuBarItem(_ bar: [BarSlot], _ name: String, appearance: NSAppearance? = nil) {
-        let appearance = appearance ?? NSApp.effectiveAppearance
-        let image = MenuBarLabel.image(bar)
+    private func drawMenuBarItem(_ image: NSImage, _ name: String) {
+        let appearance = NSApp.effectiveAppearance
         let dark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
         let size = NSSize(width: (image.size.width + 20).rounded(.up), height: 24)
         guard let bitmap = NSBitmapImageRep(

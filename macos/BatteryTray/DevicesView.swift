@@ -6,11 +6,19 @@ import SwiftUI
 /// dragging it within its block, and managed from its "⋯" menu.
 struct DevicesView: View {
     @EnvironmentObject var model: AppModel
+    var showHeader: Bool = false
+    var onHeaderHeightChange: ((CGFloat) -> Void)? = nil
+    var onFooterHeightChange: ((CGFloat) -> Void)? = nil
+    var onContentChange: (() -> Void)? = nil
     /// Folded whenever the window opens
     @StateObject private var hiddenExpanded = Local(false)
 
     var body: some View {
         VStack(spacing: 0) {
+            if showHeader {
+                header
+                Divider()
+            }
             if let snapshot = model.snapshot {
                 // One edge on each side for everything: the cards, the headings, the rows and the footer's text
                 List {
@@ -80,7 +88,9 @@ struct DevicesView: View {
                 footer(snapshot)
             }
         }
-        .frame(minWidth: 380, minHeight: 360)
+        .frame(minWidth: 380)
+        .onAppear { onContentChange?() }
+        .onChange(of: hiddenExpanded.value) { _ in onContentChange?() }
     }
 
     /// The window's edge on the left and the right, as the footer has it
@@ -133,6 +143,38 @@ struct DevicesView: View {
         }
     }
 
+    private var header: some View {
+        HStack(spacing: 4) {
+            Text(model.t("app.title"))
+                .font(.headline)
+            Spacer()
+            Button { model.send(["cmd": "refresh"]) } label: {
+                Image(systemName: "arrow.clockwise")
+                    .frame(width: 24, height: 24)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.borderless)
+            .help(model.t("refresh"))
+            .accessibilityLabel(model.t("refresh"))
+            Button { AppDelegate.shared?.openSettings() } label: {
+                Image(systemName: "gearshape")
+                    .frame(width: 24, height: 24)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.borderless)
+            .help(model.t("settings"))
+            .accessibilityLabel(model.t("settings"))
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 12)
+        .padding(.bottom, 8)
+        .background(GeometryReader { proxy in
+            Color.clear
+                .onAppear { onHeaderHeightChange?(proxy.size.height) }
+                .onChange(of: proxy.size.height) { onHeaderHeightChange?($0) }
+        })
+    }
+
     private func footer(_ s: Snapshot) -> some View {
         HStack {
             Text(s.updatedText)
@@ -144,6 +186,11 @@ struct DevicesView: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
         .background(.bar)
+        .background(GeometryReader { proxy in
+            Color.clear
+                .onAppear { onFooterHeightChange?(proxy.size.height) }
+                .onChange(of: proxy.size.height) { onFooterHeightChange?($0) }
+        })
     }
 }
 

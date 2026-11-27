@@ -138,7 +138,8 @@ pub fn device_lists(rows: &[DeviceRow], s: &AppSettings, now: DateTime<Local>) -
         match block {
             Block::Pinned => lists.pinned.push(view),
             Block::Connected => lists.connected.push(view),
-            Block::Offline => lists.offline.push(view),
+            Block::Offline if !s.hide_offline => lists.offline.push(view),
+            Block::Offline => {}
             Block::Hidden => lists.hidden.push(view),
         }
     }
@@ -294,6 +295,7 @@ pub fn update_view(u: &Status) -> UpdateView {
 pub struct TrayView {
     pub label: String,
     pub tone: Tone,
+    pub charging: bool,
     /// One line per device on the air, in the list's order; empty when no level is known
     pub lines: Vec<String>,
     /// The lines joined, or "no data"
@@ -302,14 +304,14 @@ pub struct TrayView {
     pub bar: Vec<BarSlot>,
 }
 
-/// One device in the menu bar item on macOS: its kind's symbol, then its level without "%".
+/// One device in the menu bar item on macOS, with its kind, level and charging state.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BarSlot {
     pub kind: DeviceKind,
     /// "37", "≈15" for an estimate, empty when the device only says it is charging
     pub level: String,
     pub tone: Tone,
-    /// Charging or full on its charger: a lightning follows the level
+    /// Charging or full on its charger: the battery displays a lightning bolt
     pub power: bool,
 }
 
@@ -336,40 +338,49 @@ pub fn tray_view(rows: &[DeviceRow], s: &AppSettings) -> TrayView {
         .collect();
     let tooltip = if lines.is_empty() { t("tray.nodata") } else { lines.join("\n") };
 
-    // The icon shows the device that needs charging most by its own levels: a critical one first, then one below its
-    // reminder level, the least charged among equals; charging ones only when nothing else is left
-    let live: Vec<(&DeviceRow, bool, i32)> =
-        shown.iter().filter_map(|r| r.current.as_ref().and_then(|c| c.level.map(|l| (*r, c.charging, l)))).collect();
-    let urgency = |id: &str, level: i32| {
-        if level <= s.critical_for(id) {
-            2
-        } else if level <= s.low_for(id) {
-            1
-        } else {
-            0
-        }
-    };
-    let pick = live
-        .iter()
-        .filter(|(_, charging, _)| !charging)
-        .min_by_key(|(r, _, l)| (std::cmp::Reverse(urgency(&r.id, *l)), *l))
-        .or_else(|| live.iter().min_by_key(|(_, _, l)| *l));
-    let (label, tone) = match pick {
-        None => ("--".to_string(), Tone::Offline),
-        Some((r, charging, l)) => (l.to_string(), level_tone(Some(*l), *charging, true, &r.id, s)),
-    };
-    let bar = bar_slots(&shown, s);
-    TrayView { label, tone, lines, tooltip, bar }
-}
-
-/// The devices in the menu bar item: the first ones of the list that have a level or are charging, at most as many as
-/// the settings say. One below its own reminder level that didn't get a place takes the last place of one that isn't
-/// low, the least charged first, so a device about to run out is never left out.
-fn bar_slots(shown: &[&DeviceRow], s: &AppSettings) -> Vec<BarSlot> {
-    let readable: Vec<(&DeviceRow, &DeviceReading)> = shown
+    // The icon shows the device that needs charging most by its own levels: a critical or low non-charging one first,
+    // then by the user's device-kind priority (including charging devices with no readable level), then the least
+    // charged among equals.
+    let live: Vec<(&DeviceRow, &DeviceReading)> = shown
         .iter()
         .filter_map(|r| r.current.as_ref().filter(|c| c.level.is_some() || c.charging).map(|c| (*r, c)))
         .collect();
+    let urgency = |id: &str, charging: bool, level: Option<i32>| -> u8 {
+        if charging {
+            return 0;
+        }
+        match level {
+            Some(l) if l <= s.critical_for(id) => 2,
+            Some(l) if l <= s.low_for(id) => 1,
+            _ => 0,
+        }
+    };
+    let pick = live.iter().min_by_key(|(r, c)| {
+        (
+            std::cmp::Reverse(urgency(&r.id, c.charging, c.level)),
+            tray_priority_rank(r, &s.tray_priority),
+            c.charging,
+            c.level.unwrap_or(100),
+        )
+    });
+    let (label, tone) = match pick {
+        None => ("--".to_string(), Tone::Offline),
+        Some((r, c)) => (
+            c.level.map_or_else(|| "⚡".to_string(), |level| level.to_string()),
+            level_tone(c.level, c.charging, true, &r.id, s),
+        ),
+    };
+    let charging = pick.is_some_and(|(_, c)| c.charging);
+    let bar = if s.menu_bar_devices <= 1 {
+        pick.map(|(r, c)| bar_slot(r, c, s)).into_iter().collect()
+    } else {
+        bar_slots(&live, s)
+    };
+    TrayView { label, tone, charging, lines, tooltip, bar }
+}
+
+/// Fills the multi-device menu bar item in device-list order, promoting low batteries into the available slots.
+fn bar_slots(readable: &[(&DeviceRow, &DeviceReading)], s: &AppSettings) -> Vec<BarSlot> {
     let low = |(r, c): &(&DeviceRow, &DeviceReading)| !c.charging && c.level.is_some_and(|l| l <= s.low_for(&r.id));
     let places = s.menu_bar_devices.clamp(1, 5) as usize;
     let mut picked: Vec<_> = readable.iter().take(places).copied().collect();
@@ -380,18 +391,54 @@ fn bar_slots(shown: &[&DeviceRow], s: &AppSettings) -> Vec<BarSlot> {
         picked.remove(place);
         picked.push(device);
     }
-    picked
-        .into_iter()
-        .map(|(r, c)| {
-            let power = c.charging || c.full_on_charger;
-            BarSlot {
-                kind: r.kind(),
-                level: c.level.map(|l| format!("{}{l}", if c.estimate { "≈" } else { "" })).unwrap_or_default(),
-                tone: level_tone(c.level, power, true, &r.id, s),
-                power,
+    picked.into_iter().map(|(r, c)| bar_slot(r, c, s)).collect()
+}
+
+fn bar_slot(row: &DeviceRow, reading: &DeviceReading, settings: &AppSettings) -> BarSlot {
+    let power = reading.charging || reading.full_on_charger;
+    BarSlot {
+        kind: row.kind(),
+        level: reading.level.map(|l| format!("{}{l}", if reading.estimate { "≈" } else { "" })).unwrap_or_default(),
+        tone: level_tone(reading.level, power, true, &row.id, settings),
+        power,
+    }
+}
+
+/// Rank of a device for the tray icon when urgency is tied (lower = higher priority).
+fn tray_priority_rank(row: &DeviceRow, priority: &str) -> u8 {
+    match priority {
+        "lowest" => 0,
+        "keyboard" => match row.kind() {
+            DeviceKind::Keyboard => 0,
+            DeviceKind::Mouse => 1,
+            _ => 2,
+        },
+        "bluetooth" => {
+            let is_bt = row.id.starts_with("ble:")
+                || row.id.starts_with("bt:")
+                || row.current.as_ref().is_some_and(|c| c.via.to_lowercase().contains("bluetooth"));
+            if is_bt {
+                0
+            } else {
+                match row.kind() {
+                    DeviceKind::Mouse => 1,
+                    DeviceKind::Keyboard => 2,
+                    _ => 3,
+                }
             }
-        })
-        .collect()
+        }
+        "headset" => match row.kind() {
+            DeviceKind::Headset => 0,
+            DeviceKind::Mouse => 1,
+            DeviceKind::Keyboard => 2,
+            _ => 3,
+        },
+        _ => match row.kind() {
+            DeviceKind::Mouse => 0,
+            DeviceKind::Keyboard => 1,
+            _ => 2,
+        },
+    }
 }
 
 /// A name as the tooltip has room for it.
@@ -531,7 +578,7 @@ mod tests {
 
     #[test]
     fn the_menu_bar_shows_the_first_devices_and_one_running_out() {
-        let mut s = AppSettings::default();
+        let mut s = AppSettings { menu_bar_devices: 3, ..AppSettings::default() };
         let at = |id: &str, kind: DeviceKind, level: Option<i32>, charging: bool| {
             let mut r = row(id, kind, true);
             let c = r.current.as_mut().unwrap();
@@ -544,7 +591,7 @@ mod tests {
         };
         assert!(tray_view(&[], &s).bar.is_empty());
 
-        // Three places; fewer devices on the air, fewer shown
+        // Fewer devices on the air, fewer shown
         let headset = at("a", DeviceKind::Headset, Some(37), false);
         assert_eq!(levels(std::slice::from_ref(&headset), &s), ["37"]);
 
@@ -566,6 +613,8 @@ mod tests {
         // All five fit; one place shows the one running out
         s.menu_bar_devices = 5;
         assert_eq!(levels(&rows, &s), ["37", "62", "80", "54", "15"]);
+        s.menu_bar_devices = 2;
+        assert_eq!(levels(&rows, &s), ["37", "15"]);
         s.menu_bar_devices = 1;
         assert_eq!(levels(&rows, &s), ["15"]);
 
@@ -585,6 +634,50 @@ mod tests {
         let bar = tray_view(&rows, &s).bar;
         assert_eq!(bar.iter().map(|b| b.level.as_str()).collect::<Vec<_>>(), ["37", "", "≈9"]);
         assert_eq!(bar[2].tone, Tone::Bad);
+    }
+
+    #[test]
+    fn tray_priority_picks_preferred_kind_when_normal() {
+        let mut s = AppSettings::default();
+        let make = |id: &str, kind: DeviceKind, level: i32, via: &str| {
+            let mut r = row(id, kind, true);
+            let c = r.current.as_mut().unwrap();
+            c.level = Some(level);
+            c.via = via.to_string();
+            r
+        };
+        let rows = [
+            make("mouse", DeviceKind::Mouse, 85, "USB"),
+            make("kb", DeviceKind::Keyboard, 60, "USB"),
+            make("headset", DeviceKind::Headset, 40, "Bluetooth"),
+        ];
+        // Default ("mouse"): prefers mouse even though headset/keyboard have lower normal levels
+        assert_eq!(tray_view(&rows, &s).label, "85");
+        s.tray_priority = "keyboard".into();
+        let tray = tray_view(&rows, &s);
+        assert_eq!(tray.label, "60");
+        assert_eq!(tray.bar.len(), 1);
+        assert_eq!((tray.bar[0].kind, tray.bar[0].level.as_str()), (DeviceKind::Keyboard, "60"));
+        s.tray_priority = "headset".into();
+        assert_eq!(tray_view(&rows, &s).label, "40");
+        s.tray_priority = "bluetooth".into();
+        assert_eq!(tray_view(&rows, &s).label, "40");
+        s.tray_priority = "lowest".into();
+        assert_eq!(tray_view(&rows, &s).label, "40");
+        // Urgency still overrides priority when a non-preferred device drops to low
+        s.tray_priority = "mouse".into();
+        let urgent =
+            [make("mouse", DeviceKind::Mouse, 85, "USB"), make("headset", DeviceKind::Headset, 15, "Bluetooth")];
+        assert_eq!(tray_view(&urgent, &s).label, "15");
+        // Charging device with unknown percentage still shows in tray
+        let mut charging_only = row("mouse-charging", DeviceKind::Mouse, true);
+        charging_only.current.as_mut().unwrap().level = None;
+        charging_only.current.as_mut().unwrap().charging = true;
+        let with_kb = [charging_only, make("kb", DeviceKind::Keyboard, 80, "USB")];
+        let tray = tray_view(&with_kb, &s);
+        assert_eq!((tray.label.as_str(), tray.tone, tray.charging), ("⚡", Tone::Charge, true));
+        assert_eq!(tray.bar.len(), 1);
+        assert_eq!((tray.bar[0].kind, tray.bar[0].level.as_str(), tray.bar[0].power), (DeviceKind::Mouse, "", true));
     }
 
     #[test]

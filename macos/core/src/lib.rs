@@ -156,6 +156,12 @@ fn call(command: &Value) -> Value {
                 "menu_bar_devices" => {
                     app.edit(|s| s.menu_bar_devices = n.clamp(MENU_BAR_DEVICES.0, MENU_BAR_DEVICES.1))
                 }
+                "tray_battery_icon" => app.edit(|s| s.tray_battery_icon = on),
+                "tray_priority" => app.edit(|s| {
+                    s.tray_priority = str_of(command, "value").to_string();
+                    s.normalize();
+                }),
+                "hide_offline" => app.edit(|s| s.hide_offline = on),
                 other => return json!({ "error": format!("no setting {other}") }),
             }
         }

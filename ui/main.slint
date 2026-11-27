@@ -11,9 +11,9 @@ import { SettingsScreen, GeneralPage, RemindersPage, OverlayPage } from "setting
 export component MainWindow inherits Window {
     title: T.t("app.title");
     preferred-width: 440px;
-    preferred-height: 640px;
+    preferred-height: root.panel-height;
     min-width: 400px;
-    min-height: 420px;
+    min-height: root.screen == 0 ? 0px : 420px;
     background: Palette.window;
     // Chinese in its own font: the fallback Windows picks for Han on a non-Chinese system is Japanese, which lacks
     // the simplified characters. Microsoft YaHei UI has Latin and Cyrillic too.
@@ -36,10 +36,14 @@ export component MainWindow inherits Window {
     in property <bool> autostart;
     in property <bool> autostart-banner-dismissed;
     in property <bool> admin-banner;
+    in property <bool> animate-banners: true;
 
     // Settings / General
     in property <string> language;
     in property <string> theme;
+    in property <string> tray-priority;
+    in property <bool> tray-battery-icon;
+    in property <bool> hide-offline;
     in property <string> update-status;
     in property <string> update-checked-text;
     in property <string> update-notes;
@@ -79,6 +83,10 @@ export component MainWindow inherits Window {
     in-out property <int> screen: 0;
     in-out property <int> settings-tab: 0;
     in-out property <bool> hidden-open: false;
+    // The device list can shrink to its contents and keeps its original viewport limit for long lists.
+    out property <length> panel-height: root.screen == 0 ? min(640px, devices.panel-height) : 640px;
+    callback panel-height-changed();
+    changed panel-height => { root.panel-height-changed(); }
     // The window that says what granting admin rights does, before Windows asks
     in-out property <bool> admin-dialog: false;
     // What Rust reads
@@ -93,6 +101,9 @@ export component MainWindow inherits Window {
     callback check-updates();
     callback language-chosen(language: string);
     callback theme-chosen(theme: string);
+    callback tray-priority-chosen(priority: string);
+    callback tray-battery-icon-chosen(enabled: bool);
+    callback hide-offline-changed(on: bool);
     callback test-alert();
     callback open-folder();
     callback suggest-improvement();
@@ -335,6 +346,7 @@ export component MainWindow inherits Window {
                 banner-button-visible: root.banner-button-visible;
                 autostart-banner: !root.autostart && !root.autostart-banner-dismissed;
                 admin-banner: root.admin-banner;
+                animate-banners: root.animate-banners;
                 hidden-open <=> root.hidden-open;
                 refresh => { root.refresh(); }
                 open-settings => { root.open-settings(); }
@@ -376,6 +388,9 @@ export component MainWindow inherits Window {
                     autostart: root.autostart;
                     language: root.language;
                     theme: root.theme;
+                    tray-priority: root.tray-priority;
+                    tray-battery-icon: root.tray-battery-icon;
+                    hide-offline: root.hide-offline;
                     update-status: root.update-status;
                     update-checked-text: root.update-checked-text;
                     update-notes: root.update-notes;
@@ -386,6 +401,9 @@ export component MainWindow inherits Window {
                     autostart-changed(on) => { root.autostart-changed(on); }
                     language-chosen(language) => { root.language-chosen(language); }
                     theme-chosen(theme) => { root.theme-chosen(theme); }
+                    tray-battery-icon-chosen(enabled) => { root.tray-battery-icon-chosen(enabled); }
+                    tray-priority-chosen(priority) => { root.tray-priority-chosen(priority); }
+                    hide-offline-changed(on) => { root.hide-offline-changed(on); }
                     install-update => { root.install-update(); }
                     check-updates => { root.check-updates(); }
                     auto-update-changed(on) => { root.auto-update-changed(on); }
