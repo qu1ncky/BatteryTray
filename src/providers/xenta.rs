@@ -1,5 +1,5 @@
 //! Mice on the Xenta 2.4 GHz receiver 1D57:FA60 ("2.4G Wireless Device"): Attack Shark, FURYCUBE, Delux, Inphic,
-//! MAMBASNAKE; and the 8K receiver 1D57:FA65 of the Attack Shark X8 Pro, the Inphic IN10 MAX and others.
+//! MAMBASNAKE, IO; and the 8K receiver 1D57:FA65 of the Attack Shark X8 Pro, the Inphic IN10 MAX and others.
 //! Nothing is ever sent: the mouse pushes a 5-byte input report by itself
 //! about every 2 s on the receiver's collection with usage page 0x000A, and this only reads it, on its own
 //! GENERIC_READ handle:
@@ -24,7 +24,9 @@
 //! owner's notes in its issue 171) and Wireless-Device-Battery-Monitor (docs/inphic.md, src/drivers/misc_mice.cpp).
 //! The web driver's model table (its mouseNum and the brand folders of its pages) and a FURYCUBE G3's frame from
 //! furycube-g3-linux-bridge (HeyDSN, docs/PROTOCOL.md), which led to it; the In9 Pro's 0x95 from HaloBattery
-//! (HeyOkay, providers/inphic.py); own implementation.
+//! (HeyOkay, providers/inphic.py); the IO Nova SE's 0x47 from its owner's log (issue #53), its cable ID and its
+//! frames on its receiver and on its cable from another owner's USB captures (ferloom/Wireless-Device-Battery-Monitor,
+//! issue 172); own implementation.
 
 use super::{group_by, secs, Provider};
 use crate::hid::{self, HidDevice, HidInfo};
@@ -45,8 +47,8 @@ const RECEIVER_PID: u16 = 0xFA60;
 const RECEIVER_8K_PID: u16 = 0xFA65;
 const RECEIVER_PIDS: [u16; 2] = [RECEIVER_PID, RECEIVER_8K_PID];
 /// The mouse on its USB cable: FA55 is the X11, 2155 the mouse of Attack-Shark-Battery-KDE, FA71 the Delux M600 Pro,
-/// 2126 the X8 Pro.
-const WIRED_PIDS: [u16; 4] = [0xFA55, 0x2155, 0xFA71, 0x2126];
+/// 2126 the X8 Pro, 2015 the IO Nova SE.
+const WIRED_PIDS: [u16; 5] = [0xFA55, 0x2155, 0xFA71, 0x2126, 0x2015];
 const STATUS_PAGE: u16 = 0x000A;
 /// Where one firmware of the 8K receiver sends its frames.
 const VENDOR_STATUS: (u16, u16) = (0xFF00, 0x0001);
@@ -57,8 +59,9 @@ const BATTERY_FRAMES: [u8; 3] = [0x40, 0x41, 0x43];
 const ON_BATTERY: u8 = 0x01;
 const RECEIVER_ID: &str = "xenta:1d57:fa60";
 const DEVICE_NAME: &str = "Attack Shark";
-/// The brands a model's name starts with, the name a mouse is shown under.
-const BRANDS: [&str; 5] = [DEVICE_NAME, "FURYCUBE", "Delux", "Inphic", "MAMBASNAKE"];
+/// The brands a model's name starts with, the name a mouse is shown under. IO's comes with its Nova line: "IO"
+/// alone reads as "I/O".
+const BRANDS: [&str; 6] = [DEVICE_NAME, "FURYCUBE", "Delux", "Inphic", "MAMBASNAKE", "IO Nova"];
 /// How long a poll waits for a new listener's first reading, so the mouse doesn't show up as asleep for a moment:
 /// a reading takes two frames, 2 s apart.
 const FIRST_READING_WAIT: Duration = secs(5);
@@ -82,6 +85,7 @@ const MODELS: &[(u8, &str, bool)] = &[
     (0x66, "FURYCUBE G3", false),
     // An F1 Pro's frames carry the code the web driver has for the F3, not the F1's 0xC2
     (0x05, "FURYCUBE F1 Pro / F3", false),
+    (0x47, "IO Nova SE", false),
     // The web driver's (0x95: INPHIC HUB's, the In9 Pro's own app)
     (0x95, "Inphic In9 Pro", false),
     (0xC2, "FURYCUBE F1", false),
@@ -115,6 +119,8 @@ fn model(code: u8) -> Option<(&'static str, bool)> {
 /// Codes whose only captured frame is "on battery, 100%" - which is also the false frame every mouse sends when it
 /// links up, the ones that count in tens too - and the web driver's X6, whose 0x10 sibling counts in tens. A level of
 /// 10 or less from such a mouse may be tens, so it isn't shown until one of them has been seen at another level.
+/// Not the IO Nova SE, seen at 100% alone too: its captures hold that frame every 2 s, where a mouse that counts in
+/// tens sends 10 or less from the second frame on.
 const SCALE_UNPROVEN: [u8; 2] = [0x24, 0x85];
 
 /// Whose mouse sends this code. The model isn't shown: several send the same code.
@@ -630,6 +636,9 @@ mod tests {
         assert_eq!(parse(&[3, 0x08, 0x40, 3, 0x4E]), Some((0x08, Some(Battery { on_power: true, level: None }))));
         // The X8 Pro's DPI button
         assert_eq!(parse(&[3, 0x08, 0x10, 3, 0]), None);
+        // An IO Nova SE on its receiver and on its cable, at 100% both times
+        assert_eq!(parse(&[3, 0x47, 0x40, 1, 0x64]), Some((0x47, on_battery(100))));
+        assert_eq!(parse(&[3, 0x47, 0x40, 3, 0x64]), Some((0x47, Some(Battery { on_power: true, level: None }))));
     }
 
     #[test]
@@ -658,6 +667,8 @@ mod tests {
         // The mice whose levels owners have read keep their low ones
         assert_eq!(parse(&[3, 0x55, 0x40, 1, 6]), Some((0x55, on_battery(Some(6)))));
         assert_eq!(parse(&[3, 0x08, 0x40, 1, 10]), Some((0x08, on_battery(Some(10)))));
+        // So does the IO Nova SE: it held 100 frame after frame, which a mouse counting in tens doesn't
+        assert_eq!(parse(&[3, 0x47, 0x40, 1, 6]), Some((0x47, on_battery(Some(6)))));
         // The web driver's X6 may count in tens like the 0x10 one
         assert_eq!(parse(&[3, 0x85, 0x40, 1, 9]), Some((0x85, on_battery(None))));
         assert_eq!(parse(&[3, 0x85, 0x40, 1, 45]), Some((0x85, on_battery(Some(45)))));
@@ -697,7 +708,8 @@ mod tests {
         assert_eq!(name(RECEIVER_8K_PID, &on(0x08)), "Attack Shark");
         assert_eq!(name(RECEIVER_PID, &on(0xC2)), "FURYCUBE");
         assert_eq!(name(RECEIVER_PID, &on(0xBC)), "MAMBASNAKE");
-        // Before a code has come, and for a code nobody knows: the receivers are shared, a cable ID is Attack Shark's
+        assert_eq!(name(RECEIVER_PID, &on(0x47)), "IO Nova");
+        // Before a code has come, and for a code nobody knows: the receivers are shared, FA55 is Attack Shark's own
         let quiet = Status { running: true, online: false, code: None, battery: None, error: None };
         assert_eq!(name(RECEIVER_PID, &quiet), "Mouse");
         assert_eq!(name(RECEIVER_8K_PID, &quiet), "Mouse");

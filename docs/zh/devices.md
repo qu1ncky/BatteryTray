@@ -49,7 +49,7 @@
 | **AJAZZ AJ179 Pro** | 2.4 GHz 接收器 `3151:402D` | ✅ 已测试 |
 | 其他基于 Rongyuan 平台的鼠标：**Attack Shark**、Akko、MonsGeek 等，88 种接收器型号 | 2.4 GHz 接收器 | 支持 |
 | **Attack Shark V3 Pro** | 2.4 GHz 接收器 `1D57:FA60`，充电底座 | ✅ 已测试 |
-| 其他使用 Xenta 接收器的鼠标：**Attack Shark** X11、X11 SE、X11 Pro、X3、X3 Max、X3 Pro、X1、X6 / R1、V3、V6、X8 Pro、X8 SE、X8 Plus、G3 Pro；**FURYCUBE** F1、F1 Pro、F3、G3、G9、G9 PRO、G11、G13S；**Delux** M600 Pro / M900 Pro / M900 Mini；**Inphic** IN6 / IN6 SE、IN9 / IN9 Ultra / In9 Pro、IN10 / IN10 MAX、INX；**MAMBASNAKE** M3 | 2.4 GHz 接收器 `1D57:FA60` 或 `1D57:FA65`，或数据线 | 支持 |
+| 其他使用 Xenta 接收器的鼠标：**Attack Shark** X11、X11 SE、X11 Pro、X3、X3 Max、X3 Pro、X1、X6 / R1、V3、V6、X8 Pro、X8 SE、X8 Plus、G3 Pro；**FURYCUBE** F1、F1 Pro、F3、G3、G9、G9 PRO、G11、G13S；**Delux** M600 Pro / M900 Pro / M900 Mini；**Inphic** IN6 / IN6 SE、IN9 / IN9 Ultra / In9 Pro、IN10 / IN10 MAX、INX；**MAMBASNAKE** M3；**IO** Nova SE | 2.4 GHz 接收器 `1D57:FA60` 或 `1D57:FA65`，或数据线 | 支持 |
 | **VXE / VGN** R1 PRO / PRO MAX、R1 SE / SE+、Dragonfly R1、Dragonfly F2 | 2.4 GHz 接收器或数据线 | 支持 |
 | **ATK A9 Ultra Max 2.0** | 2.4 GHz 接收器 `373B:11FE` | 支持 |
 | 使用其 1K、8K 和 NearLink 接收器的其他 **ATK** 鼠标（X1、A9、F1、U2 系列等）、ATK ZERO、VXE R1 NK | 2.4 GHz 接收器；X1 Pro Max、A9 Plus、A9 Ultimate、A9 Mini+、F1 Ultimate 2.0 也可用数据线 | 支持 |
@@ -116,7 +116,7 @@
 - **Attack Shark / Rongyuan 鼠标**插上数据线后会离开接收器，通过数据线也不报告电量（厂商自己的驱动同样不显示），因此显示为充电中；拔掉数据线后，接收器会报告真实电量。
 - **Attack Shark X82 PRO HE** 键盘用数据线充电时仍连接在接收器上，但此时报告的电量比实际高 20–30%，拔掉数据线后又恢复正确。很可能是键盘根据电池电压估算电量，而充电会抬高电压。没有任何信息能说明键盘插着线：接收器的回复不变，也不会出现新的 USB 设备，厂商自己的驱动显示的也是同样偏高的电量。因此数字按原样显示（[#5](https://github.com/qu1ncky/BatteryTray/issues/5)）。
 - **AJAZZ T520 Max** 充电时会在电池充满之前就报告 100%，所以充电时只显示充电标志，不显示数字。
-- **使用 Xenta 接收器的鼠标**（`1D57:FA60`：Attack Shark、FURYCUBE、Delux、Inphic、MAMBASNAKE）每 2 秒自己发送一次电量；BatteryTray 只是监听，不向它们发送任何内容。插线或放在充电底座上时，它们发送的数字会停住不变，因此这时显示充电标志，鼠标离开充电器几秒后会恢复真实电量。型号由这些消息中的代码区分：代码未知的鼠标会显示为无电量，它的消息会写入日志——请把 `%LOCALAPPDATA%\BatteryTray\log.txt` 中的 `Xenta` 行发到 [Issues](https://github.com/qu1ncky/BatteryTray/issues)，以便添加支持。
+- **使用 Xenta 接收器的鼠标**（`1D57:FA60`：Attack Shark、FURYCUBE、Delux、Inphic、MAMBASNAKE、IO）每 2 秒自己发送一次电量；BatteryTray 只是监听，不向它们发送任何内容。插线或放在充电底座上时，它们发送的数字会停住不变，因此这时显示充电标志，鼠标离开充电器几秒后会恢复真实电量。型号由这些消息中的代码区分：代码未知的鼠标会显示为无电量，它的消息会写入日志——请把 `%LOCALAPPDATA%\BatteryTray\log.txt` 中的 `Xenta` 行发到 [Issues](https://github.com/qu1ncky/BatteryTray/issues)，以便添加支持。
 - **分档显示的电量**。有些设备只报告少数几档电量，所以百分比按档跳变：较老的 ASUS ROG 鼠标每档 25%，使用 Areson `FA07` / `FA08` 接收器的鼠标和 Ardor Renegade 每档 10%，VAXEE 鼠标每档 5%，Flydigi 手柄有自己的分档；Xbox 手柄只有 4 档（通过 Xbox 无线适配器和经典蓝牙），Switch 手柄有 5 档。Finalmouse 的电量是估算值，带“≈”显示，所有根据电池电压估算的电量也是如此。
 - **使用 SONiX 接收器的键盘**不报告是否在充电，所以没有充电标志。
 - **多个品牌共用的接收器**。许多廉价 2.4 GHz 接收器在毫不相关的产品中使用相同的 USB ID。使用这类 ID 的设备在第一次回复后才会出现在列表中，以免有人的列表里出现一把自己并没有的“休眠”键盘；在此之前，询问它的间隔会越来越长。如果你的设备在表中却没有出现，请唤醒它并等一分钟；如果仍然没有，请把 `log.txt` 发到 [Issues](https://github.com/qu1ncky/BatteryTray/issues)。
