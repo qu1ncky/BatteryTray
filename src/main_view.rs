@@ -101,7 +101,7 @@ impl MainView {
     /// The app mode changed (Windows', or the theme picked in the settings): the window and its title bar follow it.
     pub fn follow_theme(&self) {
         let light = theme::current().apps_light;
-        gui::set_theme(&self.ui, light);
+        gui::fade_theme(&self.ui, light);
         if gui::hwnd(self.ui.window()).is_some() {
             gui::set_title_bar(self.ui.window(), light);
         } else {
