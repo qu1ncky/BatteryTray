@@ -21,7 +21,9 @@
 //!   the first 62 in the last two. Read back: 01 08 81 01 xx xx PP once answered (02 / 05 while pending).
 //! MCHOSE, FF01:0001. M HUB's older generation: feature report 11 (20 bytes) or 12 (64), every byte inverted:
 //!   11 F9 FF.. reads back as 11 F9 and, inverted, vendor, model, firmware (4), flags, percent, charging. Zeros mean
-//!   "not yet" or a sleeping mouse. The newer one: output 4D 01 01 00 00 09 00 00 08 (read 0900, xor checksum) ->
+//!   "not yet" or a sleeping mouse. The short report is asked first and the long one when it brought no status: an
+//!   A5 Ultra behind the 3837:100C receiver was read on the long one, with Realtek's 0BDA as the vendor (its owner's
+//!   capture). The newer one: output 4D 01 01 00 00 09 00 00 08 (read 0900, xor checksum) ->
 //!   input 4D 01 FF LL 00 09 00 00 data.. xor; data [10] link (0 = mouse away), [11] 1 = charging, [12] percent;
 //!   a single FF as data = the mouse can't be reached.
 //! ATK / VXE "BitMouse", FF05:0001: output 08 KK 72 02 00 TT CC 01 .. (KK the sum of what follows, TT 1 = the mouse
@@ -874,8 +876,9 @@ fn pulsar(io: &mut Io) -> sys::Result<State> {
 const MCHOSE_SHORT: u8 = 0x11;
 const MCHOSE_LONG: u8 = 0x12;
 const MCHOSE_STATUS: u8 = 0x06;
-/// The vendor field of a status: 5253 from the older line, 3837 or 41E4 from the receivers under 3837.
-const MCHOSE_VENDORS: [u16; 3] = [0x5253, 0x3837, 0x41E4];
+/// The vendor field of a status: 5253 from the older line, 3837 or 41E4 from the receivers under 3837, and 0BDA
+/// (Realtek's own ID) from an A5 Ultra behind the 100C receiver.
+const MCHOSE_VENDORS: [u16; 4] = [0x5253, 0x3837, 0x41E4, 0x0BDA];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MchoseStatus {
@@ -923,43 +926,59 @@ fn mchose_name(product: Option<&str>) -> String {
     }
 }
 
-fn mchose_v2(io: &mut Io) -> sys::Result<State> {
-    let name = mchose_name(io.info().product.as_deref());
-    let mut echoed = false;
-    // M HUB reads the status on the short report; the long one is what answered on some receivers
+/// What the two reports say between them: the level once one of them carried it, Empty when all that came was an
+/// echo of the request, Other when not even that. `exchange` sends the request on a report and reads what comes
+/// back, None when the report isn't taken.
+///
+/// M HUB reads the status on the short report. Some receivers only echo the request there and answer on the long
+/// one (an A5 Ultra behind 3837:100C), so the long one is asked whenever the short one brought no level, echo or
+/// not.
+fn mchose_v2_read(mut exchange: impl FnMut(u8) -> Option<MchoseStatus>) -> MchoseStatus {
+    let mut all = MchoseStatus::Other;
     for report in [MCHOSE_SHORT, MCHOSE_LONG] {
-        let request = mchose_v2_request(report);
         let mut seen = None;
         // The request is sent again for every read: a second read only returns the request. About every other
         // exchange carries the answer. The buffer can be caught half written, so an answer is taken at once only
         // when the one before said the same; failing that, the last one stands.
         for _ in 0..6 {
-            if !io.set_feature(&request) {
-                break;
-            }
-            sleep_ms(100);
-            match io.get_feature(report).map(|r| mchose_v2_status(&r)) {
-                Some(MchoseStatus::Level { model, level, charging }) => {
-                    let agrees = seen == Some((model, level, charging));
-                    seen = Some((model, level, charging));
+            match exchange(report) {
+                Some(level @ MchoseStatus::Level { .. }) => {
+                    let agrees = seen == Some(level);
+                    seen = Some(level);
                     if agrees {
                         break;
                     }
                 }
-                Some(MchoseStatus::Empty) => echoed = true,
-                _ => {}
+                Some(MchoseStatus::Empty) => all = MchoseStatus::Empty,
+                Some(MchoseStatus::Other) => {}
+                None => break,
             }
         }
-        if let Some((model, level, charging)) = seen {
-            // The mouse names its model itself, also through a receiver that several models ship with
-            let known = MCHOSE_MODELS.iter().find(|m| m.0 == model).map(|m| m.1.to_string());
-            return Ok(State { name: Some(known.unwrap_or(name)), ..battery(level, charging) });
-        }
-        if echoed {
-            break;
+        if let Some(level) = seen {
+            return level;
         }
     }
-    Ok(State { name: Some(name), ..if echoed { asleep() } else { off() } })
+    all
+}
+
+fn mchose_v2(io: &mut Io) -> sys::Result<State> {
+    let name = mchose_name(io.info().product.as_deref());
+    let status = mchose_v2_read(|report| {
+        if !io.set_feature(&mchose_v2_request(report)) {
+            return None;
+        }
+        sleep_ms(100);
+        Some(io.get_feature(report).map_or(MchoseStatus::Other, |r| mchose_v2_status(&r)))
+    });
+    Ok(match status {
+        MchoseStatus::Level { model, level, charging } => {
+            // The mouse names its model itself, also through a receiver that several models ship with
+            let known = MCHOSE_MODELS.iter().find(|m| m.0 == model).map(|m| m.1.to_string());
+            State { name: Some(known.unwrap_or(name)), ..battery(level, charging) }
+        }
+        MchoseStatus::Empty => State { name: Some(name), ..asleep() },
+        MchoseStatus::Other => State { name: Some(name), ..off() },
+    })
 }
 
 const MCHOSE_V3_REPORT: u8 = 0x4D;
@@ -1629,6 +1648,57 @@ mod tests {
             mchose_v2_status(&mchose_reply("E4 41 00 00 01 02 03 04 09 2D 01")),
             MchoseStatus::Level { model: 0, level: 45, charging: true }
         );
+    }
+
+    #[test]
+    fn mchose_a5_ultra_names_realtek_as_its_vendor() {
+        // Captured by its owner on the 3837:100C receiver, in answer to the long request: vendor 0BDA, model 4762,
+        // 60%, not charging, while M HUB showed 61%
+        let reply = pad(65, &h("11 F9 25 F4 9D B8 FF FD F5 FC F6 C3 FF C0"));
+        assert_eq!(mchose_v2_status(&reply), MchoseStatus::Level { model: 0x4762, level: 60, charging: false });
+    }
+
+    const A5_ULTRA: MchoseStatus = MchoseStatus::Level { model: 0x4762, level: 60, charging: false };
+
+    /// What a poll comes to when the short and the long report answer like this, each list over and over (an empty
+    /// one: the report isn't taken), and how many times each report was asked.
+    fn mchose_poll(short: &[MchoseStatus], long: &[MchoseStatus]) -> (MchoseStatus, (usize, usize)) {
+        let mut asked = (0, 0);
+        let read = mchose_v2_read(|report| {
+            let (answers, count) = if report == MCHOSE_SHORT { (short, &mut asked.0) } else { (long, &mut asked.1) };
+            *count += 1;
+            (!answers.is_empty()).then(|| answers[(*count - 1) % answers.len()])
+        });
+        (read, asked)
+    }
+
+    #[test]
+    fn mchose_long_report_is_asked_when_the_short_one_only_echoes() {
+        // The A5 Ultra behind the 100C receiver as its owner describes it: the short request comes back as it was
+        // sent, the long one is answered
+        assert_eq!(mchose_poll(&[MchoseStatus::Empty], &[MchoseStatus::Empty, A5_ULTRA]), (A5_ULTRA, (6, 4)));
+        // A receiver that doesn't take the short report at all
+        assert_eq!(mchose_poll(&[], &[A5_ULTRA]), (A5_ULTRA, (1, 2)));
+    }
+
+    #[test]
+    fn mchose_short_report_that_answers_is_not_followed_by_the_long_one() {
+        assert_eq!(mchose_poll(&[MchoseStatus::Empty, A5_ULTRA], &[A5_ULTRA]), (A5_ULTRA, (4, 0)));
+        // A level no second read agrees with still stands: the last one
+        let later = MchoseStatus::Level { model: 0x4762, level: 59, charging: false };
+        let other = MchoseStatus::Other;
+        assert_eq!(mchose_poll(&[A5_ULTRA, other, other, later, other, other], &[A5_ULTRA]), (later, (6, 0)));
+    }
+
+    #[test]
+    fn mchose_without_a_level_an_echo_on_either_report_is_a_sleeping_mouse() {
+        let (echo, other) = (MchoseStatus::Empty, MchoseStatus::Other);
+        assert_eq!(mchose_poll(&[echo], &[echo]), (echo, (6, 6)));
+        assert_eq!(mchose_poll(&[echo], &[other]), (echo, (6, 6)));
+        assert_eq!(mchose_poll(&[other], &[echo]), (echo, (6, 6)));
+        // Neither a level nor an echo: the receiver has no mouse to speak for
+        assert_eq!(mchose_poll(&[other], &[other]), (other, (6, 6)));
+        assert_eq!(mchose_poll(&[], &[]), (other, (1, 1)));
     }
 
     #[test]
