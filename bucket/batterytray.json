@@ -1,13 +1,13 @@
 {
-    "version": "2.4.3",
+    "version": "2.4.4",
     "description": "Battery level of wireless headsets, mice, keyboards and controllers in the Windows tray, with low battery reminders.",
     "homepage": "https://github.com/qu1ncky/BatteryTray",
     "license": "MIT",
     "notes": "BatteryTray updates itself. To start it with Windows, use \"Enable\" on the banner above the device list.",
     "architecture": {
         "64bit": {
-            "url": "https://github.com/qu1ncky/BatteryTray/releases/download/v2.4.3/BatteryTray.exe",
-            "hash": "ce45ba4ed8f1bc796aa13b634aaec82077b565079584f019f203f02faa6febb1"
+            "url": "https://github.com/qu1ncky/BatteryTray/releases/download/v2.4.4/BatteryTray.exe",
+            "hash": "065ca802edcca14f2dbbdd0bb0904a947567070e2ab4536a9ccf5f4880144e38"
         }
     },
     "bin": "BatteryTray.exe",
