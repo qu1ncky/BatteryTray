@@ -5,11 +5,11 @@
 //! device's name. A paired device that isn't connected has no level; once this session has had one from it, it is
 //! listed as offline, as Windows lists a device whose level it still holds.
 
-use super::kind_by_name;
+use super::kind_by_minor_type;
 use crate::loc::tf;
 use crate::log;
 use crate::mac::{items_of, number_of, string_of, value_of, CFTypeRef, Cf};
-use crate::reading::{DeviceKind, DeviceReading};
+use crate::reading::DeviceReading;
 use serde_json::Value;
 use std::collections::HashSet;
 use std::ffi::{c_char, c_void};
@@ -187,7 +187,7 @@ pub fn readings(report: &Value, accessories: &[Accessory], seen: &HashSet<String
                 if !connected && !seen.contains(&id) {
                     continue;
                 }
-                let kind = kind_of(device.get("device_minorType").and_then(Value::as_str), name);
+                let kind = kind_by_minor_type(device.get("device_minorType").and_then(Value::as_str), name);
                 result.push(DeviceReading {
                     online: connected,
                     level: battery.level().filter(|_| connected),
@@ -284,21 +284,10 @@ extern "C" {
     fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
 }
 
-fn kind_of(minor_type: Option<&str>, name: &str) -> DeviceKind {
-    match minor_type.unwrap_or("").to_ascii_lowercase().as_str() {
-        "headphones" | "headset" | "speaker" | "loudspeaker" | "portable audio" | "hifi audio" | "car audio" => {
-            DeviceKind::Headset
-        }
-        "mouse" | "trackpad" | "pointing device" => DeviceKind::Mouse,
-        "keyboard" | "keypad" => DeviceKind::Keyboard,
-        "gamepad" | "game controller" | "joystick" => DeviceKind::Gamepad,
-        _ => kind_by_name(name),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::reading::DeviceKind;
 
     fn report() -> Value {
         serde_json::json!({ "SPBluetoothDataType": [{
@@ -311,7 +300,11 @@ mod tests {
                     "device_minorType": "Headphones" } },
                 { "iPhone": { "device_address": "B4:55:75:00:00:03", "device_rssi": "-50" } },
                 { "Razer Barracuda X (BT)": { "device_address": "44:5E:CD:52:31:8B", "device_minorType": "Headset",
-                    "device_services": "0x800019 < HFP AVRCP A2DP ACL >" } }
+                    "device_services": "0x800019 < HFP AVRCP A2DP ACL >" } },
+                // The keyboard of issue #52 as its owner's Mac lists it: a mouse by its type, and no level of its own
+                { "MX Keys": { "device_address": "E4:8C:73:00:00:06", "device_vendorID": "0x046D",
+                    "device_productID": "0xB35B", "device_minorType": "Mouse",
+                    "device_services": "0x400020 < HID BLE >" } }
             ],
             "device_not_connected": [
                 { "Keychron K6": { "device_address": "DC:2C:26:00:00:04", "device_minorType": "Keyboard" } },
@@ -333,6 +326,7 @@ mod tests {
             accessory("MX Ergo", "Single", 10, false),
             // A device that isn't connected shows no level
             accessory("Keychron K6", "Single", 50, false),
+            accessory("MX Keys", "Single", 60, false),
         ];
         let all = readings(&report(), &accessories, &seen);
         let shown: Vec<_> =
@@ -343,6 +337,8 @@ mod tests {
                 ("bt:D12C26383890", "MX Ergo", DeviceKind::Mouse, true, Some(85), false),
                 ("bt:70AED5000002", "AirPods Pro", DeviceKind::Headset, true, Some(90), false),
                 ("bt:445ECD52318B", "Razer Barracuda X (BT)", DeviceKind::Headset, true, Some(40), true),
+                // A keyboard by its name, a mouse by the type macOS gives it; its level is among the power sources
+                ("bt:E48C73000006", "MX Keys", DeviceKind::Keyboard, true, Some(60), false),
                 // Not connected: only the one this session had a level from
                 ("bt:DC2C26000004", "Keychron K6", DeviceKind::Keyboard, false, None, false),
             ]
