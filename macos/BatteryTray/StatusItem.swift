@@ -9,7 +9,6 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private let model: AppModel
     /// The devices the item shows now: an unchanged snapshot doesn't draw it again
     private var shown: [BarSlot]?
-    private var appearanceObservation: NSKeyValueObservation?
 
     init(model: AppModel) {
         self.model = model
@@ -22,10 +21,11 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         item.isVisible = true
         item.button?.imagePosition = .imageOnly
         update(model.snapshot?.tray)
-        // The menu bar is light or dark by the wallpaper under it: drawn again in the colors of the new one
-        appearanceObservation = item.button?.observe(\.effectiveAppearance) { [weak self] _, _ in
-            Task { @MainActor in self?.draw() }
-        }
+        // Nothing watches the menu bar's appearance (light or dark by the wallpaper under it, each display's its
+        // own): the picture takes its colors as it is drawn (`MenuBarLabel`), in the appearance AppKit draws it in.
+        // A new picture on every change of the button's effectiveAppearance kept the main thread busy for good with
+        // a second display, whose copy of the item AppKit draws in that display's appearance: drawing the copy changed
+        // the appearance, the new picture had the copy drawn again (#57).
     }
 
     /// Where the item is on the screen: the device window opens under it.
@@ -126,8 +126,9 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
 /// The menu bar item's picture: each device's kind as its symbol, then its level without "%" and a lightning while it
 /// charges, in the menu bar's own text color; a level below the device's reminder or critical level in the app's
-/// orange or red, the only color in it. "--" when no device has a level. Drawn when it is shown, so its colors are the
-/// menu bar's appearance of the moment (light or dark by the wallpaper, not the windows' theme).
+/// orange or red, the only color in it. "--" when no device has a level. Drawn whenever it is shown, so its colors are
+/// those of the menu bar it is shown in at that moment (light or dark by the wallpaper, not the windows' theme): on
+/// each display its own, without drawing it anew.
 enum MenuBarLabel {
     /// Between a symbol and its level, a level and its lightning, and two devices
     static let symbolGap: CGFloat = 3
