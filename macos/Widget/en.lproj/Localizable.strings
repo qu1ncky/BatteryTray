@@ -1,0 +1,20 @@
+/* The widgets' own texts. Their names and descriptions are what the widget gallery shows, in the system's language;
+   the rest is shown in the app's language. The texts of devices come from the app (src/loc.rs). */
+
+"next.name" = "Charge Next";
+"next.description" = "See which device to charge first. Only low battery is shown in color.";
+"next.color.name" = "Charge Next · Color";
+"next.color.description" = "See which device to charge first. Every battery level is shown in color.";
+"rings.name" = "Rings";
+"rings.description" = "Keep track of the battery of your headsets, mice, keyboards and gamepads. Only low battery is shown in color.";
+"rings.color.name" = "Rings · Color";
+"rings.color.description" = "Keep track of the battery of your headsets, mice, keyboards and gamepads. Every battery level is shown in color.";
+"list.name" = "List";
+"list.description" = "All your devices in a list, with the ones not connected. Only low battery is shown in color.";
+"list.color.name" = "List · Color";
+"list.color.description" = "All your devices in a list, with the ones not connected. Every battery level is shown in color.";
+
+"empty.title" = "No devices";
+"empty.hint" = "Connect a headset, mouse or keyboard";
+"closed.title" = "BatteryTray is closed";
+"closed.hint" = "Click to open";

@@ -5,11 +5,13 @@
 #   taskbar-<lang>.gif          the same on the Windows taskbar
 #   reminder-<lang>.png         the reminder, its line of the time left at 70%
 #   overlay-<lang>.png          the overlay over a game
+#   widgets-<lang>.png          the Mac desktop widgets, monochrome, with the demo's devices
 #   install-windows-<lang>.png, install-macos-<lang>.png   where to click on the first start
 #
 # The Mac parts are drawn on this Mac: the app is built (macos/build.sh native) and draws its windows with the demo's
 # devices (`--snapshot <folder> <lang> dark frames`), so for a minute or two its windows come and go on the screen and
-# take the focus. The Windows parts come from a Desktop workflow run (its desktop-windows-2025 artifact: the snapshot
+# take the focus; the widgets are drawn by their own views with the demo's devices from the core it builds
+# (macos/readme-widgets.swift), off screen. The Windows parts come from a Desktop workflow run (its desktop-windows-2025 artifact: the snapshot
 # example's windows at 150% and strip_probe's frames): the newest successful one of the current branch, or of main, or
 # the run given as the argument. The scenes around them are drawn by macos/readme-pictures.swift.
 #
@@ -44,6 +46,13 @@ echo "== the Mac app"
 "$ROOT/macos/build.sh" native
 APP="$ROOT/target/macos/BatteryTray.app/Contents/MacOS/BatteryTray"
 swiftc -O "$ROOT/macos/readme-pictures.swift" -o "$WORK/compose"
+swiftc -O -swift-version 5 -parse-as-library -target "$(uname -m)-apple-macos14.0" \
+  -import-objc-header "$ROOT/macos/BatteryTray/core.h" "$ROOT/macos/BatteryTray/Core.swift" \
+  "$ROOT/macos/Widget/Feed.swift" "$ROOT/macos/Widget/Views.swift" "$ROOT/macos/readme-widgets.swift" \
+  -L "$ROOT/target/$(uname -m | sed 's/arm64/aarch64/')-apple-darwin/release" -lbatterytray_macos \
+  -framework IOKit -framework CoreFoundation -framework Foundation -framework AppKit -framework SwiftUI \
+  -framework Carbon -framework GameController -framework UserNotifications -framework CoreAudio \
+  -framework UniformTypeIdentifiers -framework WidgetKit -o "$WORK/widgets"
 
 # One GIF from a folder of frames (f000.png, …): every frame shares one palette, and only what changes is redrawn.
 # The menu bar and the taskbar step every 0.45 s, rest at the critical level and charge faster.
@@ -76,6 +85,8 @@ for lang in en ru zh; do
   gif "$WORK/taskbar-$lang" "$OUT/taskbar-$lang.gif" bar
   "$WORK/compose" reminder "$WORK/mac-$lang/reminder-70.png" "$lang" "$OUT/reminder-$lang.png"
   "$WORK/compose" overlay "$WORK/windows/windows-$lang-150/overlay.png" "$OUT/overlay-$lang.png"
+  "$WORK/widgets" "$lang" "$WORK/widgets-$lang.png"
+  "$WORK/compose" widgets "$WORK/widgets-$lang.png" "$lang" "$OUT/widgets-$lang.png"
   "$WORK/compose" install "$lang" "$OUT"
 done
 echo "== $OUT"

@@ -7,52 +7,68 @@ export global Palette {
     // Windows' light app mode: Rust sets it for each window and follows a change. The overlay never gets it: it
     // stays dark over games.
     in property <bool> light;
-    out property <color> window: light ? #F3F3F3 : #202020;
-    out property <color> card: light ? #FBFBFB : #2B2B2B;
-    out property <color> stroke: light ? #E5E5E5 : #363636;
+    // The colours' place between the dark ones (0) and the light ones (1). One of the two for a window in its
+    // colours; while an open window follows a change of `light`, Rust takes it from one to the other in the time
+    // Windows takes to recolour the title bar (gui::fade_theme), so that the window and its title bar change together.
+    in property <float> mix;
+    out property <color> window: pick(#F3F3F3, #202020);
+    out property <color> card: pick(#FBFBFB, #2B2B2B);
+    out property <color> stroke: pick(#E5E5E5, #363636);
     // A card marked as the one being worked on (its menu open, its name being typed): one step stronger than `stroke`
-    out property <color> stroke-strong: light ? #D1D1D1 : #4A4A4A;
-    out property <color> control: light ? #FEFEFE : #323232;
+    out property <color> stroke-strong: pick(#D1D1D1, #4A4A4A);
+    out property <color> control: pick(#FEFEFE, #323232);
     // Light: see-through black rather than a grey, so a hover shows the same on the window, a card and a popup. A
     // control's fill gives way to them, and what shows through is only what the control sits on.
-    out property <color> control-hover: light ? #0000000A : #3B3B3B;
-    out property <color> control-pressed: light ? #00000006 : #2A2A2A;
-    out property <color> input: light ? #FFFFFF : #1F1F1F;
-    out property <color> text: light ? #1A1A1A : #F3F3F3;
-    out property <color> secondary: light ? #5F5F5F : #9E9E9E;
-    out property <color> track: light ? #E0E0E0 : #404040;
-    out property <color> accent: light ? #005FB8 : #60CDFF;
-    out property <color> accent-hover: light ? #1A6FBF : #85D9FF;
+    out property <color> control-hover: pick(#0000000A, #3B3B3B);
+    out property <color> control-pressed: pick(#00000006, #2A2A2A);
+    out property <color> input: pick(#FFFFFF, #1F1F1F);
+    out property <color> text: pick(#1A1A1A, #F3F3F3);
+    out property <color> secondary: pick(#5F5F5F, #9E9E9E);
+    out property <color> track: pick(#E0E0E0, #404040);
+    out property <color> accent: pick(#005FB8, #60CDFF);
+    out property <color> accent-hover: pick(#1A6FBF, #85D9FF);
     // Text and glyphs on an accent fill (the accent buttons, selected text)
-    out property <color> on-accent: light ? #FFFFFF : #000000;
+    out property <color> on-accent: pick(#FFFFFF, #000000);
     // The levels' colours; view::Tone::rgb has the same for the tray
-    out property <color> good: light ? #0F7B0F : #6CCB5F;
-    out property <color> warn: light ? #9D5D00 : #F7C04A;
-    out property <color> bad: light ? #C42B1C : #FF6B6B;
-    out property <color> offline: light ? #8A8A8A : #7A7A7A;
+    out property <color> good: pick(#0F7B0F, #6CCB5F);
+    out property <color> warn: pick(#9D5D00, #F7C04A);
+    out property <color> bad: pick(#C42B1C, #FF6B6B);
+    out property <color> offline: pick(#8A8A8A, #7A7A7A);
     // Menus, dropdown lists, tooltips and key caps
-    out property <color> popup: light ? #F9F9F9 : #2C2C2C;
-    out property <color> popup-stroke: light ? #DEDEDE : #4A4A4A;
+    out property <color> popup: pick(#F9F9F9, #2C2C2C);
+    out property <color> popup-stroke: pick(#DEDEDE, #4A4A4A);
     // Under what floats over the window: menus, dropdown lists and the dialog; the tooltip; the lifted card
-    out property <color> shadow: light ? rgba(0, 0, 0, 0.14) : rgba(0, 0, 0, 0.5);
-    out property <color> tip-shadow: light ? rgba(0, 0, 0, 0.14) : rgba(0, 0, 0, 0.45);
-    out property <color> lift-shadow: light ? rgba(0, 0, 0, 0.14) : rgba(0, 0, 0, 0.55);
+    out property <color> shadow: pick(rgba(0, 0, 0, 0.14), rgba(0, 0, 0, 0.5));
+    out property <color> tip-shadow: pick(rgba(0, 0, 0, 0.14), rgba(0, 0, 0, 0.45));
+    out property <color> lift-shadow: pick(rgba(0, 0, 0, 0.14), rgba(0, 0, 0, 0.55));
     // The name of a device without connection
-    out property <color> dim-text: light ? #474747 : #B4B4B4;
+    out property <color> dim-text: pick(#474747, #B4B4B4);
     // The window's colour at half strength: laid over a block it fades it as a whole, which `opacity` doesn't do
     // with the software renderer (it fades every shape on its own, and overlapping ones show through each other)
-    out property <color> scrim: light ? #F3F3F380 : #20202080;
+    out property <color> scrim: pick(#F3F3F380, #20202080);
     // Behind the dialog: the window steps back
-    out property <color> dialog-scrim: light ? #0000004D : #000000A0;
+    out property <color> dialog-scrim: pick(#0000004D, #000000A0);
     // The place a dragged device would drop into
-    out property <color> accent-wash: light ? rgba(0, 95, 184, 0.06) : rgba(96, 205, 255, 0.06);
+    out property <color> accent-wash: pick(rgba(0, 95, 184, 0.06), rgba(96, 205, 255, 0.06));
     // A switch: the frame and the knob when off, the knob when on (on the accent)
-    out property <color> switch-stroke: light ? #8B8B8B : #9A9A9A;
-    out property <color> knob-off: light ? #5F5F5F : #CFCFCF;
-    out property <color> knob-on: light ? #FFFFFF : #1A1A1A;
+    out property <color> switch-stroke: pick(#8B8B8B, #9A9A9A);
+    out property <color> knob-off: pick(#5F5F5F, #CFCFCF);
+    out property <color> knob-on: pick(#FFFFFF, #1A1A1A);
     // A slider's knob and its frame
-    out property <color> thumb: light ? #FFFFFF : #454545;
-    out property <color> thumb-stroke: light ? #CCCCCC : #555555;
+    out property <color> thumb: pick(#FFFFFF, #454545);
+    out property <color> thumb-stroke: pick(#CCCCCC, #555555);
+
+    // A colour's light and dark values: the one of them at either end of `mix`, exactly, and evenly from one to the
+    // other in between, as Windows fades a title bar
+    pure function pick(in-light: color, in-dark: color) -> color {
+        if (self.mix >= 1) {
+            return in-light;
+        }
+        if (self.mix <= 0) {
+            return in-dark;
+        }
+        in-light.mix(in-dark, self.mix)
+    }
 
     // A level's colour by its tone (view::Tone::index): good, warn, bad, charging, no level
     public pure function tone(index: int) -> color {
@@ -112,13 +128,22 @@ export component NewBadge inherits Rectangle {
     border-radius: self.height / 2;
     border-width: 1px;
     border-color: Palette.accent;
+    // How far the word's letters rise from their baseline: a word in small letters alone ("новое") as far as an x,
+    // any other ("New", "新") as far as a capital
+    property <bool> small-letters: label.text == label.text.to-lowercase() && label.text != label.text.to-uppercase();
+    property <length> rise: self.small-letters ? label.font-metrics.x-height : label.font-metrics.cap-height;
     label := Text {
         text: T.t("settings.new");
         font-size: 11px;
         font-weight: 600;
         color: Palette.accent;
         horizontal-alignment: center;
-        vertical-alignment: center;
+        vertical-alignment: top;
+        height: self.preferred-height;
+        // The letters in the capsule's middle, not their line: a line keeps more room above its letters than below
+        // them, so a word without a tall letter sat a pixel and a half low. The line, where the font doesn't say
+        // how tall its letters are.
+        y: root.rise > 0 ? (parent.height + root.rise) / 2 - self.font-metrics.ascent : (parent.height - self.height) / 2;
     }
 }
 

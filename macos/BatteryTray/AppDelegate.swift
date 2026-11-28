@@ -1,6 +1,7 @@
 import AppKit
 import Combine
 import SwiftUI
+import WidgetKit
 
 /// The app around the core: the menu bar item, the windows, the reminder, the overlay and its shortcut, notices and
 /// sounds, the timers, and what the core asks for.
@@ -205,6 +206,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             case "restart":
                 restart(background: effect["background"] as? Bool ?? true)
+            case "widget_reload":
+                // The desktop widgets read their devices afresh (macos/Widget)
+                WidgetCenter.shared.reloadAllTimelines()
             default:
                 break
             }
@@ -283,7 +287,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         saveTimer?.invalidate()
         overlay.hide()
         overlay.release()
-        Core.call(["cmd": "quit"])
+        // The widgets then say the app is closed: the request has a moment to leave before the app does
+        let closing = Core.call(["cmd": "quit"])["effects"] as? [[String: Any]] ?? []
+        if closing.contains(where: { $0["type"] as? String == "widget_reload" }) {
+            WidgetCenter.shared.reloadAllTimelines()
+            Thread.sleep(forTimeInterval: 0.2)
+        }
         reminder.close()
         testReminder?.close()
     }

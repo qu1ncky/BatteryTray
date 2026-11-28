@@ -29,6 +29,15 @@
 
 Turned on in **Settings → Overlay**, a shortcut (**Ctrl+Alt+V** on Windows and **⌃⌥V** on a Mac, or one of your own) shows the connected devices for five seconds on the screen you're working on, over games and full-screen apps, without taking the focus or the mouse. Press it again to restart the timer, or choose to show it until pressed again. Pick a corner of the screen and preview it before turning it on. Devices of the same kind are shown with their names.
 
+## Widgets on the Mac desktop
+
+On macOS 14 or later: right-click the desktop → **Edit Widgets…** → BatteryTray.
+
+- **Charge Next** (small) shows the device that needs charging most, large.
+- **Rings** (small and medium: four devices, large: six) and **List** (large, six) show the first devices of your list, and a device running low always gets a place. A device that isn't connected shows its last level, faint, and how long ago it was seen.
+- Each also comes as **· Color**, every level in its color; the others color a level only when it runs low, as the menu bar does.
+- When BatteryTray quits they say so, and a click opens it.
+
 ## Honest numbers
 
 When a device can't report its level while charging, you see a charging sign instead of a stale or made-up number. Levels estimated from a battery's voltage are marked with "≈".
@@ -40,11 +49,13 @@ When a device can't report its level while charging, you see a charging sign ins
 
 ## Updates
 
-Half a minute after start and then every 6 hours the app looks at the [latest release](https://github.com/qu1ncky/BatteryTray/releases/latest) on GitHub, the only place it ever connects to. With automatic updates (the default) it downloads the new version, checks its SHA-256 against the digest GitHub publishes and the version inside it, and swaps itself only while its windows are closed. Without them, it tells you once and the **Update** button installs it. Everything is in **Settings → General → Updates**: status, what's new, "Check now" and the automatic updates switch. On a Mac the new app must also be signed by the same certificate as the running one.
+Half a minute after start and then every 6 hours the app asks the project's update server which [release](https://github.com/qu1ncky/BatteryTray/releases/latest) is the latest; when the server doesn't answer, and once a day anyway, it asks GitHub itself. With automatic updates (the default) it downloads the new version from GitHub, checks its SHA-256 against the digest GitHub publishes and the version inside it, and swaps itself only while its windows are closed. Without them, it tells you once and the **Update** button installs it. Everything is in **Settings → General → Updates**: status, what's new, "Check now" and the automatic updates switch. On a Mac the new app must also be signed by the same certificate as the running one.
+
+The update check is also how we know how many people use BatteryTray. It carries the app's version, the system with its version, the type of processor and a random number the app made up on its first check, so that each copy is counted once. The server keeps these and the country the check came from, never the address; nothing about your devices, your settings or how you use the app is sent. Its code is in [`server/`](../../server).
 
 ## Small and private
 
-A single ~10 MB exe on Windows, an ~11 MB app on a Mac, about 8 MB of memory. No account, no telemetry, never changes anything on your devices: it only asks them for their battery.
+A single ~10 MB exe on Windows, an ~11 MB app on a Mac, about 8 MB of memory. No account, no ads; the update check is all it sends ([Updates](#updates)), and it never changes anything on your devices: it only asks them for their battery.
 
 ## Windows and macOS
 
@@ -52,7 +63,7 @@ The same app on both: the device list, the reminders, the overlay and every supp
 
 | | Windows | macOS |
 |---|---|---|
-| The level | a number in the tray; optionally up to five devices on the taskbar | up to five devices in the menu bar, with a menu of every device |
+| The level | a number in the tray; optionally up to five devices on the taskbar | up to five devices in the menu bar, with a menu of every device; desktop widgets (macOS 14 or later) |
 | Settings | in the main window (gear) | their own window, **Settings… (⌘,)**: General, Reminders, Overlay |
 | Low battery reminder | always-on-top window, bottom right | floating panel, top right |
 | "Charging complete", "a new version" | Windows notifications | macOS notifications |

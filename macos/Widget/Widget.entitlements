@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- A widget extension runs in the sandbox -->
+    <key>com.apple.security.app-sandbox</key>
+    <true/>
+    <!-- The one folder of the user's it reads: the devices the app writes for it (macos/core/src/widget.rs) -->
+    <key>com.apple.security.temporary-exception.files.home-relative-path.read-only</key>
+    <array>
+        <string>/Library/Application Support/BatteryTray/widget/</string>
+    </array>
+</dict>
+</plist>

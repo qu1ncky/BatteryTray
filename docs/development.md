@@ -48,7 +48,9 @@ cargo clippy --workspace --all-targets -- -D warnings
 
 `build.sh` builds the core for each processor, compiles the Swift sources against it (`swiftc`, no Xcode project),
 joins the two into one app, draws the icon (`macos/make-icon.swift`), writes the version from `Cargo.toml` into
-Info.plist, signs the app and zips it (a release's universal build also makes the disk image). The signature is the
+Info.plist, signs the app and zips it (a release's universal build also makes the disk image). The desktop widgets
+(`macos/Widget`) are compiled the same way into an app extension in `Contents/PlugIns`, signed before the app with
+the sandbox an extension must have (`macos/Widget/Widget.entitlements`). The signature is the
 project's own certificate, "BatteryTray Code Signing" (a self-signed code signing certificate, valid until 2046): the
 same one for every version, so macOS keeps the permissions it gave the app (Bluetooth, Input Monitoring) across updates, which it doesn't for an app signed ad hoc. `build.sh` takes it from the keychain or from
 `BATTERYTRAY_SIGNING_IDENTITY`, and falls back to ad hoc with a warning when there is none. A build for a release
@@ -82,10 +84,12 @@ does nothing for a target other than Windows.
 | `src/view.rs` | What the windows show, worked out the same for both apps: a device's card or row, the update card, the tray number and tooltip, the overlay's entries |
 | `src/app.rs` | Windows: startup, single instance, the tray, reminders, the overlay and updates; everything UI runs in Slint's event loop |
 | `src/gui.rs`, `ui/*.slint` | Windows: the windows (Slint, software renderer), and the Win32 parts Slint has no API for |
-| `src/updater/`, `src/update_service.rs`, `src/http/` | self-update from GitHub Releases: the exe over WinHTTP on Windows, the app bundle from a zip over NSURLSession on macOS |
+| `src/updater/`, `src/update_service.rs`, `src/http/` | self-update from GitHub Releases: which release is the latest, the update server says (`server/`, below) or GitHub's API when it can't; the exe over WinHTTP on Windows, the app bundle from a zip over NSURLSession on macOS |
+| `server/` | the update server, a Cloudflare Worker: the latest release for the update checks, and how many copies are in use ([The update server](#the-update-server)) |
 | `src/autostart/` | the logon task on Windows (elevated when installed in Program Files), a LaunchAgent on macOS |
 | `macos/core` | the core for the macOS app as a static library: one C call (`bt_call`) takes a command as JSON and answers with the state to show or the effects to carry out, and makes the decisions `src/app.rs` makes on Windows (reminders, "charged" notices, settings, the list's order, updates); `keys.rs` maps the overlay's shortcut between Win32 keys, which settings.json keeps, and the Mac's key codes; `demo.rs` the demo's devices |
 | `macos/BatteryTray` | the macOS app: the menu bar item and its menu, the device window, Settings (toolbar tabs), the reminder and the overlay as non-activating panels, the shortcut through Carbon, notifications, game controllers through GameController |
+| `macos/Widget` | the desktop widgets (WidgetKit, macOS 14 and later), an app extension in the sandbox: "Charge Next" (the device the menu bar's number is of), "Rings" and "List" (the list's devices as `src/view.rs` picks them for four or six places), each also colored. They read one folder of the user's: the app writes what they show into `widget/devices.json` in its folder, with the texts in its language, and asks WidgetKit to draw them again (`macos/core/src/widget.rs`): at once when something that shows changes, for a level alone at most every 15 minutes (WidgetKit allows a widget some 40-70 redraws a day). When the app quits they say it is closed. Their names and the texts they have without the app are in `macos/Widget/*.lproj` |
 
 ## Tools
 
@@ -109,10 +113,12 @@ does nothing for a target other than Windows.
   are every 5 ms, with their extended styles: for catching a popup that jumps, can be clicked, takes focus or doesn't
   follow its contents' size.
 - `macos/readme-pictures.sh [Desktop run id]` (macOS) - draws the README's pictures (`docs/readme/`) in each language:
-  the windows, the menu bar and the taskbar, the reminder, the overlay, where to click on the first start. It builds
-  the app and runs `--snapshot … frames` (its windows come and go on the screen for a minute or two), takes the
-  Windows windows and the taskbar strip's frames from the `desktop-windows-2025` artifact of the newest successful
-  Desktop run of the branch (or main), and draws the scenes around them with `macos/readme-pictures.swift`. Needs
+  the windows, the menu bar and the taskbar, the reminder, the overlay, the desktop widgets, where to click on the
+  first start. It builds the app and runs `--snapshot … frames` (its windows come and go on the screen for a minute or
+  two), draws the widgets with their own views and the demo's devices from the core it built
+  (`macos/readme-widgets.swift`, off screen), takes the Windows windows and the taskbar strip's frames from the
+  `desktop-windows-2025` artifact of the newest successful Desktop run of the branch (or main), and draws the scenes
+  around them with `macos/readme-pictures.swift`. Needs
   ffmpeg and gh besides what `build.sh` needs.
 - `cargo run --example strip_probe -- [folder] [seconds] [light|dark]` (Windows) - puts the taskbar strip (Settings > General >
   Taskbar, `src/strip.rs`) on the real taskbar with the demo's devices for 10 seconds, with no app around it, and prints
@@ -152,6 +158,36 @@ Package managers: set the new version and the exe's SHA-256 in `bucket/batterytr
 
 The updaters take the asset named exactly `BatteryTray.exe` (Windows) or `BatteryTray-macOS.zip` (macOS) from the latest release, and the tag must match the version inside the exe or the app. Drafts and pre-releases are ignored by the updater, handy for testing a build.
 
+## The update server
+
+`server/` is a Cloudflare Worker with a D1 database, on the free plan, at `https://updates.batterytray.workers.dev`.
+An app's update check asks it first (`src/updater/mod.rs`): `GET /v1/latest` answers with the latest release as
+GitHub's API gives it, with only what the apps read (`server/src/release.js`). GitHub is asked at most every 5 minutes,
+and while it doesn't answer the release kept is served for an hour more.
+
+The check sends the app's version, system and processor in its User-Agent ("BatteryTray/2.5.0 (Windows 10.0.26100;
+x64)") and, in `BatteryTray-Install`, the random number the copy made up on its first check (`install-id` in its
+folder). For each number the server keeps the days it was first and last seen, that version, system and processor,
+and Cloudflare's guess of the country, never the address (`server/src/count.js`, `server/migrations/`). Just after
+midnight UTC a cron trigger sums the finished day up: its users, those of the 7 and 30 days up to it, the copies new
+that day, and the day's users by system, country and version.
+
+Nothing depends on it. An app that gets no usable answer within a few seconds asks GitHub, as it did before the server:
+the server down or blocked, over the free plan's 100,000 requests a day, or switched off (`"SERVE": "off"` in
+`server/wrangler.jsonc`, then `npm run deploy`). It asks GitHub as well at its first check and once a day, the newer
+release winning, so a server giving an old one can't hold an update back for longer. A release from the server is used
+only when its page and download are this repository's on GitHub.
+
+The numbers are on `https://updates.batterytray.workers.dev/stats#key=…`, with the `STATS_KEY` secret as the key (the
+page keeps it in the browser and leaves it out of the address).
+
+Working on it, with Node 22: `cd server && npm install`, then `npm test` (an in-memory SQLite in D1's place and a
+stand-in for GitHub), or `npx wrangler d1 migrations apply batterytray --local && npm run dev` for the real runtime
+with a local database (`STATS_KEY=…` in `server/.dev.vars`). Deploying needs `npx wrangler login` with the project's
+Cloudflare account; `npm run deploy` applies new migrations and deploys. The secrets: `npx wrangler secret put
+STATS_KEY`, and optionally `GITHUB_TOKEN`, a fine-grained token that can only read public repositories, which spares
+the server GitHub's limit of 60 requests an hour per address (and Workers share theirs).
+
 ## What installed copies rely on
 
 An installed copy updates itself by taking the "BatteryTray.exe" asset of the latest (non-prerelease) release when its
@@ -159,13 +195,16 @@ size and SHA-256 match what GitHub publishes and its FileVersion equals the rele
 of the C# app move to this one, so a release has to keep what they and their settings depend on: the asset's name and
 version resource, the `BatteryTray.SingleInstance` mutex, the `BatteryTray.Activator` window a second launch signals,
 the `BatteryTray` logon task, the `--background`, `--update`, `--register-task`, `--unregister-task` and `--dump`
-switches, and the format of `settings.json` and `state.json` (values the app doesn't know are kept).
+switches, and the format of `settings.json` and `state.json` (values the app doesn't know are kept). Copies that ask
+the update server rely on its address and `/v1/latest` answering with a release of GitHub's shape, or not at all: they
+then ask GitHub.
 
 Copies on a Mac update themselves from the "BatteryTray-macOS.zip" asset in the same way (size, SHA-256, the
 CFBundleShortVersionString of the BatteryTray.app inside it, which must equal the release's version, and its
 signature, which must meet the running copy's designated requirement). They rely on the
 bundle identifier `io.github.qu1ncky.BatteryTray` (one copy at a time, and the name of the login item
-`~/Library/LaunchAgents/io.github.qu1ncky.BatteryTray.plist`), the `--background`, `--update` and `--dump` switches,
+`~/Library/LaunchAgents/io.github.qu1ncky.BatteryTray.plist`), the widgets placed on the desktop on the extension's
+`io.github.qu1ncky.BatteryTray.Widgets` and their kinds (`next`, `rings`, `list`, each also with `.color`), the `--background`, `--update` and `--dump` switches,
 and the same `settings.json` and `state.json`. The overlay's shortcut is kept as on Windows (a Win32 virtual key and
 MOD_* flags, ⌘ being MOD_WIN). On its first
 start after the C# app, this one removes what that left behind (`BatteryTray.old.exe` and the .NET single-file

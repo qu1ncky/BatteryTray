@@ -25,7 +25,8 @@
 - **一个程序管理所有设备。** 通过 2.4 GHz 接收器读取 Razer、Logitech、SteelSeries、HyperX、Corsair、ASUS ROG 等数十个品牌的游戏鼠标、键盘和耳机，还支持 Xbox 和 DualSense 手柄、AirPods，以及系统能读到电量的任何蓝牙设备。[支持的设备](docs/zh/devices.md)
 - **始终可见。** 显示在 Windows 时钟旁和 Mac 菜单栏中；设备电量不足时会用警示色显示。
 - **不会错过的提醒**：在游戏或通话中途没电之前提醒你。勿扰模式不会隐藏它。
-- **游戏中也能看：** 在“设置 → 悬浮窗”中启用后，按 <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>V</kbd>（Mac 上为 <kbd>⌃⌥V</kbd>），所有设备的电量会显示五秒。[全部功能](docs/zh/features.md)
+- **游戏中也能看：** 在“设置 → 悬浮窗”中启用后，按 <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>V</kbd>（Mac 上为 <kbd>⌃⌥V</kbd>），所有设备的电量会显示五秒。
+- **Mac 桌面小组件。** 用圆环或列表显示你的设备，或只显示最需要充电的那一个（macOS 14 或更高版本）。[全部功能](docs/zh/features.md)
 
 <p align="center">
   <img src="docs/readme/menubar-zh.gif" alt="Mac 菜单栏：耳机、鼠标和键盘及其电量；键盘电量下降，先变橙色再变红色，然后重新充电" width="830"><br>
@@ -46,6 +47,11 @@
 <td align="center"><sub>悬浮窗：显示在游戏和全屏应用之上</sub></td>
 </tr>
 </table>
+
+<p align="center">
+  <img src="docs/readme/widgets-zh.png" alt="Mac 桌面小组件：最需要充电的 Rainy 75 键盘，电量约 15%；圆环和列表显示电量 37% 的 Razer Barracuda X 耳机、正在充电的 Attack Shark R3 鼠标、键盘，以及未连接的 Xbox 手柄和 Logitech MX Keys" width="830"><br>
+  <sub>Mac 桌面小组件：右键点按桌面 → 编辑小组件… → BatteryTray</sub>
+</p>
 
 ## 下载和安装
 
@@ -79,6 +85,10 @@
 </td>
 </tr>
 </table>
+
+## 隐私
+
+无需账号，没有广告，也不会更改你的设备：BatteryTray 只读取它们的电量。它唯一发送的是每 6 小时一次的更新检查，我们也借此了解有多少人在使用它，就像 Homebrew 和许多其他开源程序统计用户那样：程序版本、系统及其版本、处理器类型，以及程序在首次检查时生成的一个随机编号。没有任何隐藏的东西：服务器保存国家或地区而不是 IP 地址，对你的设备和你做的事一无所知，它的代码也是公开的（[`server/`](server)）。[详细说明](docs/zh/features.md#更新)
 
 ## 更多
 

@@ -56,7 +56,9 @@
     { "@type": "Question", "name": "Как узнать заряд мыши Razer или Logitech без Synapse и G HUB?",
       "acceptedAnswer": { "@type": "Answer", "text": "BatteryTray спрашивает устройство через его приёмник его же протоколом, как это делает фирменная программа, и показывает заряд в трее или строке меню." } },
     { "@type": "Question", "name": "Есть ли для Mac программа в строке меню, которая показывает заряд всех устройств?",
-      "acceptedAnswer": { "@type": "Answer", "text": "Да: BatteryTray для macOS показывает AirPods, устройства Magic, Bluetooth-гарнитуры и мыши, геймпады, iPhone и iPad по кабелю и игровую периферию на приёмниках." } }
+      "acceptedAnswer": { "@type": "Answer", "text": "Да: BatteryTray для macOS показывает AirPods, устройства Magic, Bluetooth-гарнитуры и мыши, геймпады, iPhone и iPad по кабелю и игровую периферию на приёмниках." } },
+    { "@type": "Question", "name": "Есть ли для Mac виджет на рабочий стол с зарядом гарнитуры, мыши или клавиатуры?",
+      "acceptedAnswer": { "@type": "Answer", "text": "Да: в macOS 14 и новее у BatteryTray есть виджеты для рабочего стола (правый клик по рабочему столу, затем «Изменить виджеты…»): устройство, которое пора заряжать, кольца или список ваших устройств, в том числе игровых на приёмниках." } }
   ]
 }
 </script>
@@ -78,6 +80,11 @@
   .buttons img { height: 64px; display: block; }
   .small { font-size: 14px; color: var(--muted); }
   .small a { color: var(--accent); }
+  .hero { text-align: center; }
+  .hero h1, .hero .lead, .hero .small { text-wrap: balance; }
+  .hero .small a, .nowrap { white-space: nowrap; }
+  .hero .lead { margin-left: auto; margin-right: auto; }
+  .hero .buttons { justify-content: center; }
   .shots { display: flex; flex-wrap: wrap; gap: 24px; justify-content: center; margin: 44px 0; }
   .shots img { height: 520px; max-width: 100%; object-fit: contain; border-radius: 12px; }
   h2 { font-size: 26px; margin: 56px 0 18px; letter-spacing: -0.01em; }
@@ -85,6 +92,7 @@
   .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 18px 20px; }
   .card h3 { margin: 0 0 6px; font-size: 17px; }
   .card p { margin: 0; color: var(--muted); font-size: 15px; }
+  .grid .card:last-child:nth-child(3n+1) { grid-column: 1 / -1; }
   .reminder { display: flex; flex-wrap: wrap; gap: 24px; align-items: center; }
   .reminder img { width: 340px; max-width: 100%; border-radius: 12px; }
   .reminder p { flex: 1 1 280px; color: var(--muted); margin: 0; }
@@ -105,13 +113,15 @@
     <span><a href="../" hreflang="en">English</a><a href="https://github.com/qu1ncky/BatteryTray/blob/main/README.ru.md">GitHub</a></span>
   </nav>
 
-  <h1>Заряд всех беспроводных устройств — в трее Windows и в строке меню Mac</h1>
-  <p class="lead">BatteryTray показывает, сколько заряда осталось у беспроводных наушников, мыши, клавиатуры, геймпада и AirPods, и напоминает до того, как они сядут посреди игры или звонка. Бесплатно и с открытым кодом, без аккаунта и фирменного софта: программа только читает заряд.</p>
-  <div class="buttons">
-    <a href="https://github.com/qu1ncky/BatteryTray/releases/latest/download/BatteryTray.exe"><img src="../download-windows-ru.svg" alt="Скачать BatteryTray для Windows"></a>
-    <a href="https://github.com/qu1ncky/BatteryTray/releases/latest/download/BatteryTray-macOS.dmg"><img src="../download-macos-ru.svg" alt="Скачать BatteryTray для macOS"></a>
-  </div>
-  <p class="small">Windows 10 и 11 · macOS 13 Ventura и новее, Apple Silicon и Intel · лицензия MIT · <a href="https://github.com/qu1ncky/BatteryTray/blob/main/README.ru.md#установка">Как установить</a> · <a href="https://github.com/qu1ncky/BatteryTray/releases">Все версии</a></p>
+  <header class="hero">
+    <h1>Заряд всех беспроводных устройств&nbsp;— в трее Windows и в строке меню Mac</h1>
+    <p class="lead">BatteryTray показывает, сколько заряда осталось у беспроводных наушников, мыши, клавиатуры, геймпада и AirPods, и напоминает до того, как они сядут посреди игры или звонка. Бесплатно и с открытым кодом, без аккаунта и фирменного софта: программа только читает заряд.</p>
+    <div class="buttons">
+      <a href="https://github.com/qu1ncky/BatteryTray/releases/latest/download/BatteryTray.exe"><img src="../download-windows-ru.svg" alt="Скачать BatteryTray для Windows"></a>
+      <a href="https://github.com/qu1ncky/BatteryTray/releases/latest/download/BatteryTray-macOS.dmg"><img src="../download-macos-ru.svg" alt="Скачать BatteryTray для macOS"></a>
+    </div>
+    <p class="small">Windows 10 и 11 · macOS 13 Ventura и новее, Apple&nbsp;Silicon и Intel · лицензия MIT · <a href="https://github.com/qu1ncky/BatteryTray/blob/main/README.ru.md#установка">Как установить</a> · <a href="https://github.com/qu1ncky/BatteryTray/releases">Все версии</a></p>
+  </header>
 
   <div class="shots">
     <img src="../screenshot-ru.png" alt="BatteryTray в Windows: заряд беспроводных наушников, мыши, клавиатуры и геймпада Xbox">
@@ -126,6 +136,7 @@
     <div class="card"><h3>И Bluetooth</h3><p>AirPods с каждым наушником и кейсом, устройства Magic, гарнитуры, геймпады — любое устройство, заряд которого знает система.</p></div>
     <div class="card"><h3>Оверлей в играх</h3><p>По сочетанию клавиш на пять секунд показывает заряд устройств поверх игр и полноэкранных приложений, не забирая фокус.</p></div>
     <div class="card"><h3>Новые устройства — сами</h3><p>Вставили приёмник или подключили гарнитуру — через несколько секунд она в списке. Обновляется сама с GitHub.</p></div>
+    <div class="card"><h3>Виджеты на рабочем столе Mac</h3><p>Кольца или список ваших устройств, или только то, которое пора заряжать, — на рабочем столе macOS 14 и новее.</p></div>
   </div>
 
   <h2>Напоминание до того, как сядет</h2>
@@ -144,6 +155,7 @@
   <details><summary>Как посмотреть заряд AirPods в Windows?</summary><p>BatteryTray читает заряд каждого наушника и кейса из Bluetooth-сообщений самих AirPods.</p></details>
   <details><summary>Как узнать заряд мыши Razer или Logitech без Synapse и G HUB?</summary><p>BatteryTray спрашивает устройство через приёмник его же протоколом, как фирменная программа, и показывает заряд в трее.</p></details>
   <details><summary>Есть ли для Mac программа в строке меню, которая показывает заряд всех устройств?</summary><p>Да: BatteryTray для macOS показывает AirPods, устройства Magic, Bluetooth-гарнитуры и мыши, геймпады, iPhone и iPad по кабелю и игровую периферию на приёмниках.</p></details>
+  <details><summary>Есть ли для Mac виджет на рабочий стол с зарядом гарнитуры, мыши или клавиатуры?</summary><p>Да: в macOS 14 и новее у BatteryTray есть виджеты для рабочего стола (правый клик по рабочему столу → «Изменить виджеты…»): устройство, которое пора заряжать, кольца или список ваших устройств, в том числе игровых на приёмниках.</p></details>
 
   <footer>BatteryTray — открытый код под лицензией MIT: <a href="https://github.com/qu1ncky/BatteryTray">исходники, задачи и релизы на GitHub</a>. Не связан с Apple, Razer, Logitech, SteelSeries, HyperX, Corsair, ASUS, Sony и Microsoft; названия продуктов — товарные знаки их владельцев.</footer>
 </main>
