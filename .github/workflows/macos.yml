@@ -81,6 +81,9 @@ jobs:
           if [ -f "$RUNNER_TEMP/signing.keychain-db" ]; then
             security delete-keychain "$RUNNER_TEMP/signing.keychain-db"
           fi
+      - name: Keep the update server out of reach
+        # It would count each run's copy as a user; the app then asks GitHub, as it does whenever the server fails
+        run: echo "0.0.0.0 updates.batterytray.workers.dev" | sudo tee -a /etc/hosts > /dev/null
       - name: Draw the windows
         # <lang> in the light appearance, <lang>-dark in the dark one
         run: |
