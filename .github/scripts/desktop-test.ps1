@@ -34,6 +34,10 @@ $installed = Join-Path $env:ProgramFiles 'BatteryTray\BatteryTray.exe'
 $data = Join-Path $env:LOCALAPPDATA 'BatteryTray'
 $logFile = Join-Path $data 'log.txt'
 $hosts = Join-Path $env:windir 'System32\drivers\etc\hosts'
+# The update server would count each run's copies as users, and its answer is the real latest release: it is out of
+# reach for the whole job, so the app asks GitHub - this machine, below - as it does whenever the server fails
+Add-Content -Path $hosts -Encoding ASCII -Value "`r`n0.0.0.0 updates.batterytray.workers.dev`r`n:: updates.batterytray.workers.dev"
+& ipconfig /flushdns | Out-Null
 $shortcut = Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\BatteryTray.lnk'
 $appId = '{5d0f1a3e-6c1b-4a57-9c3e-2f6b8a7d9e10}'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12

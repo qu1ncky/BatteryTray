@@ -169,10 +169,17 @@ The check sends the app's version, system and processor in its User-Agent ("Batt
 x64)") and, in `BatteryTray-Install`, the random number the copy made up on its first check (`install-id` in its
 folder). On a CI runner (`GITHUB_ACTIONS` or `CI` set to true) it sends none: a fresh machine on every run would be
 counted as a new copy each time, and the Windows workflow's update test even as a version that doesn't exist (the
-build with the patch number raised by 100). For each number the server keeps the days it was first and last seen,
-that version, system and processor, and Cloudflare's guess of the country, never the address (`server/src/count.js`,
-`server/migrations/`). Just after midnight UTC a cron trigger sums the finished day up: its users, those of the 7
-and 30 days up to it, the copies new that day, and the day's users by system, country and version.
+build with the patch number raised by 100). The workflows also point the server's name nowhere (hosts), as the
+Windows test starts the app through Task Scheduler, outside the job's environment. For each number the server keeps
+when it was first and last seen, that version, system and processor, and Cloudflare's guess of the country, never the
+address (`server/src/count.js`, `server/migrations/`).
+
+A copy counts as a user only once its checks are at least 3 hours apart: the app checks half a minute after it starts
+and then every 6 hours, so a copy in use gets there within the day or at its next start, while a CI run, a quick try,
+a test by hand or a script that invents numbers doesn't come back and never does. Those are let go after a week; the
+stats page says how many there were this week, apart from the users. Just after midnight UTC a cron trigger sums the
+finished day up, and the 2 days before it again, as their copies may have become users since: its users, those of the
+7 and 30 days up to it, the copies new that day, and the day's users by system, country and version.
 
 Nothing depends on it. An app that gets no usable answer within a few seconds asks GitHub, as it did before the server:
 the server down or blocked, over the free plan's 100,000 requests a day, or switched off (`"SERVE": "off"` in
