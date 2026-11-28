@@ -188,13 +188,18 @@ fn choose(
 
 /// The update server's answer, used only when the release's page and download are this repository's on GitHub: the
 /// download is checked against the digest that comes with it, so a server pointing elsewhere could hand out anything.
+/// They are the addresses GitHub gives a release with this tag, compared whole: one that only begins as they do can
+/// climb out of the repository with "/../", which the HTTP client resolves before it asks.
 fn from_server(text: &str) -> Result<Option<ReleaseInfo>> {
     let root: serde_json::Value = serde_json::from_str(text).map_err(|e| Error::other(e.to_string()))?;
     let Some(release) = parse_release(&root) else {
         return Ok(None);
     };
-    let releases = format!("https://github.com/{REPOSITORY}/releases/");
-    if !release.exe_url.starts_with(&format!("{releases}download/")) || !release.page_url.starts_with(&releases) {
+    let releases = format!("https://github.com/{REPOSITORY}/releases");
+    let download = format!("{releases}/download/{}/{ASSET_NAME}", release.tag);
+    // The server gives the second page when GitHub's own isn't this repository's (server/src/release.js)
+    let pages = [format!("{releases}/tag/{}", release.tag), format!("{releases}/latest")];
+    if release.exe_url != download || !pages.contains(&release.page_url) {
         return Err(Error::other("its release isn't this repository's on GitHub"));
     }
     Ok(Some(release))
@@ -334,18 +339,26 @@ mod tests {
             })
             .to_string()
         };
-        let good = answer(&format!("{releases}/tag/v2.5.0"), &format!("{releases}/download/v2.5.0/{ASSET_NAME}"));
-        let r = from_server(&good).unwrap().unwrap();
+        let page = format!("{releases}/tag/v2.5.0");
+        let download = format!("{releases}/download/v2.5.0/{ASSET_NAME}");
+        let r = from_server(&answer(&page, &download)).unwrap().unwrap();
         assert_eq!((r.version, r.exe_size, r.sha256.as_str()), (Version(2, 5, 0), 10, "ab"));
-        assert!(from_server(&answer(&format!("{releases}/tag/v2.5.0"), "https://example.com/BatteryTray.exe")).is_err());
-        assert!(from_server(&answer(
-            &format!("{releases}/tag/v2.5.0"),
-            &format!("https://github.com/someone/else/releases/download/v2.5.0/{ASSET_NAME}")
-        ))
-        .is_err());
-        assert!(
-            from_server(&answer("https://example.com/", &format!("{releases}/download/v2.5.0/{ASSET_NAME}"))).is_err()
-        );
+        assert!(from_server(&answer(&format!("{releases}/latest"), &download)).is_ok(), "the server's own page");
+        let other_downloads = [
+            "https://example.com/BatteryTray.exe".to_string(),
+            format!("https://github.com/someone/else/releases/download/v2.5.0/{ASSET_NAME}"),
+            // They begin as this repository's and climb out of it
+            format!("{releases}/download/../../../../someone/else/releases/download/v2.5.0/{ASSET_NAME}"),
+            format!("{download}#/../../../../../../someone/else/releases/download/v2.5.0/{ASSET_NAME}"),
+            // Another release's
+            format!("{releases}/download/v2.4.0/{ASSET_NAME}"),
+        ];
+        for other in &other_downloads {
+            assert!(from_server(&answer(&page, other)).is_err(), "{other}");
+        }
+        for other in ["https://example.com/", &format!("{releases}/tag/../../../../someone/else")] {
+            assert!(from_server(&answer(other, &download)).is_err(), "{other}");
+        }
         assert!(from_server("<html>").is_err());
         assert_eq!(from_server(r#"{"tag_name": "v2.5.0", "assets": []}"#).unwrap(), None);
     }
