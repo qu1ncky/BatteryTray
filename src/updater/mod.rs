@@ -105,9 +105,18 @@ fn system() -> String {
 
 /// The random number this copy sends to the update server, so that it is counted once however often it asks: made up
 /// on the first check from the system's random source and kept in the app's folder, in `install-id`. It says nothing
-/// about the computer or its user. Empty when it can't be kept: the check is then answered but not counted.
+/// about the computer or its user. Empty when it can't be kept, and on a CI runner (a fresh machine on every run,
+/// not someone's copy): the check is then answered but not counted.
 pub fn install_id() -> String {
+    if on_ci(|name| std::env::var(name).ok()) {
+        return String::new();
+    }
     install_id_in(&crate::sys::app_data_folder())
+}
+
+/// Running on a CI runner: GitHub Actions sets GITHUB_ACTIONS and CI to "true" for every step, most others CI.
+fn on_ci(var: impl Fn(&str) -> Option<String>) -> bool {
+    ["GITHUB_ACTIONS", "CI"].iter().any(|name| var(name).is_some_and(|v| v.eq_ignore_ascii_case("true") || v == "1"))
 }
 
 fn install_id_in(folder: &Path) -> String {
@@ -379,6 +388,17 @@ mod tests {
         std::fs::write(&file, "").unwrap();
         assert_eq!(install_id_in(&file.join("folder")), "", "can't be kept, so not sent");
         let _ = std::fs::remove_file(&file);
+    }
+
+    #[test]
+    fn ci_runners_are_not_counted() {
+        let env = |pairs: &'static [(&'static str, &'static str)]| {
+            move |name: &str| pairs.iter().find(|(n, _)| *n == name).map(|(_, v)| v.to_string())
+        };
+        assert!(on_ci(env(&[("GITHUB_ACTIONS", "true"), ("CI", "true")])));
+        assert!(on_ci(env(&[("CI", "1")])));
+        assert!(!on_ci(env(&[])));
+        assert!(!on_ci(env(&[("CI", "false"), ("GITHUB_ACTIONS", "")])));
     }
 
     #[test]

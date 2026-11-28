@@ -3,7 +3,7 @@
 
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, test } from "node:test";
-import { about, before, record, sumUp } from "../src/count.js";
+import { KEPT, about, before, record, sumUp } from "../src/count.js";
 import worker from "../src/index.js";
 import { FRESH, STALE, latest, trim } from "../src/release.js";
 import { data } from "../src/stats.js";
@@ -187,6 +187,18 @@ describe("an update check", () => {
     assert.deepEqual(rows("SELECT day FROM seen ORDER BY day").map((r) => r.day), ["2026-12-01", "2026-12-02"]);
   });
 
+  test("makes a user of a copy only once its checks are 3 hours apart", async () => {
+    const now = Date.parse("2026-12-31T08:00:00Z");
+    const numbers = async (at) =>
+      (await (await data(request("/stats/data", { headers: { Authorization: "Bearer the-key" } }), env, at)).json())
+        .users;
+    await record(request("/v1/latest"), env, now);
+    await record(request("/v1/latest"), env, now + KEPT - 60_000);
+    assert.deepEqual(await numbers(now + KEPT), { day: 0, week: 0, month: 0, installs: 0, new_day: 0, new_week: 0, pending: 1 });
+    await record(request("/v1/latest"), env, now + KEPT);
+    assert.deepEqual(await numbers(now + KEPT), { day: 1, week: 1, month: 1, installs: 1, new_day: 1, new_week: 1, pending: 0 });
+  });
+
   test("of an unknown country is counted as XX", () => {
     assert.equal(about(request("/v1/latest", { country: null })).country, "XX");
     assert.equal(about(request("/v1/latest", { country: "T1" })).country, "T1");
@@ -194,12 +206,15 @@ describe("an update check", () => {
 });
 
 describe("the day's numbers", () => {
-  /** Copies seen on days given as offsets from 2026-12-31. */
+  /** Copies seen on days given as offsets from 2026-12-31, as a copy in use is: at 09:00 and again at 15:00, or once
+   *  at noon when `once` (a CI run, a quick try). */
   async function seen(copies) {
-    const base = Date.parse("2026-12-31T12:00:00Z");
-    for (const { id, days, agent = WINDOWS, country = "RU" } of copies) {
+    const base = Date.parse("2026-12-31T00:00:00Z");
+    for (const { id, days, agent = WINDOWS, country = "RU", once = false } of copies) {
       for (const d of days) {
-        await record(request("/v1/latest", { id, agent, country }), env, base + d * 86_400_000);
+        for (const hour of once ? [12] : [9, 15]) {
+          await record(request("/v1/latest", { id, agent, country }), env, base + d * 86_400_000 + hour * 3600_000);
+        }
       }
     }
   }
@@ -212,8 +227,9 @@ describe("the day's numbers", () => {
       { id: a, days: [-20, -3, -1] },
       { id: b, days: [-1], agent: MAC, country: "DE" },
       { id: c, days: [-10] },
+      { id: "d".repeat(32), days: [-1], agent: "BatteryTray/2.5.100 (Windows 10.0.20348; x64)", country: "US", once: true },
     ]);
-    for (let run = 0; run < 3; run++) {
+    for (let run = 0; run < 4; run++) {
       await sumUp(env, Date.parse(`2027-01-01T0${run}:10:00Z`));
     }
     assert.equal(metric("2026-12-30", "users"), 2);
@@ -224,6 +240,8 @@ describe("the day's numbers", () => {
     assert.equal(metric("2026-12-30", "os", "macOS"), 1);
     assert.equal(metric("2026-12-30", "country", "DE"), 1);
     assert.equal(metric("2026-12-30", "version", "2.5.0"), 2);
+    assert.equal(metric("2026-12-30", "version", "2.5.100"), undefined, "a CI run isn't a user");
+    assert.equal(metric("2026-12-30", "country", "US"), undefined);
     assert.equal(metric("2026-12-21", "users"), 1, "the days between are caught up");
     assert.equal(metric("2026-12-28", "users"), 1);
     assert.equal(metric("2026-12-25", "users"), 0);
@@ -232,22 +250,45 @@ describe("the day's numbers", () => {
     assert.equal(metric("2027-01-01", "users"), undefined, "the day isn't over");
   });
 
-  test("catch up 10 days at a time, each day once, and the days seen over 90 days ago are let go", async () => {
+  test("catch up 8 days a run, the last 3 each time, and the days seen over 90 days ago are let go", async () => {
     const summed = () => rows("SELECT count(*) AS n FROM daily WHERE metric = 'users'")[0].n;
     await seen([{ id: "a".repeat(32), days: [-120, -1] }]);
     await sumUp(env, Date.parse("2027-01-01T00:10:00Z"));
-    assert.equal(summed(), 10, "from 60 days back");
+    assert.equal(summed(), 8, "5 from 60 days back, and the last 3");
     assert.equal(metric("2026-11-02", "users"), 0);
-    assert.deepEqual(rows("SELECT day FROM seen").map((r) => r.day), ["2026-12-30"]);
-    for (let run = 1; run < 6; run++) {
-      await sumUp(env, Date.parse(`2027-01-01T0${run}:00:00Z`));
+    assert.equal(metric("2026-12-30", "users"), 1);
+    assert.deepEqual(rows("SELECT DISTINCT day FROM seen").map((r) => r.day), ["2026-12-30"]);
+    for (let run = 1; run < 12; run++) {
+      await sumUp(env, Date.parse("2027-01-01T00:10:00Z") + run * 60_000);
     }
     assert.equal(summed(), 60);
-    assert.equal(metric("2026-12-30", "users"), 1);
     await sumUp(env, Date.parse("2027-01-01T08:00:00Z"));
     assert.equal(summed(), 60, "nothing twice");
     await sumUp(env, Date.parse("2027-01-02T00:10:00Z"));
     assert.equal(summed(), 61);
+  });
+
+  test("count a copy on its days once it became a user, even the day after", async () => {
+    const id = "e".repeat(32);
+    await record(request("/v1/latest", { id }), env, Date.parse("2026-12-29T23:00:00Z"));
+    await sumUp(env, Date.parse("2026-12-30T00:10:00Z"));
+    assert.equal(metric("2026-12-29", "users"), undefined, "not a user yet");
+    await record(request("/v1/latest", { id }), env, Date.parse("2026-12-30T08:00:00Z"));
+    await sumUp(env, Date.parse("2026-12-31T00:10:00Z"));
+    assert.equal(metric("2026-12-29", "users"), 1);
+    assert.equal(metric("2026-12-29", "new"), 1);
+    assert.equal(metric("2026-12-30", "users"), 1);
+  });
+
+  test("let go of the copies that never became users within a week, and keep the users", async () => {
+    await seen([
+      { id: "a".repeat(32), days: [-9] },
+      { id: "c".repeat(32), days: [-9], once: true },
+      { id: "d".repeat(32), days: [-2], once: true },
+    ]);
+    await sumUp(env, Date.parse("2027-01-01T00:10:00Z"));
+    assert.deepEqual(rows("SELECT id FROM installs ORDER BY id").map((r) => r.id[0]), ["a", "d"]);
+    assert.deepEqual(rows("SELECT DISTINCT id FROM seen ORDER BY id").map((r) => r.id[0]), ["a", "d"]);
   });
 
   test("are run by the cron trigger", async () => {
@@ -278,12 +319,17 @@ describe("the owners' page", () => {
 
   test("gets the users of today, 7 and 30 days, by country, system and version, and the latest release", async () => {
     const now = Date.parse("2026-12-31T12:00:00Z");
-    await record(request("/v1/latest", { id: "a".repeat(32) }), env, now);
-    await record(request("/v1/latest", { id: "b".repeat(32), agent: MAC, country: "DE" }), env, now - 5 * 86_400_000);
-    await record(request("/v1/latest", { id: "c".repeat(32) }), env, now - 20 * 86_400_000);
+    const twice = async (options, at) => {
+      await record(request("/v1/latest", options), env, at - KEPT);
+      await record(request("/v1/latest", options), env, at);
+    };
+    await twice({ id: "a".repeat(32) }, now);
+    await twice({ id: "b".repeat(32), agent: MAC, country: "DE" }, now - 5 * 86_400_000);
+    await twice({ id: "c".repeat(32) }, now - 20 * 86_400_000);
+    await record(request("/v1/latest", { id: "f".repeat(32), agent: WINDOWS.replace("2.5.0", "2.5.100") }), env, now);
     await latest(env, ctx, now);
     await settled();
-    for (let run = 0; run < 3; run++) {
+    for (let run = 0; run < 5; run++) {
       await sumUp(env, now + run * 60_000);
     }
     const response = await data(request("/stats/data", { headers: { Authorization: "Bearer the-key" } }), env, now);
@@ -291,7 +337,7 @@ describe("the owners' page", () => {
     const numbers = await response.json();
     assert.equal(numbers.today, "2026-12-31");
     assert.equal(numbers.latest, "v2.5.0");
-    assert.deepEqual(numbers.users, { day: 1, week: 2, month: 3, installs: 3, new_day: 1, new_week: 2 });
+    assert.deepEqual(numbers.users, { day: 1, week: 2, month: 3, installs: 3, new_day: 1, new_week: 2, pending: 1 });
     assert.deepEqual(numbers.countries, [{ country: "RU", count: 2 }, { country: "DE", count: 1 }]);
     assert.deepEqual(numbers.versions, [{ version: "2.5.0", count: 2 }]);
     assert.equal(numbers.systems.length, 2);

@@ -2,9 +2,10 @@
 // numbers; it asks /stats/data for them with the key (the STATS_KEY secret), which it takes once from the address's
 // #key=… part - never sent to the server, so never in a log - and then keeps in the browser.
 
-import { before, day } from "./count.js";
+import { before, day, kept } from "./count.js";
 
-/** The numbers, for the page; 403 without the key. */
+/** The numbers, for the page; 403 without the key. Only the copies that count as users (count.js, kept) are in them;
+ *  `pending` says how many others were seen this week: CI runs, quick tries, copies not yet seen twice. */
 export async function data(request, env, now = Date.now()) {
   if (!(await allowed(request, env))) {
     return new Response("Forbidden\n", { status: 403, headers: { "Cache-Control": "no-store" } });
@@ -14,21 +15,27 @@ export async function data(request, env, now = Date.now()) {
   const month = before(today, 29);
   const [users, history, systems, countries, versions, release] = await env.DB.batch([
     env.DB.prepare(
-      "SELECT coalesce(sum(last_seen = ?1), 0) AS day, coalesce(sum(last_seen >= ?2), 0) AS week, " +
-        "coalesce(sum(last_seen >= ?3), 0) AS month, count(*) AS installs, " +
-        "coalesce(sum(first_seen = ?1), 0) AS new_day, coalesce(sum(first_seen >= ?2), 0) AS new_week FROM installs",
+      `SELECT coalesce(sum(${kept()} AND i.last_seen = ?1), 0) AS day, ` +
+        `coalesce(sum(${kept()} AND i.last_seen >= ?2), 0) AS week, ` +
+        `coalesce(sum(${kept()} AND i.last_seen >= ?3), 0) AS month, coalesce(sum(${kept()}), 0) AS installs, ` +
+        `coalesce(sum(${kept()} AND i.first_seen = ?1), 0) AS new_day, ` +
+        `coalesce(sum(${kept()} AND i.first_seen >= ?2), 0) AS new_week, ` +
+        `coalesce(sum(NOT ${kept()} AND i.last_seen >= ?2), 0) AS pending FROM installs i`,
     ).bind(today, week, month),
     env.DB.prepare("SELECT day, metric, value FROM daily WHERE key = '' AND day >= ?1 ORDER BY day").bind(
       before(today, 365),
     ),
     env.DB.prepare(
-      "SELECT os, os_version, arch, count(*) AS count FROM installs WHERE last_seen >= ?1 " +
-        "GROUP BY os, os_version, arch",
+      "SELECT i.os, i.os_version, i.arch, count(*) AS count FROM installs i " +
+        `WHERE i.last_seen >= ?1 AND ${kept()} GROUP BY i.os, i.os_version, i.arch`,
     ).bind(month),
     env.DB.prepare(
-      "SELECT country, count(*) AS count FROM installs WHERE last_seen >= ?1 GROUP BY country ORDER BY count DESC",
+      `SELECT i.country, count(*) AS count FROM installs i WHERE i.last_seen >= ?1 AND ${kept()} ` +
+        "GROUP BY i.country ORDER BY count DESC",
     ).bind(month),
-    env.DB.prepare("SELECT version, count(*) AS count FROM installs WHERE last_seen >= ?1 GROUP BY version").bind(week),
+    env.DB.prepare(
+      `SELECT i.version, count(*) AS count FROM installs i WHERE i.last_seen >= ?1 AND ${kept()} GROUP BY i.version`,
+    ).bind(week),
     env.DB.prepare("SELECT json FROM release WHERE one = 1"),
   ]);
   const days = new Map();
@@ -156,6 +163,7 @@ const PAGE = `<!doctype html>
   </div>
   <div id="stats" hidden>
     <div class="tiles" id="tiles"></div>
+    <p class="muted" id="pending"></p>
     <div class="card">
       <h2 id="h-history"></h2>
       <div class="legend" id="legend"></div>
@@ -179,14 +187,16 @@ var T = {
         users: "За день", users7: "За 7 дней", users30: "За 30 дней", added: "Новых",
         countries: "Страны, за 30 дней", systems: "Системы, за 30 дней", versions: "Версии, за 7 дней",
         nohistory: "График появится после первых полных суток.", none: "Пока никого.", unknown: "Не определена",
-        updated: "обновлено", date: "Дата" },
+        updated: "обновлено", date: "Дата",
+        pending: "Не считаются: {0} — копии этой недели, которые проверили обновления только раз или в пределах трёх часов (CI, пробные запуски, тесты). Пользователем копия становится, когда её проверки разделяют хотя бы три часа." },
   en: { title: "BatteryTray users", ask: "The statistics key:", go: "Open", wrong: "That key doesn't fit.",
         day: "Today", week: "Last 7 days", month: "Last 30 days", installs: "All copies", fresh: "New, last 7 days",
         latest: "On the latest version", history: "Users by day", table: "Table",
         users: "Of the day", users7: "Of 7 days", users30: "Of 30 days", added: "New",
         countries: "Countries, last 30 days", systems: "Systems, last 30 days", versions: "Versions, last 7 days",
         nohistory: "The chart starts after the first full day.", none: "No one yet.", unknown: "Unknown",
-        updated: "updated", date: "Date" }
+        updated: "updated", date: "Date",
+        pending: "Not counted: {0} - copies of this week that checked for updates only once or within three hours (CI, quick tries, tests). A copy becomes a user once its checks are at least three hours apart." }
 }[lang];
 var number = new Intl.NumberFormat(lang);
 var percent = new Intl.NumberFormat(lang, { style: "percent", maximumFractionDigits: 0 });
@@ -261,6 +271,7 @@ function show(data) {
     if (t[2]) tile.appendChild(el("div", "muted", t[2]));
     box.appendChild(tile);
   });
+  text("pending", u.pending ? T.pending.replace("{0}", number.format(u.pending)) : "");
   chart(data.history);
   rows("countries", data.countries.map(function (c) {
     var name = c.country === "XX" ? T.unknown : c.country === "T1" ? "Tor" : regions ? regions.of(c.country) : c.country;
